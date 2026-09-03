@@ -38,9 +38,10 @@ export interface MapPopContent {
   channel?: string
   caption?: string
   radiusKm: number
-  /** Optional: a pop whose media record has not resolved is still a real claim
-   *  on the map with a place, a poster and a radius. It opens and says so
-   *  rather than silently refusing the tap. */
+  /** Optional only because a pop may be a MESSAGE rather than a picture: every
+   *  pop carries media or a caption, never neither (the composer refuses to
+   *  publish an empty one and the map drops any row that arrives that way).
+   *  A message-only pop opens and shows its words where the media would be. */
   media?: {
     kind: 'image' | 'video'
     src: string
@@ -315,7 +316,7 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
               statusKind="pop"
               place={`${item.content.user ?? 'YOUR POP'} · ${item.content.channel?.toUpperCase() ?? 'POP'}`}
               title={item.content.name}
-              summary={item.content.caption ?? item.content.media?.alt ?? 'No media on this pop yet.'}
+              summary={item.content.caption ?? item.content.media?.alt ?? ''}
               summaryLabel="FROM THE MAP"
               meta={`${item.content.radiusKm.toFixed(1)} km radius`}
               media={item.content.media}

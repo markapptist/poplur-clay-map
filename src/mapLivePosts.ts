@@ -194,6 +194,15 @@ export function normalizeLiveMapPost(
     : undefined
   const createdAtMs = timestampMs(row.createdAtMillis ?? row.createdAt)
   const mine = ownUid != null && ownerId === ownUid
+  // A pop is a picture or a message; a row with neither is not a pop and must
+  // not stand on the board as an empty pin. This is judged on what the row
+  // DECLARES, not on what survived the URL guard: a post whose media the web
+  // client refuses to load is still a real claim with real media, and its
+  // marker stays on the board — only a row with no media field and no words
+  // is dropped.
+  const caption = text(row.caption, 2_048)
+  const declaredMedia = text(row.playbackURL, 2_048) || text(row.mediaURL, 2_048)
+  if (!declaredMedia && !caption) return null
 
   return {
     id: `firestore:${id}`,

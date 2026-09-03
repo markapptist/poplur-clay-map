@@ -2118,17 +2118,22 @@ header.weatherTitleBar {
 .popPin:active { transform: translateY(6px) scale(0.92); }
 
 /* Yours, on a board full of other people's. */
-/* The NEW burst on a pop you have not opened. Rides the pin's top-right, above
-   the face, and takes no pointer — the pin underneath is what you press. */
+/* The NEW burst on a pop you have not opened. It sits ON the pin — a small
+   tag straddling the top-right edge of the round head — not floating beside
+   it. The sprite draws the head centred at ~(46%, 44%) of the box with a
+   radius of ~28% of its width, and .popPin nudges the whole pin down 6px to
+   land the tip on the coordinate; the head's top-right edge therefore falls
+   near (42px, 22px) of the 64px box, and this 22px tag is centred there.
+   Takes no pointer — the pin underneath is what you press. */
 .popPinNew {
   position: absolute;
-  top: -28px;
-  right: -22px;
-  width: 44px;
+  top: 11px;
+  right: 11px;
+  width: 22px;
   height: auto;
   pointer-events: none;
   z-index: 3;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
 }
 
 .popPinMine { transform: translateY(6px) scale(1.16); }

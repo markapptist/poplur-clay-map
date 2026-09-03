@@ -1173,13 +1173,16 @@ export default function PostComposer({
           <button
             className={styles.primary}
             onClick={() => { void publish() }}
-            disabled={publishing || !rightsAttested || !target}
+            // A pop is a picture or a message. Neither is not a pop, so the
+            // button will not publish one — the same rule the map applies to
+            // rows that arrive without either.
+            disabled={publishing || !rightsAttested || !target || (!media && !caption.trim())}
           >
             {publishing
               ? 'Uploading…'
               : publishError?.retryable
                 ? 'Retry upload'
-                : target ? `Post to ${caption.trim() ? 'News Feed' : 'TV'}` : 'Choose a spot to post'}
+                : !media && !caption.trim() ? 'Add a photo or write a message' : target ? `Post to ${caption.trim() ? 'News Feed' : 'TV'}` : 'Choose a spot to post'}
           </button>
           {publishError && !publishing && (
             <div className={styles.publishError} role="alert">
