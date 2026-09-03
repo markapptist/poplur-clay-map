@@ -4328,6 +4328,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       re-reports it, and the RADIUS card re-runs its money counter on the new
       value — the user is shown how much radius each video carries. */
   const [feedReachKm, setFeedReachKm] = useState<number | null>(null)
+  // The open pop's own reach on the PROFILE. The feed has always reported
+  // this; the profile never did, so opening a pop there showed the account
+  // total instead of that pop's radius — 0.0mi over a 6.5km pop.
+  const [profileReachKm, setProfileReachKm] = useState<number | null>(null)
   const onFeedPostReach = useCallback((km: number | null) => setFeedReachKm(km), [])
   /** The Times reports the story the reader is currently dwelling on. */
   const [newsReachKm, setNewsReachKm] = useState<number | null>(null)
@@ -4373,11 +4377,19 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             ? feedReachKm
             : cubeScreen === 'feed-news' && newsReachKm != null
               ? newsReachKm
+            // An open pop on the profile speaks for itself, exactly as on the
+            // feed. Closing it reports null and the card falls back below.
+            : activeTab === 'profile' && profileReachKm != null
+              ? profileReachKm
             : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : earnedRadiusKm)
 
   const mapHasPopSubject = activeTab === 'map'
     && (traversedPinRadiusKm != null || mapHudContext?.scope === 'pop')
   const mapHasAccumulatedRadius = activeTab === 'map' && mapHudContext != null && !mapHasPopSubject
+  // One open pop is a subject, not a running tally — the label, the counter's
+  // accumulate behaviour and the trend line all have to agree about that or
+  // the card contradicts itself.
+  const profileHasPopSubject = activeTab === 'profile' && profileReachKm != null
   const onlineAudience = activeTab === 'map'
     ? (mapHudContext?.onlineUsers ?? SPOOFED_ONLINE_AUDIENCE)
     : SPOOFED_ONLINE_AUDIENCE
@@ -5587,6 +5599,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             viewUserId={viewingUserId}
             highlightPops={profilePopFlash}
             onPostCountChange={setProfilePostCount}
+            onPostReach={setProfileReachKm}
             onBackToOwn={() => {
               // Closing someone else's profile puts you back on your own, on
               // the tab you are already standing on. It used to jump to the
@@ -5704,6 +5717,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                 ? 'POST RADIUS ◆'
               : mapHasPopSubject
                 ? 'POP RADIUS ◆'
+              : profileHasPopSubject
+                ? 'POST RADIUS ◆'
                 : mapHasAccumulatedRadius || activeTab === 'profile'
                   ? 'TOTAL RADIUS ◆'
                   : 'RADIUS ◆'}</span>
@@ -5721,9 +5736,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               ceiling={unitMi ? EARTH_RADIUS_KM * KM_TO_MI : EARTH_RADIUS_KM}
               unit={unitMi ? 'mi' : 'km'}
               active={recordMs == null && !chromeIdle && (activeTab === 'profile' ? profileMetric === 'radius' : !showOnlineAudience)}
-              accumulated={!seenUser && (mapHasAccumulatedRadius || activeTab === 'profile')}
+              accumulated={!seenUser && (mapHasAccumulatedRadius || (activeTab === 'profile' && !profileHasPopSubject))}
             />
-            <span className={styles.statTrend}>{activeTab === 'map' ? mapRadiusTrend : activeTab === 'profile' ? `${profilePostCount} posts` : cubeScreen === 'feed-news' ? 'current story' : `${POST_COUNT} nearby`}</span>
+            <span className={styles.statTrend}>{activeTab === 'map' ? mapRadiusTrend : activeTab === 'profile' ? (profileHasPopSubject ? 'this pop' : `${profilePostCount} posts`) : cubeScreen === 'feed-news' ? 'current story' : `${POST_COUNT} nearby`}</span>
           </div>
           <div
             className={recordMs == null && (activeTab === 'profile' ? profileMetric === 'online' : showOnlineAudience) ? styles.statCard : styles.statCardOut}

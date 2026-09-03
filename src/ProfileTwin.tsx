@@ -108,6 +108,8 @@ interface Post {
   poster?: string
   mediaType?: 'photo' | 'video'
   syntheticPostId?: string
+  /** This pop's own reach in km — see profileRealtimePosts. */
+  reachKm?: number
   /** Public origin, [lng, lat] — see profileRealtimePosts. */
   origin?: [number, number]
 }
@@ -555,6 +557,7 @@ export default function ProfileTwin({
   bindGoBack,
   highlightPops = null,
   onPostCountChange,
+  onPostReach,
 }: {
   bindArrows?: (fn: ((dir: 1 | -1) => boolean) | null) => void
   /** a handle when you opened someone else's profile from the feed */
@@ -572,6 +575,10 @@ export default function ProfileTwin({
   highlightPops?: { ids: string[]; seq: number } | null
   /** Keeps the Home HUD's animated post count tied to this profile's grid. */
   onPostCountChange?: (count: number) => void
+  /** The open pop's own reach, so the radius card can show THIS post's radius
+   *  instead of the account total. null on close, which is what lets the card
+   *  fall back without the grid needing a branch of its own. */
+  onPostReach?: (km: number | null) => void
 } = {}) {
   const controlSide = useControlSide()
   const [selectedProfileTheme, setSelectedProfileTheme] = useState<ProfileTheme>(readSelectedProfileTheme)
@@ -2248,6 +2255,19 @@ export default function ProfileTwin({
   const viewerPostIsVideo = viewerPost ? postIsVideo(viewerPost) : false
   const viewerPostId = viewerPost ? (viewerPost.id ?? viewerPost.video) : null
   const viewerPostComments = viewerPostId ? (viewerComments[viewerPostId] ?? []) : []
+  // Report the OPEN pop's reach upward, the way the feed already does. Without
+  // this the radius card fell through to the account-level total, so opening a
+  // 6.5km pop showed the account's figure instead of the pop's.
+  const reportedReachRef = useRef<string | null>(null)
+  useEffect(() => {
+    const km = viewerPost?.reachKm ?? null
+    const signature = km == null ? 'none' : `${viewerPostId}:${km}`
+    if (signature === reportedReachRef.current) return
+    reportedReachRef.current = signature
+    onPostReach?.(km)
+  }, [onPostReach, viewerPost?.reachKm, viewerPostId])
+  // Closing the viewer hands the card back to the account total.
+  useEffect(() => () => { onPostReach?.(null) }, [onPostReach])
   useEffect(() => {
     if (!viewerPostId || !viewerPlaying || viewerCovered) return
     void recordVisiblePostView(viewerPostId).catch(() => recordPostView(viewerPostId))

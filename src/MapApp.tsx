@@ -169,6 +169,7 @@ import { feedPostIdFromPinId, markPostsSeen } from './seenPosts'
 import ConquerGlance from './ConquerGlance'
 import ConquerScreen from './ConquerScreen'
 import type { MapConquerSnapshot } from './mapConquer'
+import { KM_TO_MI, shouldUseMiles } from './units'
 import styles from './App.module.css'
 import dropStyles from './ClayMap.module.css'
 
@@ -2945,22 +2946,36 @@ export default function MapApp() {
       ownUid,
     )
   }, [nativeShell, ownUid, rnWebShellRoute])
+  // Sum the pins the shell forwarded in. This ran ONLY on the local Expo web
+  // route, so on an actual phone it never ran at all and the total fell
+  // through to the web Firestore subscription below — which, on a device,
+  // has no authenticated user and reports {0, 0} on BOTH of its non-happy
+  // paths. That is why an account holding a 6.5km pop displayed 0.0mi while
+  // the map, reading the same pin directly, displayed 4.0mi.
+  //
+  // The forwarded set is the same one the board draws, and own pins are never
+  // reach-filtered out of it, so this counts every pop the map can see. A pop
+  // the shell has not forwarded would still be missed — an undercount, but a
+  // truthful one, where the old path was categorically zero.
   useEffect(() => {
-    if (!rnWebShellRoute) return
+    if (!rnWebShellRoute && !nativeShell) return
     const mine = liveMapPosts.filter(pin => pin.mine)
     setAccountRadiusSnapshot({
       radiusKm: mine.reduce((sum, pin) => sum + pin.radiusKm, 0),
       postCount: mine.length,
     })
-  }, [liveMapPosts, rnWebShellRoute])
+  }, [liveMapPosts, nativeShell, rnWebShellRoute])
   useEffect(() => {
-    if (rnWebShellRoute) return undefined
+    // webDb() is for documents with no native bridge behind them. A device has
+    // one, and asking the unauthenticated web client for `posts where userID
+    // == uid` there returns nothing but a zero.
+    if (rnWebShellRoute || nativeShell) return undefined
     return subscribeAccountRadiusPosts(
       ownUid,
       setAccountRadiusSnapshot,
       () => setAccountRadiusSnapshot({ radiusKm: 0, postCount: 0 }),
     )
-  }, [ownUid, rnWebShellRoute])
+  }, [nativeShell, ownUid, rnWebShellRoute])
   const accountRadiusKm = accountRadiusSnapshot.radiusKm
   const accountPostCount = accountRadiusSnapshot.postCount
   useEffect(() => {
@@ -3150,6 +3165,29 @@ export default function MapApp() {
   mapPointRouteRef.current = mapPointRoute
   const focusedMapPointKeyRef = useRef<string | null>(null)
   const [focusedMapPoint, setFocusedMapPoint] = useState<MapCyclePoint | null>(null)
+  // The pin callout used to hardcode KM while the HUD above it — a different
+  // document — rendered the same value in the user's own unit. One screen then
+  // showed "6.5 KM RADIUS" and "4.0 mi" for one 6500m radius, which reads as
+  // two different radii rather than one number said twice.
+  //
+  // The preference lives in localStorage precisely so both documents can see
+  // it, and `storage` fires in the OTHER same-origin documents when it
+  // changes — which is exactly this iframe's relationship to the shell that
+  // owns the toggle.
+  const [preferMiles, setPreferMiles] = useState(shouldUseMiles)
+  useEffect(() => {
+    const reread = () => setPreferMiles(shouldUseMiles())
+    window.addEventListener('storage', reread)
+    // A tap handled while this document was hidden lands with no storage
+    // event here; re-read on the way back rather than showing a stale unit.
+    window.addEventListener('pageshow', reread)
+    document.addEventListener('visibilitychange', reread)
+    return () => {
+      window.removeEventListener('storage', reread)
+      window.removeEventListener('pageshow', reread)
+      document.removeEventListener('visibilitychange', reread)
+    }
+  }, [])
   const [mapPointPosition, setMapPointPosition] = useState<{ n: number; of: number } | null>(null)
   const mapPointLabelActive = Boolean(focusedMapPoint && !tourOn)
 
@@ -4469,11 +4507,16 @@ export default function MapApp() {
           {focusedMapPoint.radiusKm != null && (
             <span
               className={styles.mapPointCardRadius}
+              // Stays in km whatever is displayed: QA probes read this, and a
+              // probe that changed unit with a user preference would be
+              // measuring the label rather than the radius.
               data-map-point-radius-km={focusedMapPoint.radiusKm}
+              data-map-point-radius-display={preferMiles ? 'mi' : 'km'}
             >
-              {Number.isInteger(focusedMapPoint.radiusKm)
-                ? focusedMapPoint.radiusKm
-                : focusedMapPoint.radiusKm.toFixed(1)} KM RADIUS
+              {(() => {
+                const shown = preferMiles ? focusedMapPoint.radiusKm * KM_TO_MI : focusedMapPoint.radiusKm
+                return `${Number.isInteger(shown) ? shown : shown.toFixed(1)} ${preferMiles ? 'MI' : 'KM'} RADIUS`
+              })()}
             </span>
           )}
         </aside>

@@ -5940,7 +5940,12 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       markerRoot.appendChild(el)
       const ownerLabel = document.createElement('span')
       ownerLabel.className = styles.dominationTerritoryLabel
-      ownerLabel.textContent = pin.user ?? 'YOU'
+      // Key the YOU off ownership, never off a missing handle. `user` is
+      // deliberately nulled for your own pins upstream, but this fallback also
+      // caught any OTHER pin that arrived without a handle and stamped your
+      // label on a stranger's pop — the shape of bug that makes a map look
+      // like it has two of you on it.
+      ownerLabel.textContent = pin.mine ? 'YOU' : (pin.user ?? '')
       markerRoot.appendChild(ownerLabel)
       // Every one of your pins wears the same static profile face. A still is
       // both clearer ownership and dramatically cheaper than cloning the

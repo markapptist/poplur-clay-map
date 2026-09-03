@@ -28,6 +28,30 @@ describe('realtime Profile post projection', () => {
     expect(profilePostsFromRealtime([], 'owner-a', null)).toEqual([])
   })
 
+  it('carries each pop\'s own reach, so an open pop can speak for itself', () => {
+    // The radius card fell through to the ACCOUNT total whenever a pop was
+    // open on the profile, because this projection dropped radiusMeters on the
+    // floor. A 6500m pop therefore displayed the account's 0.0mi rather than
+    // its own 4.0mi. The feed has always carried this; the profile did not.
+    const rows = [
+      post({ id: 'reaching', ownerId: 'owner-a', radiusMeters: 6500 }),
+      post({ id: 'silent', ownerId: 'owner-a', radiusMeters: 0 }),
+      post({ id: 'unknown', ownerId: 'owner-a' }),
+    ]
+    const projected = profilePostsFromRealtime(rows, 'owner-a', null)
+    expect(projected.map(row => row.reachKm)).toEqual([6.5, 0, undefined])
+  })
+
+  it('keeps a zero reach distinct from an absent one', () => {
+    // 0 is a real answer — a pop nobody has engaged with — and must not be
+    // coerced into "no value", or the card would fall back to the account
+    // total for exactly the pops that legitimately read 0.
+    const [zero] = profilePostsFromRealtime(
+      [post({ id: 'zero', ownerId: 'owner-a', radiusMeters: 0 })], 'owner-a', null)
+    expect(zero.reachKm).toBe(0)
+    expect(zero.reachKm).not.toBeUndefined()
+  })
+
   it('resolves visiting profiles by their real normalized handle', () => {
     const rows = [
       post({ id: 'one', ownerId: 'owner-a', username: '@Same.Handle' }),

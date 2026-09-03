@@ -8,6 +8,11 @@ export interface RealtimeProfilePost {
   poster?: string
   mediaType?: 'photo' | 'video'
   syntheticPostId?: string
+  /** The pop's own reach in km, server-owned. Carried so the radius card can
+   *  show THIS post's radius while it is open, instead of falling through to
+   *  the account total — which is what made an open pop report the account's
+   *  0.0 mi rather than its own 6.5 km. */
+  reachKm?: number
   /** The pop's public origin as [lng, lat], only when its owner published an
    *  approximate location. The profile's map button flies here; without it
    *  there is no button, because a hidden origin must stay hidden. */
@@ -24,10 +29,15 @@ export function profilePostShareUrl(
   return postId ? `https://poplur.com/p/${encodeURIComponent(postId)}` : null
 }
 
+// A second copy of FeedTwin's CHANNELS numbering, kept here because this
+// module is DOM-free and must not import the feed component. `live` said 117
+// while the feed said 116, so one post showed a different channel number
+// depending on which surface you opened it from. arFilterChannelNumbers.test
+// re-reads the canonical list and fails if these ever drift again.
 const CHANNEL_NUMBER: Record<string, number> = {
   food: 101, beauty: 103, sports: 104, modelling: 105, fashion: 106,
   music: 107, tech: 108, news: 109, french: 110, spanish: 111,
-  shopping: 112, cartoon: 113, kids: 114, comedy: 115, live: 117,
+  shopping: 112, cartoon: 113, kids: 114, comedy: 115, live: 116,
 }
 
 function channelLabel(value: string | undefined): string {
@@ -78,6 +88,9 @@ function profilePost(value: NativeFeedPost): RealtimeProfilePost | null {
     poster: poster && (/^https:\/\//i.test(poster) || isSyntheticURL(poster)) ? poster : undefined,
     mediaType: value.mediaType,
     syntheticPostId: synthetic ? value.id : undefined,
+    // Same expression the feed already uses (FeedTwin), so one post reports
+    // one reach whichever surface it is opened from.
+    reachKm: value.radiusMeters == null ? undefined : value.radiusMeters / 1_000,
     origin: value.locationVisibility === 'approximate'
       && typeof value.originLongitude === 'number' && Number.isFinite(value.originLongitude)
       && typeof value.originLatitude === 'number' && Number.isFinite(value.originLatitude)
