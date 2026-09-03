@@ -7,10 +7,11 @@ import type { Detection } from './mlDetect'
 import { onFrame } from './frameGovernor'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { releaseWebGL } from './threeCleanup'
-import { faceAccessoryAnchor } from './faceARLandmarks'
+import { faceAccessoryAnchor, easePose, poseEase, type DrawnPose } from './faceARLandmarks'
 import styles from './FaceAROverlay.module.css'
 
 const THREE_D_FILTERS = new Set(['beauty', 'brighten', 'glow', 'sharpen', 'cool', 'vintage'])
+
 
 /** A filter has a 3D part when it is one of the code-built six, or when the
  *  published catalog names a Meshy model for it — otherwise a new filter's
@@ -411,27 +412,57 @@ export default function FaceAR3D({ detections, filter }: {
       camera.updateProjectionMatrix()
     }
 
+    // The tracker publishes a face pose roughly three times a second, so a
+    // rendered frame is nearly always redrawing one it has already drawn four
+    // or five times over — which is why the accessory arrived in visible
+    // ~350ms hops however many frames were being produced. Easing the drawn
+    // pose towards the reading turns those steps back into motion, and costs
+    // neither an extra frame nor an extra detection: this changes WHAT is
+    // drawn, not how often.
+    //
+    // The factor is derived from elapsed time rather than being a fixed
+    // per-frame constant, because the governor steps this lane between 5 and
+    // 20fps — a constant would quietly retune the damping along with it.
+    const POSE_HALF_LIFE_MS = 90
+    const drawn: (DrawnPose | null)[] = accessories.map(() => null)
+
     const frame = (_dtMs: number, now: number) => {
       if (disposed || !rendererActive) return
       if (now - previous < targetPeriod - 1) return
+      // Time since the last DRAWN frame, not since the last governor tick —
+      // the early return above means most ticks never reach this line. The
+      // clamp keeps a first frame, or a return from a long pause, from
+      // easing by a nonsense interval.
+      const sincePrevious = Math.min(250, Math.max(1, now - previous))
+      const ease = poseEase(sincePrevious, POSE_HALF_LIFE_MS)
       previous = now
       resize()
       const faces = detectionsRef.current.filter(isFace).slice(0, accessories.length)
       accessories.forEach((accessory, index) => {
         const face = faces[index]
         accessory.visible = Boolean(face)
-        if (!face) return
+        if (!face) {
+          // Forget the pose, so the next face snaps the accessory on instead
+          // of gliding it in from wherever the last face was standing.
+          drawn[index] = null
+          return
+        }
         const faceWidth = face.w * width
         const faceHeight = face.h * height
         const anchor = faceAccessoryAnchor(face)
-        accessory.position.set(
-          anchor.x * width - width * 0.5,
-          height * 0.5 - anchor.y * height,
-          0,
-        )
-        accessory.scale.set(faceWidth, faceHeight, Math.max(faceWidth, faceHeight))
-        accessory.rotation.z = -(face.roll ?? 0)
-        accessory.rotation.y = face.yaw ?? 0
+        const pose = easePose(drawn[index], {
+          x: anchor.x * width - width * 0.5,
+          y: height * 0.5 - anchor.y * height,
+          w: faceWidth,
+          h: faceHeight,
+          roll: -(face.roll ?? 0),
+          yaw: face.yaw ?? 0,
+        }, ease)
+        drawn[index] = pose
+        accessory.position.set(pose.x, pose.y, 0)
+        accessory.scale.set(pose.w, pose.h, Math.max(pose.w, pose.h))
+        accessory.rotation.z = pose.roll
+        accessory.rotation.y = pose.yaw
 
         const shimmer = now * 0.001 + index * 0.7
         if (filter === 'glow') accessory.rotation.z += Math.sin(shimmer * 0.9) * 0.025
