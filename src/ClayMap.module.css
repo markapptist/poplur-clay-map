@@ -2193,7 +2193,11 @@ header.weatherTitleBar {
 .popPinRadiusLoss {
   background: #d84b74;
   box-shadow: 0 3px 9px rgba(107, 12, 39, 0.5);
-  animation: popPinRadiusLoss 1.05s cubic-bezier(.16, .82, .24, 1) both;
+  /* Longer than the gain pill, and eased without a snap: the terrain it
+     annotates takes CLAIM_DECAY_MS (1400ms) to settle, so a 1.05s badge
+     finished while the land was still moving. Decay is not the gain animation
+     played backwards — see easeClaimRadius in mapClaims.ts. */
+  animation: popPinRadiusLoss 1.5s cubic-bezier(.33, 0, .35, 1) both;
 }
 
 .dominanceCard {

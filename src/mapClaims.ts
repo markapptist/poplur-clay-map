@@ -557,6 +557,38 @@ function cancelAllClaimAnimations(map: mapboxgl.Map): void {
   claimAnimations.delete(map)
 }
 
+/**
+ * Growth and decay are NOT the same event, so they do not share a curve.
+ *
+ * Growth is earned and attributable — somebody just saw your pop — so it keeps
+ * the curve that shipped: a hard attack covering 16.5% of the distance in the
+ * first 5% of its duration, arriving at the target by t≈0.48 and holding.
+ * (The comment below called that an overshoot spring. It is not. The raw
+ * expression peaks at 1.086, but Math.min(1, …) clamps it at every call site,
+ * so nothing has ever overshot. The attack is the real character of it.)
+ *
+ * Decay is the absence of events, and radiusDecay applies it to every post at
+ * once, so that same attack would fire across the whole board simultaneously
+ * and read as an alarm. Decay ramps in from nothing and uses its full duration
+ * instead of finishing early: it settles rather than strikes.
+ */
+export const CLAIM_GROWTH_MS = 620
+export const CLAIM_DECAY_MS = 1_400
+
+/** How long this particular move should take, by direction. */
+export function claimTransitionMs(from: number, to: number): number {
+  return to < from ? CLAIM_DECAY_MS : CLAIM_GROWTH_MS
+}
+
+/**
+ * The eased fraction for a claim move. `shrinking` picks the curve: the
+ * shipped attack for growth, easeInOutQuad for decay.
+ */
+export function easeClaimRadius(t: number, shrinking: boolean): number {
+  if (shrinking) return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+  return Math.min(1, 1 + Math.sin(t * Math.PI) * 0.14 - Math.pow(1 - t, 3))
+}
+
 function animateClaim(map: mapboxgl.Map, claim: Claim, from: number): void {
   const animations = animationsFor(map)
   cancelClaimAnimation(map, claim.id)
@@ -568,13 +600,13 @@ function animateClaim(map: mapboxgl.Map, claim: Claim, from: number): void {
   const active: ActiveClaimAnimation = { claim, stop: () => {} }
   animations.set(claim.id, active)
   const started = performance.now()
-  const duration = 620
+  const shrinking = claim.radiusKm < from
+  const duration = claimTransitionMs(from, claim.radiusKm)
   active.stop = onFrame((_elapsedMs, now) => {
     if (animations.get(claim.id) !== active) return
     const t = Math.min(1, (now - started) / duration)
-    // Overshoot spring so the territory "pops" like everything else.
-    const eased = 1 + Math.sin(t * Math.PI) * 0.14 - Math.pow(1 - t, 3)
-    const radiusKm = from + (claim.radiusKm - from) * Math.min(1, eased)
+    const eased = easeClaimRadius(t, shrinking)
+    const radiusKm = from + (claim.radiusKm - from) * eased
     upsertClaimsBounded(map, [{ ...claim, radiusKm: Math.max(0, radiusKm) }])
     pushClaims(map)
     if (t < 1) return

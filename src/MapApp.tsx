@@ -170,6 +170,7 @@ import ConquerGlance from './ConquerGlance'
 import ConquerScreen from './ConquerScreen'
 import type { MapConquerSnapshot } from './mapConquer'
 import { KM_TO_MI, shouldUseMiles } from './units'
+import { playClaimDecay, playClaimGrowth } from './motionEffectsAudio'
 import styles from './App.module.css'
 import dropStyles from './ClayMap.module.css'
 
@@ -2999,9 +3000,21 @@ export default function MapApp() {
     window.clearTimeout(pinRadiusPulseTimerRef.current)
     const token = ++pinRadiusPulseTokenRef.current
     setPinRadiusPulse({ id, deltaKm, token })
+    // Sound lives in the funnel rather than at the call sites, which is what
+    // makes it coalesce for free: an announced change is announced ONCE, so a
+    // decay pass that moves the whole board still speaks once rather than once
+    // per claim. Gated on the ambient lease so a board asleep in a pocket
+    // stays silent — a reaction the viewer just made always has it awake.
+    if (ambientAllowed()) {
+      if (deltaKm < 0) playClaimDecay()
+      else playClaimGrowth()
+    }
+    // The badge must outlive its own CSS animation or React tears the pill off
+    // mid-flight. The loss pill runs 1.5s to keep pace with the slower decay
+    // sweep (CLAIM_DECAY_MS), so it needs a longer leash than the 1.05s gain.
     pinRadiusPulseTimerRef.current = window.setTimeout(() => {
       setPinRadiusPulse(current => current?.token === token ? null : current)
-    }, 1_100)
+    }, deltaKm < 0 ? 1_550 : 1_100)
   }, [])
   const popLevelRef = useRef(popLevel)
   popLevelRef.current = popLevel

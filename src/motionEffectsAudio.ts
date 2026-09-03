@@ -498,6 +498,90 @@ export function playRadiusCounterDone() {
   })
 }
 
+/**
+ * A claim just grew, and somebody caused it.
+ *
+ * Same voice as the counter pip above, on purpose: the number counting up and
+ * the land pushing out are the same fact told twice, so they should sound
+ * related. Rising pitch carries the direction, and a soft sine body underneath
+ * stops it reading as a bare beep.
+ */
+export function playClaimGrowth(volume = 1) {
+  if (isGateMuted()) return
+  const c = wakeContext(ONE_SHOT_IDLE_MS)
+  if (!c) return
+  const now = c.currentTime
+  const level = Math.max(0, Math.min(1, volume))
+
+  const pip = c.createOscillator()
+  pip.type = 'square'
+  pip.frequency.setValueAtTime(560, now)
+  pip.frequency.exponentialRampToValueAtTime(1480, now + 0.13)
+  const filter = c.createBiquadFilter()
+  filter.type = 'highpass'
+  filter.frequency.value = 420
+  const pipGain = c.createGain()
+  pipGain.gain.setValueAtTime(0.0001, now)
+  pipGain.gain.exponentialRampToValueAtTime(0.075 * level, now + 0.012)
+  pipGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.19)
+  pip.connect(filter).connect(pipGain).connect(c.destination)
+  pip.start(now)
+  pip.stop(now + 0.22)
+  pip.addEventListener('ended', () => {
+    pip.disconnect(); filter.disconnect(); pipGain.disconnect()
+  }, { once: true })
+
+  const body = c.createOscillator()
+  body.type = 'sine'
+  body.frequency.setValueAtTime(210, now)
+  body.frequency.exponentialRampToValueAtTime(330, now + 0.1)
+  const bodyGain = c.createGain()
+  bodyGain.gain.setValueAtTime(0.0001, now)
+  bodyGain.gain.exponentialRampToValueAtTime(0.05 * level, now + 0.02)
+  bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24)
+  body.connect(bodyGain).connect(c.destination)
+  body.start(now)
+  body.stop(now + 0.26)
+  body.addEventListener('ended', () => {
+    body.disconnect(); bodyGain.disconnect()
+  }, { once: true })
+}
+
+/**
+ * A claim decayed, and nobody did it.
+ *
+ * Deliberately NOT the growth sound reversed. Decay arrives hourly across the
+ * whole board at once, so it must not have an attack — the gain ramps IN over
+ * 220ms rather than striking — and it must not scale with the number of claims
+ * that moved. `movers` nudges the level a little so a full sweep is
+ * perceptibly weightier than one pin, and then stops: this is called ONCE per
+ * sweep, never once per claim.
+ */
+export function playClaimDecay(movers = 1) {
+  if (isGateMuted()) return
+  const c = wakeContext(ONE_SHOT_IDLE_MS)
+  if (!c) return
+  const now = c.currentTime
+  const osc = c.createOscillator()
+  osc.type = 'sine'
+  osc.frequency.setValueAtTime(320, now)
+  osc.frequency.exponentialRampToValueAtTime(190, now + 0.85)
+  const filter = c.createBiquadFilter()
+  filter.type = 'lowpass'
+  filter.frequency.value = 900
+  const gain = c.createGain()
+  const peak = Math.min(0.05, 0.022 + Math.max(0, movers - 1) * 0.006)
+  gain.gain.setValueAtTime(0.0001, now)
+  gain.gain.linearRampToValueAtTime(peak, now + 0.22)
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 1)
+  osc.connect(filter).connect(gain).connect(c.destination)
+  osc.start(now)
+  osc.stop(now + 1.05)
+  osc.addEventListener('ended', () => {
+    osc.disconnect(); filter.disconnect(); gain.disconnect()
+  }, { once: true })
+}
+
 // These effects never take the floor — they sit on top of whatever page is
 // playing — but leaving a page has to be able to switch them off, and until
 // this registration existed silenceAllAudio() could not see them at all.
