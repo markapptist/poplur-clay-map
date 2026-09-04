@@ -46,7 +46,10 @@ describe('map Conquer screen snapshot', () => {
   it('accepts a valid cross-frame snapshot and rejects malformed rows', () => {
     const snapshot = createMapConquerSnapshot([leader(0)], 12, 44)
     expect(readMapConquerSnapshot(snapshot)).toEqual(snapshot)
-    expect(readMapConquerSnapshot({ ...snapshot, rows: [{ ...snapshot.rows[0], fame: -1 }] })).toBeNull()
+    // A malformed ROW is dropped; the board itself survives. A malformed
+    // envelope is still refused outright.
+    expect(readMapConquerSnapshot({ ...snapshot, rows: [{ ...snapshot.rows[0], fame: -1 }] })?.rows).toEqual([])
+    expect(readMapConquerSnapshot({ ...snapshot, scope: 'GALAXY' })).toBeNull()
   })
 
   it('creates a complete, valid and deterministic four-page simulation', () => {
@@ -122,5 +125,43 @@ describe('map Conquer screen snapshot', () => {
     expect(board).toContain('data-poplur-screen="map-conquer"')
     expect(board).toContain('aria-label="Close Conquer Board"')
     expect(board).not.toContain('TAP THE CUBE TO RETURN TO MAP')
+  })
+})
+
+describe('a live board survives a leader with no picture', () => {
+  // The exact shape of the device bug: every real leader arrived with
+  // `avatar: undefined`, the reader threw the whole snapshot away, and the
+  // shell kept showing the empty board it had accepted before posts loaded.
+  const leader = {
+    owner: 'LiEG6SNtKEZN6eEGeybf',
+    label: '@basement.set',
+    color: '#5FB0FF',
+    avatar: undefined,
+    radiusKm: 152,
+    territories: 3,
+    topPlace: undefined,
+    mine: false,
+    fame: 15200,
+  }
+
+  it('publishes null, not undefined, for a missing avatar and place', () => {
+    const snapshot = createMapConquerSnapshot([leader as never], 12, 1)
+    expect(snapshot.rows[0].avatar).toBeNull()
+    expect(snapshot.rows[0].topPlace).toBe('')
+  })
+
+  it('reads a row whose avatar is absent instead of discarding the board', () => {
+    const read = readMapConquerSnapshot({ scope: 'LOCAL', generatedAt: 1, rows: [leader] })
+    expect(read?.rows).toHaveLength(1)
+    expect(read?.rows[0]).toMatchObject({ label: '@basement.set', avatar: null, topPlace: '' })
+  })
+
+  it('drops only the malformed row, keeping every valid leader', () => {
+    const read = readMapConquerSnapshot({
+      scope: 'WORLD',
+      generatedAt: 1,
+      rows: [{ ...leader, avatar: null, topPlace: 'Toronto' }, { garbage: true }, { ...leader, owner: 'other', radiusKm: 9 }],
+    })
+    expect(read?.rows.map(row => row.owner)).toEqual(['LiEG6SNtKEZN6eEGeybf', 'other'])
   })
 })

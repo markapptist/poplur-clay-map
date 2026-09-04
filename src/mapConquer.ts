@@ -139,14 +139,18 @@ export function createMapConquerSnapshot(
 ): MapConquerSnapshot {
   return {
     scope: zoom <= DOMINANCE_OVERVIEW_MAX_ZOOM ? 'WORLD' : 'LOCAL',
+    // Normalised at the source so the shell's reader never meets an absent
+    // field. `avatar` is `string | null` on the wire, but a leader assembled
+    // from a pin with no picture carried `undefined` here, which is neither —
+    // and the reader, doing its job, rejected the whole board for it.
     rows: rows.slice(0, MAP_CONQUER_ROW_LIMIT).map(row => ({
       owner: row.owner,
       label: row.label,
       color: row.color,
-      avatar: row.avatar,
+      avatar: row.avatar ?? null,
       radiusKm: row.radiusKm,
       territories: row.territories,
-      topPlace: row.topPlace,
+      topPlace: row.topPlace ?? '',
       mine: row.mine,
       fame: row.fame,
     })),
@@ -162,25 +166,32 @@ export function readMapConquerSnapshot(value: unknown): MapConquerSnapshot | nul
   if (candidate.scope !== 'WORLD' && candidate.scope !== 'LOCAL') return null
   if (!finiteNonNegative(candidate.generatedAt) || !Array.isArray(candidate.rows)) return null
 
+  // One malformed row drops THAT row, never the board. This reader used to
+  // return null for the whole snapshot on any bad field, and one field was
+  // legitimately absent on every live board: a leader without a picture
+  // arrived with `avatar: undefined`. The shell then kept the last snapshot
+  // it had accepted — the empty one published before any post had loaded —
+  // and the Conquer Board read "No conquered areas in view" over a map
+  // covered in claims. Same for a missing place name: an empty string is a
+  // truthful answer, a discarded board is not.
   const rows: MapConquerRow[] = []
   for (const raw of candidate.rows.slice(0, MAP_CONQUER_ROW_LIMIT)) {
-    if (!raw || typeof raw !== 'object') return null
+    if (!raw || typeof raw !== 'object') continue
     const row = raw as Partial<MapConquerRow>
     if (typeof row.owner !== 'string' || typeof row.label !== 'string'
-      || typeof row.color !== 'string' || typeof row.topPlace !== 'string'
-      || (row.avatar !== null && typeof row.avatar !== 'string')
+      || typeof row.color !== 'string'
       || !finiteNonNegative(row.radiusKm)
       || !finiteNonNegative(row.territories)
       || !finiteNonNegative(row.fame)
-      || typeof row.mine !== 'boolean') return null
+      || typeof row.mine !== 'boolean') continue
     rows.push({
       owner: row.owner.slice(0, 160),
       label: row.label.slice(0, 80),
       color: row.color.slice(0, 80),
-      avatar: row.avatar?.slice(0, 2048) ?? null,
+      avatar: typeof row.avatar === 'string' ? row.avatar.slice(0, 2048) : null,
       radiusKm: row.radiusKm,
       territories: Math.floor(row.territories),
-      topPlace: row.topPlace.slice(0, 160),
+      topPlace: typeof row.topPlace === 'string' ? row.topPlace.slice(0, 160) : '',
       mine: row.mine,
       fame: Math.round(row.fame),
     })
