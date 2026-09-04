@@ -30,6 +30,12 @@ describe('feed byline', () => {
     expect(tsx).toContain('const first = CHANNELS.findIndex(candidate => feedPostsForChannel(candidate.id, publishedPosts).length > 0)')
   })
 
+  it('loops the channels at both ends', () => {
+    const tsx = read('FeedTwin.tsx')
+    expect(tsx).toContain('goToChannel((index + dir + CHANNELS.length) % CHANNELS.length)')
+    expect(tsx).not.toContain('Math.min(CHANNELS.length - 1, index + dir)')
+  })
+
   it('keeps the left column on eleven equal rows', () => {
     const css = read('index.css')
     expect(css).toContain('--poplur-feed-number: var(--poplur-feed-ctl);')

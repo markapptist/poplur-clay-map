@@ -752,8 +752,10 @@ export default function FeedTwin({
     else setOwnIndex(next)
   }, [ch, focusedContent, index, onIndexChange, publishedPosts])
 
+  // The dial is a loop: up from the highest channel lands on the first, down
+  // from the first on the highest. No dead end at either edge.
   const change = useCallback((dir: 1 | -1) => {
-    goToChannel(Math.max(0, Math.min(CHANNELS.length - 1, index + dir)))
+    goToChannel((index + dir + CHANNELS.length) % CHANNELS.length)
   }, [goToChannel, index])
 
   const toggleMute = () => {
