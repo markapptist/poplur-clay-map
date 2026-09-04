@@ -44,12 +44,20 @@ export const RADIUS_TROPHY_SPRITE_VIEW = { yaw: 20, pitch: 12, size: 256 } as co
 const FLOOR_KM = 0.1
 const FLOOR_LOG = Math.log10(FLOOR_KM)
 const CEILING_LOG = Math.log10(EARTH_RADIUS_KM)
+/** The pure log rail put a one-kilometre pop a FIFTH of the way to the top of
+ *  the world, which read as a lie on the meter ("0.6 mi should not reach that
+ *  high"). Biasing the log position keeps the decade trophies in order while
+ *  pressing small radii toward the foot: bronze (1 km) rings at ~9% instead
+ *  of ~21%, gold (100 km) near halfway, and each decade is a visibly LONGER
+ *  climb than the one before — the way a high striker gets harder near the
+ *  bell. */
+const METER_BIAS = 1.5
 
 /** Where on the rail (0 = bottom, 1 = the top of the tower) a radius sits. */
 export function radiusMeterLevel(radiusKm: number): number {
   if (!Number.isFinite(radiusKm) || radiusKm <= FLOOR_KM) return 0
   const level = (Math.log10(radiusKm) - FLOOR_LOG) / (CEILING_LOG - FLOOR_LOG)
-  return Math.max(0, Math.min(1, level))
+  return Math.pow(Math.max(0, Math.min(1, level)), METER_BIAS)
 }
 
 /** The rail level at which a trophy rings. */

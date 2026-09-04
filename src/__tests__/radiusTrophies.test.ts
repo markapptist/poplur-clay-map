@@ -10,15 +10,19 @@ import {
 import { EARTH_RADIUS_KM } from '../worldRadius'
 
 describe('the radius high striker', () => {
-  it('spaces the five trophies one decade apart on a log rail, diamond at the top', () => {
+  it('orders the five trophies up a biased log rail, diamond at the top', () => {
     const levels = RADIUS_TROPHIES.map(radiusTrophyLevel)
     expect(RADIUS_TROPHIES.map(t => t.tier)).toEqual(['bronze', 'silver', 'gold', 'platinum', 'diamond'])
     expect(levels[4]).toBeCloseTo(1, 6)
     for (let i = 1; i < levels.length; i += 1) expect(levels[i]).toBeGreaterThan(levels[i - 1])
-    // Bronze (1 km), silver (10 km), gold (100 km) and platinum (1,000 km)
-    // are evenly spaced: each is one decade above the last.
+    // The rail is deliberately NOT evenly spaced any more: small radii press
+    // toward the foot (a 1 km pop must read as barely off the ground against
+    // a planet-sized tower) and every decade is a longer climb than the one
+    // before, like a high striker getting harder near the bell.
+    expect(levels[0]).toBeLessThan(0.12)
+    expect(radiusTrophyLevel(RADIUS_TROPHIES[2])).toBeLessThan(0.55)
     const gaps = [levels[1] - levels[0], levels[2] - levels[1], levels[3] - levels[2]]
-    expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThan(1e-9)
+    for (let i = 1; i < gaps.length; i += 1) expect(gaps[i]).toBeGreaterThan(gaps[i - 1])
   })
 
   it('reads a radius onto the rail: floor at 0, ceiling at 1, never past either', () => {
