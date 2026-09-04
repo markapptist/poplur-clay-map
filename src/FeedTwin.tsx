@@ -61,6 +61,7 @@ import {
   recordProfileVisitAfterView,
 } from './radiusLedger'
 import { currentViewerCoords as viewerCoordsFromFix } from './viewerFix'
+import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
 // a fullscreen vertical TV-channel video pager. Vertical swipe changes channel;
@@ -735,6 +736,7 @@ export default function FeedTwin({
   // audio focus and record the skip — a jump that skipped that bookkeeping left
   // the previous channel's clip decoding behind the new one.
   const goToChannel = useCallback((next: number) => {
+    userPickedChannelRef.current = true
     if (next === index || next < 0 || next > CHANNELS.length - 1) return
     const currentPosts = rankedPostsFor(
       ch,
@@ -859,20 +861,36 @@ export default function FeedTwin({
   const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
   // The byline's mark: the supplied check, by the same rule the profile uses.
   const bylineVerified = verifiedKindForHandle(post?.user, ownHandle)
-  // Never open on an empty channel. Once the published pool is in, if the
-  // channel the feed landed on holds nothing, move to the first one that does
-  // — quietly, with none of goToChannel's skip signals or pops. A Map handoff
-  // names its own channel and is left alone. Once per opening.
-  const openedOnContentRef = useRef(false)
+  // Never open on an empty channel — and "empty" means nothing IN REACH: a
+  // channel full of pops that cannot reach the viewer is empty to them, and
+  // demo padding does not count. Keep steering to the first channel with a
+  // real pop in reach until the person picks a channel themselves (the pool,
+  // the location fix and the simulation switch all arrive after open, so this
+  // must re-run, not fire once). A Map handoff names its own channel.
+  const userPickedChannelRef = useRef(false)
+  const liveSimulation = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
+  const [viewerFixTick, setViewerFixTick] = useState(0)
   useEffect(() => {
-    if (openedOnContentRef.current || focusedContent || publishedPosts.length === 0) return
-    openedOnContentRef.current = true
-    if (feedPostsForChannel(ch.id, publishedPosts).length > 0) return
-    const first = CHANNELS.findIndex(candidate => feedPostsForChannel(candidate.id, publishedPosts).length > 0)
+    const bump = () => setViewerFixTick(tick => tick + 1)
+    window.addEventListener('poplur-native-location', bump)
+    window.addEventListener('poplur-location', bump)
+    return () => {
+      window.removeEventListener('poplur-native-location', bump)
+      window.removeEventListener('poplur-location', bump)
+    }
+  }, [])
+  useEffect(() => {
+    void liveSimulation
+    void viewerFixTick
+    if (userPickedChannelRef.current || focusedContent || publishedPosts.length === 0) return
+    const filledInReach = (channel: Channel) =>
+      rankedPostsFor(channel, publishedPosts, discovery).some(post => !post.demo)
+    if (filledInReach(ch)) return
+    const first = CHANNELS.findIndex(filledInReach)
     if (first < 0 || first === index) return
     if (onIndexChange) onIndexChange(first)
     else setOwnIndex(first)
-  }, [ch.id, focusedContent, index, onIndexChange, publishedPosts])
+  }, [ch, discovery, focusedContent, index, liveSimulation, onIndexChange, publishedPosts, viewerFixTick])
   // Going to a channel is seeing what it holds: the badge on its tile comes
   // off on arrival, not one pop at a time. The pop actually on screen is
   // marked too, which is what clears the same pop's badge on the Map.

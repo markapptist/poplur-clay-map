@@ -170,7 +170,11 @@ function normalizeFeedPost(
     && originLongitude != null
     && Math.abs(originLongitude) <= 180
 
+  // `syntheticCohort` on the row: the Map re-normalises rows the shell already
+  // normalised, which carry the marker but no longer the raw fields. Losing it
+  // there is why the Feed showed the cohort while the Map dropped every pin.
   const syntheticCohort = row.syntheticJourney === 'five-actor-live' || row.syntheticBeta === true
+    || row.syntheticCohort === true
   return {
     ...(syntheticCohort ? { syntheticCohort: true as const } : {}),
     id,

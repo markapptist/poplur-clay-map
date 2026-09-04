@@ -30,7 +30,8 @@ describe('feed byline', () => {
 
   it('never opens on an empty channel', () => {
     const tsx = read('FeedTwin.tsx')
-    expect(tsx).toContain('const first = CHANNELS.findIndex(candidate => feedPostsForChannel(candidate.id, publishedPosts).length > 0)')
+    expect(tsx).toContain('const first = CHANNELS.findIndex(filledInReach)')
+    expect(tsx).toContain('rankedPostsFor(channel, publishedPosts, discovery).some(post => !post.demo)')
   })
 
   it('loops the channels at both ends', () => {

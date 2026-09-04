@@ -206,6 +206,8 @@ import {
 import { EARTH_RADIUS_KM } from './worldRadius'
 import { publishViewerFix } from './viewerFix'
 import { loadTestSimulation } from './testActivity'
+import { feedPostReachesViewer } from './feedDiscovery'
+import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
 
 
 /**
@@ -2136,16 +2138,24 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // A Feed entry may happen before the native bridge has returned. Retune one
   // time when real interception rows arrive, unless the viewer deliberately
   // selected a channel in the meantime.
+  const liveSimulationForTune = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
   useEffect(() => {
+    void liveSimulationForTune
     if (activeTab !== 'feed' || !interceptingFeedPosts.length) return
+    // Only pops that actually reach the viewer make a channel worth landing
+    // on — the same rule Feed delivery applies, test mode included.
+    const fix = radioLocationRef.current
+    const viewer: [number, number] | null = fix ? [fix.lng, fix.lat] : null
+    const reaching = interceptingFeedPosts.filter(post => feedPostReachesViewer(post, viewer))
+    if (!reaching.length) return
     const visit = feedEntryVisitRef.current
     setChanIndex(current => {
       if (autoTunedFeedChannelRef.current !== current) return current
-      const next = nextInterceptingChannelIndex(CHANNELS, interceptingFeedPosts, current, visit)
+      const next = nextInterceptingChannelIndex(CHANNELS, reaching, current, visit)
       autoTunedFeedChannelRef.current = next
       return next
     })
-  }, [activeTab, interceptingFeedPosts])
+  }, [activeTab, interceptingFeedPosts, liveSimulationForTune])
   // Cube size follows the viewport so the bottom cluster never overlaps.
   const [cubeSize, setCubeSize] = useState(cubeSizeFor)
   const mapFrameRef = useRef<HTMLIFrameElement>(null)
