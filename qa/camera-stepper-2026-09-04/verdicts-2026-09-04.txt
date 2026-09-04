@@ -1,0 +1,8 @@
+# Camera stepper probe — 2026-09-04T20:06:58Z — nested shell 5173 ?view=camera, fake device, loadavg ~300
+✅ camera stepper mounted with the feed-shaped block — {"filter":"1","buttons":["Next filter","Previous filter","Zoom out — hold to keep zooming","Zoom in — hold to keep zooming"]}
+✅ ▲ steps to the next filter (readout and wheel move together) — readout 1→2 · wheel {"label":"None","y":379} → {"label":"Smooth Glow","y":340}
+  wheel direction: the new pick sits ABOVE the old one (▲ pressed)
+✅ ▼ steps back
+✅ ▶ cycles the lens presets 1× → 2× → .5× — 1× → 2× → .5×
+✅ ◀ cycles back — 2×
+✅ holding ▶ ramps the zoom past the preset and stops on release — held=true · 17 steps: [2.05,2.1,2.15,2.2]…[2.9,2.95] · after release +0

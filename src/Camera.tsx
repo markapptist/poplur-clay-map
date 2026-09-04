@@ -30,6 +30,9 @@ import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
+import CameraStepControls from './CameraStepControls'
+import { AR_FILTERS } from './ARFilters'
+import { ZOOM_HOLD_PER_SECOND, ZOOM_HOLD_TICK_MS, filterOrdinal, nextZoomPreset, stepFilterId, zoomReadout, type StepDirection } from './cameraStepper'
 
 // Native shells: the REAL camera (AVCapture + ML detection, the previous
 // versions' pipeline) renders BEHIND this WebView; this pane punches a
@@ -1105,6 +1108,43 @@ export default function Camera({
     applyZoomValue(zoomRef.current + direction * step, direction)
   }, [applyZoomValue])
 
+  // ── The stepper's jobs (CameraStepControls) ───────────────────────────────
+  const stepArFilter = useCallback((direction: StepDirection) => {
+    const next = stepFilterId(AR_FILTERS.map(filter => filter.id), arFilterRef.current, direction)
+    if (next === arFilterRef.current) return
+    playPop()
+    setArFilter(next)
+  }, [])
+  const stepZoomPreset = useCallback((direction: StepDirection) => {
+    playPop()
+    applyZoomValue(nextZoomPreset(zoomRef.current, direction, ZOOM_PRESETS), direction)
+  }, [applyZoomValue])
+  // The rocker: a steady ramp on a hardware-paced tick, through the one
+  // funnel every zoom path uses (applyZoomValue rounds and rejects no-ops, so
+  // the unrounded value is kept here and the camera only hears real steps).
+  const zoomHoldRef = useRef<{ timer: number; value: number } | null>(null)
+  const stopZoomHold = useCallback(() => {
+    const hold = zoomHoldRef.current
+    if (!hold) return
+    window.clearInterval(hold.timer)
+    zoomHoldRef.current = null
+  }, [])
+  const startZoomHold = useCallback((direction: StepDirection) => {
+    stopZoomHold()
+    playPop(0.4)
+    let last = performance.now()
+    const hold = { timer: 0, value: zoomRef.current }
+    hold.timer = window.setInterval(() => {
+      const now = performance.now()
+      const dt = Math.min(0.25, (now - last) / 1000)
+      last = now
+      hold.value = clampZoom(hold.value + direction * ZOOM_HOLD_PER_SECOND * dt, zoomRangeRef.current)
+      applyZoomValue(hold.value, direction)
+    }, ZOOM_HOLD_TICK_MS)
+    zoomHoldRef.current = hold
+  }, [applyZoomValue, stopZoomHold])
+  useEffect(() => stopZoomHold, [stopZoomHold])
+
   const flipCamera = useCallback(() => {
     setFlashEnabled(false)
     applyTorch(false)
@@ -1748,7 +1788,18 @@ export default function Camera({
       {/* …and the bloom at the instant of capture — the front camera's flash */}
       {bloom && <div className={styles.camBloom} aria-hidden="true" />}
 
-      <TabControlRail side={controlSide} label="Camera controls" anchor="center">
+      {/* Fill, as the feed's rail does: this column now carries the stepper
+          under it (CameraStepControls — the feed's inner arrows doing the
+          camera's jobs), so the two blocks share the feed's tile formula and
+          land on the same bottom line. The reserve is the stepper's own
+          block: four arrow tiles, two readouts, their gaps, and the seam. The
+          thirteen-row size is set at the camera root (.poplur-feed-rows-13). */}
+      <TabControlRail
+        side={controlSide}
+        label="Camera controls"
+        fill
+        fillReserveBelow="calc(4 * var(--poplur-feed-ctl) + 2 * var(--poplur-feed-number) + 5 * var(--poplur-feed-gap) + var(--poplur-feed-seam))"
+      >
         {/* Which camera you are holding. The Kodak is the photo camera and the
             camcorder the video camera — the two objects the cube wears for
             those modes — so switching is one tap on the rail instead of a
@@ -1756,6 +1807,8 @@ export default function Camera({
             the camera the shutter will fire. */}
         <SideControlIconButton
           icon="camera.kodak"
+          fluid
+          imageStyle={{ width: '100%', height: '100%', objectFit: 'contain' }}
           aria-pressed={captureMode === 'photo'}
           aria-label={captureMode === 'photo' ? 'Photo camera, selected' : 'Switch to the photo camera'}
           activation="pointerdown"
@@ -1767,6 +1820,8 @@ export default function Camera({
         />
         <SideControlIconButton
           icon="camera.camcorder"
+          fluid
+          imageStyle={{ width: '100%', height: '100%', objectFit: 'contain' }}
           aria-pressed={captureMode === 'video'}
           aria-label={captureMode === 'video' ? 'Video camera, selected' : 'Switch to the video camera'}
           activation="pointerdown"
@@ -1778,6 +1833,8 @@ export default function Camera({
         />
         <SideControlIconButton
           icon="camera.flash"
+          fluid
+          imageStyle={{ width: '100%', height: '100%', objectFit: 'contain' }}
           aria-pressed={flash}
           aria-label={flash ? 'Turn flash off' : 'Turn flash on'}
           activation="pointerdown"
@@ -1788,6 +1845,8 @@ export default function Camera({
             here it silences the ML announcer, not a soundtrack. */}
         <SideControlIconButton
           icon="camera.mute"
+          fluid
+          imageStyle={{ width: '100%', height: '100%', objectFit: 'contain' }}
           aria-pressed={!aiVoice}
           aria-label={aiVoice ? 'Mute camera voice' : 'Turn camera voice on'}
           activation="pointerdown"
@@ -1795,6 +1854,8 @@ export default function Camera({
         />
         <SideControlIconButton
           icon="camera.flip_camera"
+          fluid
+          imageStyle={{ width: '100%', height: '100%', objectFit: 'contain' }}
           aria-label="Switch camera"
           activation="pointerdown"
           onActivate={flipCamera}
@@ -1802,6 +1863,7 @@ export default function Camera({
         <CameraScanButton
           active={detectOn}
           size={44}
+          fluid
           onToggle={() => setDetectOn(!detectOn)}
         />
         {/* Camera roll, promoted from a floating bottom-left button into this
@@ -1865,6 +1927,23 @@ export default function Camera({
           )}
         </button>
       </TabControlRail>
+      {/* The feed's inner arrows, on the camera. ▲ ▼ step the AR filter the
+          wheel opposite is showing (up is the higher number, as channel-up is
+          the higher channel); ◀ ▶ step the lens presets 0.5× · 1× · 2× with
+          the current zoom read out between them, and held they are a zoom
+          rocker that keeps going until the finger lifts. */}
+      {real && (
+        <CameraStepControls
+          side={controlSide}
+          filterNumber={filterOrdinal(AR_FILTERS.map(filter => filter.id), arFilter)}
+          filterLabel={AR_FILTERS.find(filter => filter.id === arFilter)?.label ?? 'None'}
+          zoomLabel={zoomReadout(zoom)}
+          onFilterUp={() => stepArFilter(1)}
+          onFilterDown={() => stepArFilter(-1)}
+          onZoomStep={stepZoomPreset}
+          onZoomHold={direction => { if (direction) startZoomHold(direction); else stopZoomHold() }}
+        />
+      )}
       {/* AR filters, standing opposite the camera's own controls and starting
           at the same top. Photo and video both: the filter grades the live
           preview either way, so there is no mode in which the column is wrong.
@@ -1961,7 +2040,7 @@ export default function Camera({
   )
 
   return (
-    <div className={styles.camPager} data-poplur-screen="camera" aria-label="Camera">
+    <div className={`${styles.camPager} poplur-feed-rows-13`} data-poplur-screen="camera" aria-label="Camera">
       <div
         className={animated ? styles.camPagerTrack : `${styles.camPagerTrack} ${styles.camPagerSnap}`}
         style={{ transform: `translateY(${-pos * 25}%)` }}

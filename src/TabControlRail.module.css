@@ -91,10 +91,10 @@
    and holding near that ratio is what stops the column reading as two
    unrelated sets of buttons. */
 .fill {
-  /* The feed's column starts under the channel brand icon, not at the generic
-     rail line: --poplur-feed-action-top is what --poplur-feed-column is
-     measured from, so the top edge and the tile formula must agree or the
-     rail overruns the stepper by exactly the difference. */
+  /* The feed's column starts at the header line, not at the generic rail
+     line: --poplur-feed-action-top is what --poplur-feed-column is measured
+     from, so the top edge and the tile formula must agree or the rail
+     overruns the stepper by exactly the difference. */
   top: var(
     --poplur-feed-action-top,
     max(154px, calc(env(safe-area-inset-top, 0px) + 112px))

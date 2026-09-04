@@ -384,19 +384,6 @@
   filter: drop-shadow(0 6px 8px rgba(0, 0, 0, 0.5));
 }
 
-/* Channel identity runs alongside the global Poplur wordmark and directly
-   above the control rail's mute mark. It never competes with the video title. */
-.channelBrandIcon {
-  position: absolute;
-  z-index: 46;
-  top: var(--header-title-top, 44px);
-  left: max(12px, env(safe-area-inset-left, 0px));
-  width: 44px;
-  height: 44px;
-  display: grid;
-  place-items: center;
-  pointer-events: none;
-}
 
 .discoveryEmpty {
   position: absolute;

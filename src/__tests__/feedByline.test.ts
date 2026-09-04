@@ -45,7 +45,7 @@ describe('feed byline', () => {
     expect(tsx).not.toContain('Math.min(CHANNELS.length - 1, index + dir)')
   })
 
-  it('keeps the left column on nine equal rows', () => {
+  it('keeps the left column on twelve equal rows', () => {
     const css = read('index.css')
     expect(css).toContain('--poplur-feed-number: var(--poplur-feed-ctl);')
     expect(css).toContain('--poplur-feed-seam: var(--poplur-feed-gap);')

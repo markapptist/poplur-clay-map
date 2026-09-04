@@ -11,10 +11,13 @@ export default function CameraScanButton({
   active,
   onToggle,
   size = 48,
+  fluid = false,
 }: {
   active: boolean
   onToggle: () => void
   size?: number
+  /** In a filled rail the stylesheet sizes the control — see SideControlIconImage. */
+  fluid?: boolean
 }) {
   return (
     <SideControlIconButton
@@ -23,6 +26,8 @@ export default function CameraScanButton({
       aria-pressed={active}
       aria-label={active ? 'Stop camera scan' : 'Scan what the camera sees'}
       imageSize={size}
+      fluid={fluid}
+      imageStyle={fluid ? { width: '100%', height: '100%', objectFit: 'contain' } : undefined}
       onActivate={() => {
         playPop()
         onToggle()

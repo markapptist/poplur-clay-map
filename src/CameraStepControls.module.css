@@ -1,0 +1,74 @@
+/* The camera's stepper: the same block the feed's channel stepper is, in the
+   same column and on the same bottom line, so the two screens' inner arrows
+   are one control in two places. Six rows: filter up, the filter's number,
+   filter down, zoom out, the zoom, zoom in. Row sizes come from the feed's
+   tile formula, recomputed for the camera's thirteen-row column at the camera
+   root (.poplur-feed-rows-13 in index.css). */
+.group {
+  position: absolute;
+  bottom: var(--poplur-home-clearance);
+  z-index: 46;
+  display: grid;
+  grid-auto-flow: row;
+  grid-template-rows:
+    var(--poplur-feed-ctl)
+    var(--poplur-feed-number)
+    var(--poplur-feed-ctl)
+    var(--poplur-feed-ctl)
+    var(--poplur-feed-number)
+    var(--poplur-feed-ctl);
+  grid-template-columns: var(--poplur-feed-ctl);
+  gap: var(--poplur-feed-gap);
+  justify-items: center;
+  align-items: center;
+  pointer-events: auto;
+}
+
+/* Same inset as TabControlRail's .left/.right: one vertical line, one centre. */
+.groupLeft { left: max(12px, env(safe-area-inset-left, 0px)); }
+.groupRight { right: max(12px, env(safe-area-inset-right, 0px)); }
+
+.group > * {
+  width: var(--poplur-feed-ctl);
+  height: var(--poplur-feed-ctl);
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The readouts — the filter's number, the zoom — not controls: the feed's
+   green figure. */
+.number {
+  height: var(--poplur-feed-number);
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  color: #7cff9b;
+  font: 900 13px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  text-shadow: 0 2px 0 rgba(5, 20, 10, .55);
+  pointer-events: none;
+}
+
+/* The zoom rocker: a press-and-hold control, so the browser must not turn a
+   long touch into a scroll, a context menu or a text selection. */
+.zoomArrow {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.zoomArrow img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* The up chevron laid on its side points left (zoom out); the down chevron
+     points right (zoom in) — the same turn ClayChannelArrows makes. */
+  transform: rotate(-90deg);
+}
+
+/* Held: the chevron lights and sits pressed for as long as the finger stays,
+   so the rocker reads as engaged rather than as a tap that never let go. */
+.zoomArrow[data-held='true'] {
+  transform: translateY(1px) scale(.92);
+  filter: brightness(1.18) saturate(1.15);
+}

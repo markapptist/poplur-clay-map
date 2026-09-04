@@ -3,26 +3,38 @@ import type { ControlSide } from './controlPlacement'
 import styles from './FeedChannelStep.module.css'
 
 /**
- * The feed's channel stepper — up, the channel number, down — directly
- * beneath the control rail, sized by the same --poplur-feed-ctl tile so the
- * two read as one column.
+ * The feed's own dials, in a tighter column directly beneath the control rail.
  *
- * It is deliberately NOT a rail child: the rail is shared with Profile, and a
- * profile post has no channel to step, so the rail stays exactly itself.
- * The post ◀ ▶ pair that used to follow the channel pair is gone: the edge
- * tap already steps posts, and the three rows the pair cost were what kept
- * every button on a phone at 37px.
+ * They are deliberately NOT rail children: that rail pins every child to 44px,
+ * and this many of them stands taller than the channel dial on the opposite
+ * edge could ever be. At 34px — the dial's own tile size — the left column
+ * ends on the same pixel as the right, which is what makes the two read as a
+ * pair rather than two lists that happen to face each other.
+ *
+ * It lives here rather than in PostActionRail because a profile post has no
+ * channel to step; the rail is shared with Profile and stays exactly itself.
  */
 export default function FeedChannelStep({
   side,
   channelNumber,
+  postActionsAvailable,
   onChannelUp,
   onChannelDown,
+  onPostPrevious,
+  onPostNext,
+  postIndex,
+  postCount,
 }: {
   side: ControlSide
   channelNumber: number
+  postActionsAvailable: boolean
   onChannelUp: () => void
   onChannelDown: () => void
+  onPostPrevious: () => void
+  onPostNext: () => void
+  /** Where the visible post sits among the people posting on this channel. */
+  postIndex: number
+  postCount: number
 }) {
   return (
     <div
@@ -48,12 +60,32 @@ export default function FeedChannelStep({
         imageStyle={{ width: '100%', height: '100%', objectFit: 'contain' }}
         onActivate={onChannelDown}
       />
-      {/* No post arrows here any more. Stepping through the people posting
-          on a channel is the edge tap — the coach card teaches exactly that —
-          and the sideways pair that duplicated it cost the column three rows,
-          which on a phone squeezed every control to 37px. With the channel
-          pair alone the column is nine rows and its buttons stand at the
-          size of the clay chevrons beneath them. */}
+      {/* The same two arrows turned on their side: up/down changes the
+          channel, left/right walks the people posting on it. */}
+      <SideControlIconButton
+        icon="global.channel_up"
+        aria-label="Previous post"
+        activation="pointerdown"
+        disabled={!postActionsAvailable}
+        fluid
+        imageStyle={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'rotate(-90deg)' }}
+        onActivate={onPostPrevious}
+      />
+      {/* The same readout the channel pair has: which post this is among the
+          ones on the channel, so stepping through them is a position, not a
+          blind tap. */}
+      <span className={styles.number} aria-hidden="true" data-feed-post-readout="">
+        {postCount > 0 ? `${postIndex + 1}/${postCount}` : '–'}
+      </span>
+      <SideControlIconButton
+        icon="global.channel_down"
+        aria-label="Next post"
+        activation="pointerdown"
+        disabled={!postActionsAvailable}
+        fluid
+        imageStyle={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'rotate(-90deg)' }}
+        onActivate={onPostNext}
+      />
     </div>
   )
 }
