@@ -539,7 +539,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   const [menuMounted, setMenuMounted] = useState(false)
   const [query, setQuery] = useState('')
   /** POSTS searches what was written; USERS searches who wrote it. */
-  const [scope, setScope] = useState<'posts' | 'users'>('posts')
+  const [scope, setScope] = useState<'posts' | 'users' | 'explore'>('posts')
   /** Set by picking a user out of the drawer: the paper narrows to their work. */
   const [byHandle, setByHandle] = useState<string | null>(null)
   /** The story opened as a full page, the way a tweet opens. */
@@ -623,6 +623,41 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
       if (!seen.has(e.handle)) seen.set(e.handle, e)
     }
     return [...seen.values()].slice(0, 12)
+  })()
+
+  /** EXPLORE: what this edition keeps coming back to. A topic is a hashtag
+   *  or a capitalised name in a story's words, ranked by how many stories
+   *  carry it and how warmly those stories were received — X's Explore page,
+   *  cut to what is in reach. Written as exec loops rather than matchAll so
+   *  the paper keeps compiling against the older string library. */
+  const trending = (() => {
+    if (scope !== 'explore') return [] as Array<{ topic: string; stories: number; heat: number; live: number }>
+    const stop = new Set(['The', 'A', 'An', 'And', 'But', 'For', 'With', 'From', 'This', 'That', 'Live',
+      'Poplur', 'Map', 'Radius', 'Your', 'You', 'Just', 'Now', 'New', 'Today', 'Here', 'There', 'What', 'When'])
+    const score = new Map<string, { topic: string; stories: number; heat: number; live: number }>()
+    for (const e of entries) {
+      const text = `${e.headline ?? ''} ${e.body}`
+      const found = new Set<string>()
+      const tag = /#([\p{L}\p{N}_]{2,32})/gu
+      for (let m = tag.exec(text); m; m = tag.exec(text)) found.add(`#${m[1].toLowerCase()}`)
+      const name = /(?:^|[^\p{L}\p{N}#@])(\p{Lu}[\p{L}\p{N}'’-]{2,}(?:\s\p{Lu}[\p{L}\p{N}'’-]{2,}){0,2})/gu
+      for (let m = name.exec(text); m; m = name.exec(text)) {
+        const candidate = m[1].trim()
+        if (stop.has(candidate.split(' ')[0])) continue
+        found.add(candidate)
+      }
+      for (const topic of found) {
+        const row = score.get(topic.toLowerCase()) ?? { topic, stories: 0, heat: 0, live: 0 }
+        row.stories += 1
+        row.heat += e.likes + e.repops * 2 + e.replies * 3
+        if (e.kind === 'liveNews') row.live += 1
+        score.set(topic.toLowerCase(), row)
+      }
+    }
+    return [...score.values()]
+      .filter(row => row.stories >= 2 || row.topic.startsWith('#'))
+      .sort((a, b) => (b.stories * 10 + b.heat) - (a.stories * 10 + a.heat))
+      .slice(0, 12)
   })()
 
   const openProfileFor = (handle?: string) => {
@@ -1050,7 +1085,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
       {/* Side rail, outside the scroll — the same edge-mounted furniture the
           TV screen and the map carry, rather than a hamburger stuck in a
           corner it doesn't share with anything. */}
-      <TabControlRail side={controlSide} label="News controls">
+      {!menuOpen && <TabControlRail side={controlSide} label="News controls">
         <SideControlIconButton
           icon="news.menu"
           aria-label="Open news menu"
@@ -1073,7 +1108,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
             draggable={false}
           />
         </button>
-      </TabControlRail>
+      </TabControlRail>}
 
       {menuMounted && (
         <>
@@ -1094,7 +1129,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
             {/* Two things you can look for in a timeline: something written,
                 or someone who writes. */}
             <div className={styles.scopes} role="tablist" aria-label="Search for">
-              {(['posts', 'users'] as const).map(option => (
+              {(['posts', 'users', 'explore'] as const).map(option => (
                 <button
                   key={option}
                   role="tab"
@@ -1102,12 +1137,12 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                   className={scope === option ? styles.scopeOn : styles.scope}
                   onClick={() => { playPop(); setScope(option) }}
                 >
-                  {option === 'posts' ? 'POSTS' : 'USERS'}
+                  {option === 'posts' ? 'POSTS' : option === 'users' ? 'USERS' : 'EXPLORE'}
                 </button>
               ))}
             </div>
 
-            <label className={styles.search}>
+            {scope !== 'explore' && <label className={styles.search}>
               <span aria-hidden="true">⌕</span>
               <input
                 ref={searchRef}
@@ -1119,7 +1154,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
               {query && (
                 <button className={styles.searchClear} onClick={() => { playPop(); setQuery('') }} aria-label="Clear search">✕</button>
               )}
-            </label>
+            </label>}
 
             {scope === 'posts' && needle && (
               <p className={styles.searchCount}>
@@ -1152,6 +1187,38 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                       aria-label={`Open ${person.who}'s profile`}
                     >›</button>
                   </div>
+                ))}
+              </div>
+            )}
+
+            {/* EXPLORE: the edition's trending topics. Picking one searches
+                the paper for it, the same narrowing a typed query does. */}
+            {scope === 'explore' && (
+              <div className={styles.trends} role="list" aria-label="Trending in your radius">
+                <p className={styles.searchCount}>
+                  {trending.length === 0 ? 'Nothing is trending in reach yet.' : 'Trending in your radius'}
+                </p>
+                {trending.map((row, index) => (
+                  <button
+                    key={row.topic}
+                    role="listitem"
+                    className={styles.trend}
+                    onClick={() => {
+                      playPop()
+                      setScope('posts')
+                      setQuery(row.topic.replace(/^#/, ''))
+                      setMenuOpen(false)
+                    }}
+                  >
+                    <i>{index + 1}</i>
+                    <span>
+                      <b>{row.topic}</b>
+                      <em>
+                        {row.stories} {row.stories === 1 ? 'story' : 'stories'}
+                        {row.live ? ' · Live news' : ''}
+                      </em>
+                    </span>
+                  </button>
                 ))}
               </div>
             )}

@@ -815,7 +815,7 @@
 /* ── search scopes ─────────────────────────────────────────────────────── */
 .scopes {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 3px;
   padding: 3px;
   border-radius: 10px;
@@ -1119,3 +1119,40 @@
 /* Posts are openable, so they should feel it. */
 .entry[role="button"] { cursor: pointer; }
 .entry[role="button"]:active { background: rgba(244, 69, 156, 0.06); }
+
+/* ── explore: trending topics ─────────────────────────────────────────────── */
+.trends { display: flex; flex-direction: column; gap: 6px; }
+
+.trend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.trend:active { transform: scale(0.98); }
+.trend i {
+  min-width: 18px;
+  color: #7fe3ff;
+  font: 900 12px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  font-style: normal;
+  text-align: right;
+}
+.trend span { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.trend b {
+  overflow: hidden;
+  font: 800 14px/1.1 system-ui, -apple-system, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trend em {
+  color: rgba(255, 242, 248, 0.6);
+  font: 700 11px/1.1 system-ui, -apple-system, sans-serif;
+  font-style: normal;
+}
