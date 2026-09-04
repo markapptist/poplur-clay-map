@@ -712,7 +712,20 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
 
     const nativeShell = isNativeShell()
     const initialNavigatorPolicy = PoplurPerformanceManager.policy
-    const shaderPrecision: 'mediump' | 'highp' = nativeShell ? 'mediump' : 'highp'
+    // ALWAYS highp. This asked for mediump on a native shell, and on the A03
+    // (PowerVR Rogue GE8320) the driver rejected the resulting program:
+    // VALIDATE_STATUS false, then `useProgram: program not valid` and 255
+    // no-op drawElements per frame onto a transparent canvas — the cube tab
+    // simply absent on every screen, with no error surfaced anywhere.
+    //
+    // This is the ONLY renderer in the app that requests a precision at all;
+    // the other fourteen take three.js's highp default and compile on that
+    // exact GPU without a single failure. The request was also undocumented —
+    // the heat mitigations beside it (MSAA off, low-power) are commented and
+    // stay. If a device ever needs a cheaper cube, cut the material
+    // permutation rather than the precision: this one constant feeds both the
+    // renderer and every material of the loaded GLB, so it fails whole.
+    const shaderPrecision: 'mediump' | 'highp' = 'highp'
     navigatorPrecisionRef.current = shaderPrecision
     let renderer: THREE.WebGLRenderer
     try {
@@ -729,6 +742,22 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
     } catch {
       setGlFailed(true)
       return
+    }
+    // A program that LINKS but will not VALIDATE trips none of the three
+    // existing glFailed paths (construction throw, model-load throw, context
+    // lost), so the canvas stayed visible and data-cube-renderer stayed
+    // "ready" while drawing nothing. That is why the cube was missing on the
+    // A03 for so long without a single line in the log naming it.
+    renderer.debug.onShaderError = (_gl, _program, glVertexShader, glFragmentShader) => {
+      // Kept on one line: the Android console bridge truncates at the first
+      // newline, which is what dropped three.js's own diagnostic.
+      const detail = [
+        `precision=${shaderPrecision}`,
+        `vertex=${String(_gl.getShaderInfoLog(glVertexShader) ?? '').replace(/\s+/g, ' ').slice(0, 200)}`,
+        `fragment=${String(_gl.getShaderInfoLog(glFragmentShader) ?? '').replace(/\s+/g, ' ').slice(0, 200)}`,
+      ].join(' | ')
+      console.error(`[CubeTab3D] shader failed to compile — ${detail}`)
+      setGlFailed(true)
     }
     // The 1.25x ceiling this used to carry was too aggressive: on a 3x phone it
     // rendered the cube at 17% of the panel's pixels, which reads as jagged and
@@ -1442,6 +1471,13 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       idleSnapshot.park()
       setGlFailed(true)
     }
+    // Without this, one lost context hides the cube until the component
+    // remounts — and this phone is tight enough to lose one: the A03 had
+    // ~100MB free and LMKD killed the app once during a single session.
+    // preventDefault above is what makes the browser willing to restore.
+    const onContextRestored = () => {
+      setGlFailed(false)
+    }
     const suspendRendererWork = () => {
       motionActiveUntil = 0
       motionLease = { until: 0, anchor: motionLease.anchor }
@@ -1600,6 +1636,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       applyMotionTarget(rawMotionRoll, rawMotionPitch, 0)
     }
     canvas.addEventListener('webglcontextlost', onContextLost)
+    canvas.addEventListener('webglcontextrestored', onContextRestored)
     interactionSurface.addEventListener('pointerdown', onPointerDown)
     interactionSurface.addEventListener('pointermove', onPointerMove)
     interactionSurface.addEventListener('pointerup', onPointerUp)
@@ -2068,6 +2105,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       window.removeEventListener('poplur-native-motion', onNativeMotion)
       window.removeEventListener('poplur-motion-tuning', onMotionTuning)
       canvas.removeEventListener('webglcontextlost', onContextLost)
+      canvas.removeEventListener('webglcontextrestored', onContextRestored)
       idleSnapshot.dispose()
       disposeModel(scene)
       releaseWebGL(renderer)
