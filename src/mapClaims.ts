@@ -191,6 +191,18 @@ export function applyClaimsPalette(map: mapboxgl.Map): void {
  * two paint values internally, then returns to its ordinary idle frame. */
 export function pulseDominanceLayer(map: mapboxgl.Map, claimIds: readonly string[] = []): void {
   if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+  // ONLY while somebody is watching — the same gate the claim sweep takes, and
+  // for the same reason. "No JS animation loop" is true and beside the point:
+  // Mapbox re-renders the WHOLE canvas for every frame of the 540ms
+  // fill-opacity transition below, which measured 10-19 Mapbox frames per
+  // firing on a parked map. And this does not fire on a camera settle alone —
+  // its caller re-publishes whenever any pin's engagement counters tick, so on
+  // a live board it fires at idle, repeatedly, with nobody there to see the
+  // reveal it is drawing. That is the whole of the map-idle render budget
+  // spent on decoration for an empty room. An unattended board still CHANGES
+  // (the claim push and its settle repaint are untouched); it just stops
+  // flashing about it.
+  if (!ambientAllowed()) return
   if (!map.getLayer(CLAIMS_REVEAL) || !claimIds.length) return
   const ids = [...new Set(claimIds)].slice(0, 4)
   try {

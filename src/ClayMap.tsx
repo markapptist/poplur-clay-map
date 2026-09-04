@@ -5048,7 +5048,22 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           const [layer, prop, value] = sets[i]
           try {
             if (map.isStyleLoaded() && map.getLayer(layer)) {
-              map.setPaintProperty(layer, prop as never, value as never)
+              // Writing the value the layer ALREADY carries is not free: Mapbox
+              // does not compare, it dirties the layer and draws a frame. Most
+              // claim settles land here with nothing to say — roads and grass
+              // read only the signed-in user's own claims, so a stranger's
+              // radius moving leaves them at the plain palette, and the
+              // building expressions fall back to the plain palette below z13.2
+              // where no building renders at all. Measured on the parked map:
+              // every claim push spent one Mapbox frame per layer rewriting
+              // byte-identical paint. Compare against what is on the layer (not
+              // against a cache of our own writes, which the theme and takeover
+              // paths would make stale) and skip the ones that would change
+              // nothing. A settle that genuinely changes a colour still draws.
+              const current = JSON.stringify(map.getPaintProperty(layer, prop as never) ?? null)
+              if (current !== JSON.stringify(value ?? null)) {
+                map.setPaintProperty(layer, prop as never, value as never)
+              }
             }
           } catch { /* style/layer changed between readiness and the write */ }
           nextFrame(() => step(i + 1))
