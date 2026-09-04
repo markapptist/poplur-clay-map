@@ -86,6 +86,8 @@ import {
 import { recordPostEngagement, recordVisiblePostView } from './feedEngagements'
 import { createClientMessageId } from './dmContract'
 import { getLibraryNewest, onCameraStore } from './cameraStore'
+import { readVerification } from './profileVerification'
+import { VERIFIED_CHECK_LABEL, VERIFIED_CHECK_SRC, verifiedCheckKind, type VerifiedCheckKind } from './verifiedCheck'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -2317,9 +2319,13 @@ export default function ProfileTwin({
   // there, so an opened profile answers "where do they post from" in one tap;
   // the post viewer's own button asks the same of the post that is open.
   const locatedPost = profilePosts.find(post => post.origin) ?? null
-  const verificationTier: 'none' | 'confirmed' | 'verified' = viewUser
-    ? (viewUser === '@poplur' ? 'none' : 'confirmed')
-    : 'verified'
+  // Which mark sits beside the name, or none. Someone else's profile keeps the
+  // demo's standing (every handle but @poplur reads as a verified person); the
+  // owner's mark follows the category they asked to be verified under, so a
+  // business or organisation carries the black check and a person the pink.
+  const verifiedKind: VerifiedCheckKind | null = viewUser
+    ? (viewUser === '@poplur' ? null : 'personal')
+    : verifiedCheckKind(readVerification().category)
   const visitingAvatar = viewUser ? (AVATAR_BY_HANDLE[viewUser] ?? 'mark_talk0.png') : null
 
   // Tell the shell the taking screen is up, so the cube navigator can wear the
@@ -2525,22 +2531,18 @@ export default function ProfileTwin({
               {shownName.toUpperCase()}
             </span>
           )}
-          {verificationTier !== 'none' && (
-            // The scalloped seal, in Poplur pink rather than the borrowed
-            // Twitter blue this used to be. Two tiers keep the same shape and
-            // differ only in weight: a CONFIRMED account is grey and reads as
-            // quieter, a VERIFIED one is pink and carries the brand — the
-            // distinction is status, so it should not also be a shape change
-            // the reader has to learn twice.
-            <svg viewBox="0 0 24 24" width="18" height="18" className={styles.verifyBadge} aria-label={verificationTier === 'verified' ? 'Verified' : 'Confirmed'}>
-              <path
-                d="M12 1.6l2.1 1.6 2.6-.5 1.2 2.4 2.4 1.2-.5 2.6L21.4 12l-1.6 2.1.5 2.6-2.4 1.2-1.2 2.4-2.6-.5L12 22.4l-2.1-1.6-2.6.5-1.2-2.4-2.4-1.2.5-2.6L2.6 12l1.6-2.1-.5-2.6 2.4-1.2 1.2-2.4 2.6.5z"
-                fill={verificationTier === 'verified' ? '#f4459c' : '#9ca3af'}
-              />
-              {/* Filled, not stroked: at 18px a stroked tick thins out against
-                  the scallops, and the notches eat the ends of the line. */}
-              <path d="M10.6 15.4l-3-3 1.3-1.3 1.7 1.7 4.4-4.4 1.3 1.3z" fill="#fff" />
-            </svg>
+          {verifiedKind && (
+            // The supplied verification marks: a verified business carries the
+            // black check, a verified person the pink one. Same size, same
+            // seat beside the name; only the mark's colour tells the two apart.
+            <img
+              src={VERIFIED_CHECK_SRC[verifiedKind]}
+              className={styles.verifyBadge}
+              alt={VERIFIED_CHECK_LABEL[verifiedKind]}
+              title={VERIFIED_CHECK_LABEL[verifiedKind]}
+              draggable="false"
+              data-verified-kind={verifiedKind}
+            />
           )}
         </h1>
         <div className={styles.modeSwitch}>

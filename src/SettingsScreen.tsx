@@ -950,7 +950,7 @@ export default function SettingsScreen({ bindBack }: {
 
             {verification.status === 'verified' ? (
               <p className={styles.verifyState}>
-                This profile is verified. Poplur shows the blue badge beside your name.
+                This profile is verified. Poplur shows the pink check beside your name, or the black check for a business or organisation.
               </p>
             ) : verification.status === 'pending' ? (
               <>
