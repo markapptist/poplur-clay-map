@@ -8,6 +8,12 @@
 .host {
   width: min(344px, calc(100vw - 36px));
   max-width: 100%;
+  /* Never taller than the room the wrapper centred us in: a card with media,
+     pills and three actions must squeeze (the media flexes) or scroll rather
+     than push its buttons off-screen. */
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
   pointer-events: none;
 }
 
@@ -15,6 +21,8 @@
   position: relative;
   width: 100%;
   margin-top: 26px; /* room for the tab above the frame */
+  max-height: calc(100% - 26px);
+  overflow-y: auto;
   padding: 12px;
   border-radius: 34px;
   background:

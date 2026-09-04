@@ -122,14 +122,16 @@ export default function PoplurDialog({
               {primaryAction.label} <span aria-hidden="true">→</span>
             </button>
           )}
+          {/* The DM action reads as a REAL button, the same weight as the
+              primary: writing to a person is a destination, not fine print. */}
+          {tertiaryAction && (
+            <button type="button" className={styles.primary} onClick={tertiaryAction.onActivate}>
+              {tertiaryAction.label} <span aria-hidden="true">→</span>
+            </button>
+          )}
           {secondaryAction && (
             <button type="button" className={styles.secondary} onClick={secondaryAction.onActivate}>
               {secondaryAction.label}
-            </button>
-          )}
-          {tertiaryAction && (
-            <button type="button" className={styles.secondary} onClick={tertiaryAction.onActivate}>
-              {tertiaryAction.label}
             </button>
           )}
         </div>

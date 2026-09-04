@@ -20,6 +20,7 @@ export default function PostActionRail({
   onShare,
   onToggleCaptions,
   onComment,
+  onDMPoster,
   onLike,
   onDislike,
   postActionsAvailable = true,
@@ -37,6 +38,9 @@ export default function PostActionRail({
   onShare: () => void
   onToggleCaptions: () => void
   onComment: () => void
+  /** Message the poster. Present only on somebody ELSE'S post that carries a
+   *  stable owner id — your own post has nobody to DM. */
+  onDMPoster?: () => void
   onLike: () => void
   onDislike: () => void
   /** Share, comment, and radius reactions require a concrete post. */
@@ -97,6 +101,16 @@ export default function PostActionRail({
         disabled={!postActionsAvailable}
         onActivate={onComment}
       />
+      {onDMPoster && (
+        <SideControlIconButton
+          fluid
+          icon="feed.dm"
+          aria-label="Message the poster"
+          activation="pointerdown"
+          disabled={!postActionsAvailable}
+          onActivate={onDMPoster}
+        />
+      )}
       <SideControlIconButton
         fluid
         icon="feed.like"

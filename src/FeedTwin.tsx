@@ -1912,7 +1912,10 @@ export default function FeedTwin({
   return (
     <div
       ref={feedRootRef}
-      className={styles.feed}
+      // Thirteen rows while the rail carries the DM button (another account's
+      // post), twelve otherwise — the column formula in index.css is sized by
+      // this class, recomputed here because :root cannot see the rail's state.
+      className={onOpenDM && dmPeer ? `${styles.feed} poplur-feed-rows-13` : styles.feed}
       data-poplur-screen="feed"
       data-feed-post-id={post?.id}
       data-feed-post-owner={post?.ownerId}
@@ -2129,6 +2132,10 @@ export default function FeedTwin({
           onShare={sharePost}
           onToggleCaptions={toggleCaptions}
           onComment={toggleComments}
+          onDMPoster={onOpenDM && dmPeer ? () => {
+            playPop()
+            onOpenDM(dmPeer.userId, dmPeer.user)
+          } : undefined}
           onLike={likeCurrentPost}
           onDislike={dislikeCurrentPost}
         />
@@ -2166,20 +2173,9 @@ export default function FeedTwin({
                   )}
                 </div>
               </div>
-              {/* The map card's "DM @user", on the pop that reached you here.
-                  dmPeer already enforces the somebody-else's-post rule. */}
-              {onOpenDM && dmPeer && (
-                <button
-                  type="button"
-                  className={styles.dmPoster}
-                  onClick={() => {
-                    playPop()
-                    onOpenDM(dmPeer.userId, dmPeer.user)
-                  }}
-                >
-                  DM {dmPeer.user}
-                </button>
-              )}
+              {/* The DM action moved to the control rail (feed.dm, the mail
+                  icon): a pill under the byline covered the video and read as
+                  part of the headline rather than as an action. */}
             </div>
           </div>
         </div>

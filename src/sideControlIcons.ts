@@ -19,6 +19,7 @@ export const SIDE_CONTROL_ICON_IDS = [
   'feed.captions',
   'feed.comments_collapse',
   'feed.comment',
+  'feed.dm',
   'feed.like',
   'feed.dislike',
   'media.pause',

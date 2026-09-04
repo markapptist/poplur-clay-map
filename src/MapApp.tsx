@@ -170,6 +170,7 @@ import ConquerGlance from './ConquerGlance'
 import ConquerScreen from './ConquerScreen'
 import type { MapConquerSnapshot } from './mapConquer'
 import { KM_TO_MI, shouldUseMiles } from './units'
+import { currentViewerCoords, publishViewerFix } from './viewerFix'
 import { playClaimDecay, playClaimGrowth } from './motionEffectsAudio'
 import styles from './App.module.css'
 import dropStyles from './ClayMap.module.css'
@@ -913,7 +914,14 @@ export default function MapApp() {
   // the Feed measures reach from the same place the Map does. One viewer,
   // two surfaces, one answer — see viewerFix.ts.
   useEffect(() => {
-    if (!currentLocation || typeof window === 'undefined' || window.parent === window) return
+    if (!currentLocation || typeof window === 'undefined') return
+    // Publish into THIS document's shared fix as well as telling the shell.
+    // The reach predicate above now asks currentViewerCoords(), so a fix the
+    // map found for itself has to land in the store rather than staying in
+    // React state — otherwise the map would go quiet on a device that has no
+    // native fix yet, which is the opposite of the bug being fixed.
+    publishViewerFix({ latitude: currentLocation[1], longitude: currentLocation[0] }, 'map-self')
+    if (window.parent === window) return
     window.parent.postMessage({
       type: 'poplur-map-location',
       latitude: currentLocation[1],
@@ -3192,11 +3200,18 @@ export default function MapApp() {
       liveMapPosts.filter(pin => pin.mine).map(pin => pin.pinColor ?? 'default'),
     )
     // Interception is the same math Feed delivery runs: a post is in sight
-    // only while its stored radius reaches the viewer. Mirror Feed's viewer
-    // resolution exactly — the shared native fix when one exists, the
-    // deterministic Toronto preview origin in a browser, fail-closed native.
-    const reachViewer: [number, number] | null = currentLocation
-      ?? (isNativeShell() ? null : [-79.3811, 43.6487])
+    // only while its stored radius reaches the viewer. ASK the shared reader
+    // rather than mirroring it: this used to re-derive the answer here, with a
+    // hand-copied duplicate of PREVIEW_VIEWER_COORDS, and the two documents
+    // converged only by the postMessage round trip below — so on a cold start
+    // the map and the feed could disagree about where you are standing. That
+    // is precisely the failure viewerFix.ts was created to end, described in
+    // its own header: a pin on the map and an empty feed, from two answers to
+    // one question.
+    //
+    // currentLocation stays a PUBLISH source into the shared fix (see the
+    // poplur-map-location post below), never a second reader of it.
+    const reachViewer: [number, number] | null = currentViewerCoords()
     return liveMapPosts
       .filter(pin => popLevel === 'all'
         || (popLevel === 'mine' ? pin.mine : !pin.mine))

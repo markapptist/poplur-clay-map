@@ -75,7 +75,11 @@
   inset: 0;
   display: grid;
   place-items: center;
-  padding: max(18px, env(safe-area-inset-top)) var(--popup-safe-side) max(18px, env(safe-area-inset-bottom));
+  /* Centre within the room ABOVE the home chrome: the cube/counters band at
+     the bottom is opaque UI, so a dialog centred on the raw viewport read as
+     sitting low and clipped its own actions behind that band on device. */
+  padding: max(18px, env(safe-area-inset-top)) var(--popup-safe-side)
+    max(18px, env(safe-area-inset-bottom), var(--poplur-home-clearance, 18px));
   background: rgba(0, 0, 0, 0.42);
   backdrop-filter: blur(3px);
   -webkit-backdrop-filter: blur(3px);
