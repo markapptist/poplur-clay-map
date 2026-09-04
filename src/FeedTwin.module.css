@@ -222,8 +222,8 @@
 
 .feedTitleTrack {
   display: flex;
-  width: max-content;
-  gap: 36px;
+  width: 100%;
+  justify-content: center;
   white-space: nowrap;
   color: transparent;
   background-image: linear-gradient(105deg, #fff2f8 0%, #ff8ac6 18%, #f63b9a 38%, #ffffff 50%, #73d7ff 68%, #35c8ef 82%, #fff2f8 100%);
@@ -233,7 +233,9 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.9)) drop-shadow(0 0 8px rgba(246, 59, 154, 0.38));
-  animation: feedTitleMarquee 12s linear infinite, feedCenterTextShader 4.8s linear 3;
+  /* The shimmer stays; the scroll is gone. A title you have to chase is a
+     title you cannot read. */
+  animation: feedCenterTextShader 4.8s linear 3;
   /* WebKit will run this animation and never repaint it. The track paints its
      text through -webkit-background-clip: text, and on iOS that combination can
      be rasterised once and then translated as a static tile — getAnimations()
@@ -245,10 +247,11 @@
   backface-visibility: hidden;
 }
 
-.feedTitleTrack span { flex: none; }
-
-@keyframes feedTitleMarquee {
-  to { transform: translateX(calc(-50% - 18px)); }
+.feedTitleTrack span {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Quieter than the caption so the two rows read as title-then-byline rather

@@ -9,6 +9,7 @@ describe('feed byline', () => {
     const css = read('FeedTwin.module.css')
     expect(css).not.toContain('feedMetaHandleSwap')
     expect(css).not.toContain('feedMetaReachSwap')
+    expect(css).not.toContain('feedTitleMarquee')
     expect(css).toMatch(/\.feedHandle \{\n  font-size: clamp\(15px/)
   })
 

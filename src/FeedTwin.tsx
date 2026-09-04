@@ -2085,7 +2085,6 @@ export default function FeedTwin({
               <div className={styles.feedTitle} aria-label={title}>
                 <div className={styles.feedTitleTrack} key={title}>
                   <span>{title}</span>
-                  <span aria-hidden="true">{title}</span>
                 </div>
               </div>
               <div
