@@ -2204,6 +2204,10 @@ export default function MapApp() {
     return timer
   }, [])
   const tourStartedRef = useRef(false)
+  /** Radio starts itself once per map, the way the button would have. Only
+   *  once: a person who then presses STOP has made a choice, and a later
+   *  landing must not overrule it. */
+  const radioAutoStartedRef = useRef(false)
   const clearTourTimers = useCallback(() => {
     tourTimers.current.forEach(timer => window.clearTimeout(timer))
     tourTimers.current.clear()
@@ -3716,6 +3720,18 @@ export default function MapApp() {
       return
     }
 
+    // Radio is ON by default in the app. The same call the rail's Radio
+    // button makes, made for you on arrival — the packaged bed at once, the
+    // nearest real station as soon as the directory answers. Respects the
+    // master mute (a muted app starts nothing, and the unmute below starts it
+    // then) and the standalone map (the thermal gate drives that one
+    // headless, and a bed it never asked for would be measured as heat).
+    if (isEmbedded && !radioAutoStartedRef.current && !isMapRadioActive() && !isGateMuted()) {
+      radioAutoStartedRef.current = true
+      const [autoLng, autoLat] = landingCenter ?? DEFAULT_NAV_ORIGIN
+      startRadioForMap(autoLat, autoLng)
+    }
+
     // Begin looking up the local station now, but do not sound it yet. The
     // greeting below gets the first beat; its mixer feathers Radio underneath
     // after the first word, then raises it when the host finishes.
@@ -4346,7 +4362,19 @@ export default function MapApp() {
           aria-label={muted ? 'Unmute map audio' : 'Mute map audio'}
           aria-pressed={muted}
           activation="pointerdown"
-          onActivate={() => { const next = !muted; setUserMuted(next); setMuted(next); if (!next) playPop(0.2) }}
+          onActivate={() => {
+            const next = !muted
+            setUserMuted(next)
+            setMuted(next)
+            if (next) return
+            playPop(0.2)
+            // Unmuting an app that was muted on arrival is the arrival the
+            // default-on radio was waiting for.
+            if (isEmbedded && !radioAutoStartedRef.current && !isMapRadioActive()) {
+              radioAutoStartedRef.current = true
+              startRadioForMap(navigationOrigin[1], navigationOrigin[0])
+            }
+          }}
         />
         <MapRadioButton
           active={mapRadioState !== 'off'}
