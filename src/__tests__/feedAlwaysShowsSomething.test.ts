@@ -23,27 +23,40 @@ describe('the feed always tries to show something', () => {
   })
 })
 
-describe('the inner post arrows carry a readout', () => {
+describe('the stepper is the channel pair alone', () => {
   const source = readFileSync(new URL('../FeedChannelStep.tsx', import.meta.url), 'utf8')
   const css = readFileSync(new URL('../FeedChannelStep.module.css', import.meta.url), 'utf8')
   const rootCss = readFileSync(new URL('../index.css', import.meta.url), 'utf8')
+  const feed = readFileSync(new URL('../FeedTwin.tsx', import.meta.url), 'utf8')
 
-  it('shows the current index within the channel between Previous and Next', () => {
-    const previous = source.indexOf('aria-label="Previous post"')
-    const readout = source.indexOf('data-feed-post-readout')
-    const next = source.indexOf('aria-label="Next post"')
-    expect(previous).toBeGreaterThan(-1)
-    expect(readout).toBeGreaterThan(previous)
-    expect(next).toBeGreaterThan(readout)
-    expect(source).toContain('${postIndex + 1}/${postCount}')
+  it('has no post arrows: the edge tap steps posts, and the rows they cost went back to the buttons', () => {
+    expect(source).toContain('aria-label="Channel up"')
+    expect(source).toContain('aria-label="Channel down"')
+    expect(source).not.toContain('aria-label="Previous post"')
+    expect(source).not.toContain('aria-label="Next post"')
+    expect(source).not.toContain('data-feed-post-readout')
+    // The edge lanes still carry the post step.
+    expect(feed).toContain("handleEdgeTap('left')")
+    expect(feed).toContain("handleEdgeTap('right')")
   })
 
-  it('budgets a sixth row for it, and the column formula knows', () => {
+  it('budgets three rows, and the column formula counts nine (ten with DM)', () => {
     const rows = css.match(/grid-template-rows:([^;]*);/)?.[1] ?? ''
-    expect((rows.match(/--poplur-feed-number/g) ?? []).length).toBe(2)
-    expect((rows.match(/--poplur-feed-ctl/g) ?? []).length).toBe(4)
-    expect(rootCss).toContain('/ 12)')
-    expect(rootCss).toContain('12 * var(--poplur-feed-ctl)')
+    expect((rows.match(/--poplur-feed-number/g) ?? []).length).toBe(1)
+    expect((rows.match(/--poplur-feed-ctl/g) ?? []).length).toBe(2)
+    expect(rootCss).toContain('- 8 * 2px) / 9)')
+    expect(rootCss).toContain('9 * var(--poplur-feed-ctl)) / 8)')
+    expect(rootCss).toContain('.poplur-feed-rows-10 {')
+    expect(rootCss).toContain('- 9 * 2px) / 10)')
+    expect(rootCss).not.toContain('poplur-feed-rows-13')
+    expect(feed).toContain('poplur-feed-rows-10')
+  })
+
+  it('starts the column under the channel brand icon, not at the generic rail line', () => {
+    const rail = readFileSync(new URL('../TabControlRail.module.css', import.meta.url), 'utf8')
+    expect(rootCss).toContain('--poplur-feed-action-top: calc(')
+    expect(rootCss).toContain('100dvh - var(--poplur-feed-action-top) - var(--poplur-home-clearance)')
+    expect(rail).toMatch(/\.fill \{[^}]*top: var\(\s*--poplur-feed-action-top,/)
   })
 })
 

@@ -16,9 +16,6 @@
   grid-template-rows:
     var(--poplur-feed-ctl)
     var(--poplur-feed-number)
-    var(--poplur-feed-ctl)
-    var(--poplur-feed-ctl)
-    var(--poplur-feed-number)
     var(--poplur-feed-ctl);
   grid-template-columns: var(--poplur-feed-ctl);
   gap: var(--poplur-feed-gap);

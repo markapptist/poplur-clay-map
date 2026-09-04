@@ -1920,7 +1920,7 @@ export default function FeedTwin({
       // Thirteen rows while the rail carries the DM button (another account's
       // post), twelve otherwise — the column formula in index.css is sized by
       // this class, recomputed here because :root cannot see the rail's state.
-      className={onOpenDM && dmPeer ? `${styles.feed} poplur-feed-rows-13` : styles.feed}
+      className={onOpenDM && dmPeer ? `${styles.feed} poplur-feed-rows-10` : styles.feed}
       data-poplur-screen="feed"
       data-feed-post-id={post?.id}
       data-feed-post-owner={post?.ownerId}
@@ -2111,13 +2111,8 @@ export default function FeedTwin({
         <FeedChannelStep
           side={feedRailSide}
           channelNumber={ch.number}
-          postActionsAvailable={Boolean(post)}
           onChannelUp={() => change(1)}
           onChannelDown={() => change(-1)}
-          onPostPrevious={() => handleEdgeTap('left')}
-          onPostNext={() => handleEdgeTap('right')}
-          postIndex={posts.length ? (contentIdxRef.current[ch.id] ?? 0) % posts.length : 0}
-          postCount={posts.length}
         />
         <FeedChannelRail
           activeIndex={index}

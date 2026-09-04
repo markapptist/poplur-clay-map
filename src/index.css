@@ -19,9 +19,22 @@
     + env(safe-area-inset-bottom, 0px)
   );
 
-  /* The room one of the feed's side columns has, top to home chrome. */
+  /* Where the feed's LEFT column starts: directly under the channel brand
+   * icon (44px tall at --header-title-top, App.module.css), one gap below it.
+   * The column used to start at --poplur-rail-top, which on an iPhone 16 left
+   * a 60px void between the brand icon and the mute mark while the twelve
+   * rows beneath were squeezed to the 36px floor. The wordmark and the
+   * headline are centred with 72px side margins, so nothing else lives in
+   * that band on the rail's edge. The first term mirrors --header-title-top,
+   * which is scoped to the shell and invisible from :root. */
+  --poplur-feed-action-top: calc(
+    max(calc(env(safe-area-inset-top, 0px) + 8px), clamp(34px, 5vh, 44px))
+    + 44px + 12px
+  );
+
+  /* The room the feed's left column has, brand icon to home chrome. */
   --poplur-feed-column: calc(
-    100dvh - var(--poplur-rail-top) - var(--poplur-home-clearance)
+    100dvh - var(--poplur-feed-action-top) - var(--poplur-home-clearance)
   );
 
   /* One channel tile on the dial.
@@ -77,50 +90,51 @@
    * on the smallest phones the floors already consume the column, and a seam
    * that insisted on 10px would push the rail's last buttons INTO the stepper
    * — the one outcome worse than touching. */
-  /* Twelve equal rows — six rail buttons above, the stepper's six below (each
-   * of its two readouts counts as a row) — with one gap between every neighbour, and the
-   * seam between the rail and the stepper is that same gap. Equal spacing is
-   * the whole point: a shorter readout row or a wider seam reads as a column
-   * that was never lined up. Tiles shrink to a 40px floor before anything
-   * touches. */
-  /* The floor is 36px, not 40: on a phone-height column the twelve 40px
-   * floors plus their 2px gaps came to MORE than the column itself, and the
-   * 19px that did not exist was paid as the channel-up arrow physically
-   * overlapping the downvote button — the exact outcome the seam exists to
-   * prevent. A 36px floor keeps every tile pressable and lets the column
-   * genuinely fit; tiles only sit below 40 on viewports where 40 never fit
-   * in the first place. */
+  /* Equal rows — the rail's buttons above, the stepper below (its readout
+   * counts as a row) — with one gap between every neighbour, and the seam
+   * between the rail and the stepper is that same gap. Equal spacing is the
+   * whole point: a shorter readout row or a wider seam reads as a column that
+   * was never lined up. The 36px floor stays from the twelve-row days, when
+   * 40px floors plus gaps overran a phone-height column and the overrun was
+   * paid as the channel-up arrow overlapping the downvote button; nine rows
+   * never reach it on a phone, but a floor that lets the column genuinely
+   * fit is still the right floor. */
+  /* Nine rows now, not twelve: the post ◀ ▶ pair and its readout left the
+   * stepper (the edge tap already steps posts), so the column is six rail
+   * buttons plus channel-up / number / channel-down. Same equal-row rule,
+   * same 2px minimum gap; on an iPhone 16 the tile lands at 56px, the size
+   * of the clay chevrons under it, where twelve rows had pinned it to 37. */
   --poplur-feed-ctl: clamp(
     36px,
-    calc((var(--poplur-feed-column) - 11 * 2px) / 12),
+    calc((var(--poplur-feed-column) - 8 * 2px) / 9),
     64px
   );
   --poplur-feed-number: var(--poplur-feed-ctl);
   --poplur-feed-gap: clamp(
     2px,
-    calc((var(--poplur-feed-column) - 12 * var(--poplur-feed-ctl)) / 11),
+    calc((var(--poplur-feed-column) - 9 * var(--poplur-feed-ctl)) / 8),
     16px
   );
   --poplur-feed-seam: var(--poplur-feed-gap);
 }
 
 /* The rail gains a seventh button (feed.dm) only on somebody else's post, so
- * the column is thirteen rows in that state, not twelve. Recomputed at the
- * feed root (not :root) because inherited custom properties carry their
- * computed value: overriding a row-count var alone would change nothing. */
-.poplur-feed-rows-13 {
+ * the column is ten rows in that state, not nine. Recomputed at the feed
+ * root (not :root) because inherited custom properties carry their computed
+ * value: overriding a row-count var alone would change nothing. */
+.poplur-feed-rows-10 {
   --poplur-feed-ctl: clamp(
     34px,
-    calc((var(--poplur-feed-column) - 12 * 2px) / 13),
+    calc((var(--poplur-feed-column) - 9 * 2px) / 10),
     64px
   );
   /* Every derived var re-resolves in THIS scope: an inherited custom property
      carries its :root-computed value, so leaving number/seam to inheritance
-     mixes twelve-row sizes into the thirteen-row column. */
+     mixes nine-row sizes into the ten-row column. */
   --poplur-feed-number: var(--poplur-feed-ctl);
   --poplur-feed-gap: clamp(
     2px,
-    calc((var(--poplur-feed-column) - 13 * var(--poplur-feed-ctl)) / 12),
+    calc((var(--poplur-feed-column) - 10 * var(--poplur-feed-ctl)) / 9),
     16px
   );
   --poplur-feed-seam: var(--poplur-feed-gap);
