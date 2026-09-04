@@ -255,8 +255,8 @@
    than two competing headlines. One line, ellipsed — a long handle has no break
    opportunity, so clamping it would hard-cut it mid-glyph instead. */
 .feedHandle {
-  font-size: clamp(10.5px, 3.1vw, 12.5px);
-  font-weight: 800;
+  font-size: clamp(15px, 4.4vw, 19px);
+  font-weight: 900;
   letter-spacing: 0.01em;
   color: rgba(255, 242, 248, 0.8);
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
@@ -265,16 +265,16 @@
   text-overflow: ellipsis;
 }
 
-/* The handle and reach share one stable byline. Each rests long enough to read,
-   then trades places with a short vertical fade; overlapping grid cells keep
-   the title and the rest of the feed chrome perfectly still. */
+/* One still byline: the handle, large and unmoving, with the reach beside it.
+   It used to trade places with the reach on a six-second fade; a name you
+   have to wait for is a name you cannot read. */
 .feedMetaRow {
   min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: 'swap';
-  align-items: center;
-  min-height: clamp(15px, 3.8vw, 18px);
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 8px;
+  min-height: clamp(20px, 5vw, 24px);
   padding-inline: 8px;
   overflow: hidden;
   pointer-events: none;
@@ -282,49 +282,30 @@
 
 .feedMetaHandle,
 .feedReach {
-  grid-area: swap;
   max-width: 100%;
-  justify-self: center;
   overflow: hidden;
   text-overflow: ellipsis;
-  will-change: opacity, transform;
 }
 
-.feedMetaHandle {
-  animation: feedMetaHandleSwap 6s ease-in-out infinite;
-}
+.feedMetaHandle { flex: 0 1 auto; }
+.feedReach { flex: 0 0 auto; }
 
 .verifyBadge {
   display: inline-block;
   vertical-align: middle;
-  margin-left: 4px;
-  margin-bottom: 1px;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  margin-left: 5px;
+  margin-bottom: 2px;
   filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4));
-}
-
-.feedReach {
-  animation: feedMetaReachSwap 6s ease-in-out infinite;
-}
-
-@keyframes feedMetaHandleSwap {
-  0%, 40% { opacity: 1; transform: translateY(0); }
-  47%, 93% { opacity: 0; transform: translateY(-65%); }
-  100% { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes feedMetaReachSwap {
-  0%, 40% { opacity: 0; transform: translateY(65%); }
-  47%, 93% { opacity: 1; transform: translateY(0); }
-  100% { opacity: 0; transform: translateY(65%); }
 }
 
 /* A tapped "viewed your post" notice: the reach line is what a view proves, so
    it pulses — three finite beats of scale + glow, then still. Replayed by a
    key remount, never a looping animation. */
 .reachFlash .reachText {
-  animation:
-    feedMetaReachSwap 6s ease-in-out infinite,
-    reachFlashPulse 0.8s ease-in-out 3;
+  animation: reachFlashPulse 0.8s ease-in-out 3;
 }
 
 @keyframes reachFlashPulse {

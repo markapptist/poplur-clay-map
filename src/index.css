@@ -77,29 +77,24 @@
    * on the smallest phones the floors already consume the column, and a seam
    * that insisted on 10px would push the rail's last buttons INTO the stepper
    * — the one outcome worse than touching. */
-  --poplur-feed-slack: calc(var(--poplur-feed-column) - 10 * 44px - 22px - 10 * 2px);
-  --poplur-feed-seam: clamp(2px, min(var(--poplur-feed-slack), 1.8vh), 18px);
+  /* Eleven equal rows — six rail buttons above, the stepper's five below (its
+   * readout counts as a row) — with one gap between every neighbour, and the
+   * seam between the rail and the stepper is that same gap. Equal spacing is
+   * the whole point: a shorter readout row or a wider seam reads as a column
+   * that was never lined up. Tiles shrink to a 40px floor before anything
+   * touches. */
   --poplur-feed-ctl: clamp(
-    44px,
-    calc((var(--poplur-feed-column) - 10 * 6px - var(--poplur-feed-seam)) / 11),
+    40px,
+    calc((var(--poplur-feed-column) - 10 * 6px) / 11),
     64px
   );
-  --poplur-feed-number: clamp(
-    22px,
-    calc(
-      var(--poplur-feed-column) - 10 * var(--poplur-feed-ctl) - 10 * 6px
-        - var(--poplur-feed-seam)
-    ),
-    var(--poplur-feed-ctl)
-  );
+  --poplur-feed-number: var(--poplur-feed-ctl);
   --poplur-feed-gap: clamp(
     2px,
-    calc(
-      (var(--poplur-feed-column) - var(--poplur-feed-number)
-        - 10 * var(--poplur-feed-ctl) - var(--poplur-feed-seam)) / 10
-    ),
-    64px
+    calc((var(--poplur-feed-column) - 11 * var(--poplur-feed-ctl)) / 10),
+    16px
   );
+  --poplur-feed-seam: var(--poplur-feed-gap);
 }
 /* The document's own colour is the app's backdrop, never the browser default.
    These had no background-color, so WebKit painted WHITE in every gap where the

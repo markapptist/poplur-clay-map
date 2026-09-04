@@ -41,6 +41,7 @@ import SideControlIconButton from './SideControlIcon'
 import PoplurStatusToast from './PoplurStatusToast'
 import FeedChannelRail from './FeedChannelRail'
 import FeedChannelStep from './FeedChannelStep'
+import { VERIFIED_CHECK_SRC, verifiedKindForHandle } from './verifiedCheck'
 import PostActionRail from './PostActionRail'
 import { useControlSide, type ControlSide } from './controlPlacement'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -370,6 +371,10 @@ export default function FeedTwin({
   const feedRailSide: ControlSide = controlSide
   const [ownIndex, setOwnIndex] = useState(0)
   const index = controlledIndex ?? ownIndex
+  // The viewer's own handle, as the shell names it in the launch query.
+  const ownHandle = useMemo(() => (
+    typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('username')
+  ), [])
   const [muted, setMuted] = useState(isUserMuted)
   const suppressedRef = useRef(suppressed)
   suppressedRef.current = suppressed
@@ -853,6 +858,22 @@ export default function FeedTwin({
 
   const posts = rankedPostsFor(ch, publishedPosts, discovery, focusedContent?.target)
   const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
+  // The byline's mark: the supplied check, by the same rule the profile uses.
+  const bylineVerified = verifiedKindForHandle(post?.user, ownHandle)
+  // Never open on an empty channel. Once the published pool is in, if the
+  // channel the feed landed on holds nothing, move to the first one that does
+  // — quietly, with none of goToChannel's skip signals or pops. A Map handoff
+  // names its own channel and is left alone. Once per opening.
+  const openedOnContentRef = useRef(false)
+  useEffect(() => {
+    if (openedOnContentRef.current || focusedContent || publishedPosts.length === 0) return
+    openedOnContentRef.current = true
+    if (feedPostsForChannel(ch.id, publishedPosts).length > 0) return
+    const first = CHANNELS.findIndex(candidate => feedPostsForChannel(candidate.id, publishedPosts).length > 0)
+    if (first < 0 || first === index) return
+    if (onIndexChange) onIndexChange(first)
+    else setOwnIndex(first)
+  }, [ch.id, focusedContent, index, onIndexChange, publishedPosts])
   // Going to a channel is seeing what it holds: the badge on its tile comes
   // off on arrival, not one pop at a time. The pop actually on screen is
   // marked too, which is what clears the same pop's badge on the Map.
@@ -2079,7 +2100,9 @@ export default function FeedTwin({
               >
                 <div className={`${styles.feedHandle} ${styles.feedMetaHandle}`} aria-hidden="true">
                   {post.user}
-                  <svg viewBox="0 0 22 22" width="12" height="12" className={styles.verifyBadge} aria-label="Verified"><circle cx="11" cy="11" r="10" fill="#3b82f6" /><path d="M7 11.5l2.5 2.5 5.5-5.5" stroke="#fff" strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  {bylineVerified && (
+                    <img src={VERIFIED_CHECK_SRC[bylineVerified]} className={styles.verifyBadge} alt="" draggable="false" />
+                  )}
                 </div>
                 {post.reachKm != null && (
                   <span className={`${styles.reachText} ${styles.feedReach}`} aria-hidden="true">
