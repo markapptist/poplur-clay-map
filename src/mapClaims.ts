@@ -107,6 +107,25 @@ const EARTH_CIRCUMFERENCE_KM = 40_075
  *  be. Same rule the reach ring and the reach predicate use. */
 const WORLD_DRAW_KM = EARTH_RADIUS_KM * Math.PI * 0.995
 
+/**
+ * Does this claim describe GROUND, or only reach?
+ *
+ * A claim at the top of the radius scale reaches everyone, everywhere. That is
+ * a statement about delivery, not about territory, and painting it as terrain
+ * makes it the only thing on the map: it covers every viewport at every zoom,
+ * so it can only ever bury the claims underneath it. Measured 4 Sep — three
+ * world-radius posts on ONE account turned the whole board that account's
+ * colour and hid fifteen real claims (8.9km to 157km) beneath it, which reads
+ * as "the map is broken" rather than as "somebody holds the world".
+ *
+ * Reach is untouched: such a post still intercepts every feed, still stands
+ * its pin, and still counts toward the planet scoreboard. It just cannot be
+ * drawn as land, because land you cannot see past is not information.
+ */
+function paintsGround(claim: Claim): boolean {
+  return !isWorldRadiusKm(claim.radiusKm)
+}
+
 function drawnRadiusKm(trueKm: number, zoom: number, lat: number): number {
   if (isWorldRadiusKm(trueKm)) return WORLD_DRAW_KM
   const kmPerPixel =
@@ -495,7 +514,11 @@ export function visibleBuildingClaimColorExpression(
   // wider zooms avoids carrying claim polygons while no building can render;
   // `moveend` installs the local expression before the buildings appear.
   if (map.getZoom() < 13) return unclaimedColor
-  const visible = [...claims.values()].filter(claim => claimTouchesViewport(map, claim))
+  // Same rule as the ground fill: a world-radius claim touches every viewport,
+  // so without this every building on Earth wears one account's colour.
+  const visible = [...claims.values()]
+    .filter(paintsGround)
+    .filter(claim => claimTouchesViewport(map, claim))
   return buildingClaimColorExpression(visible, ownColor, unclaimedColor)
 }
 
@@ -553,7 +576,7 @@ function pushClaims(map: mapboxgl.Map): boolean {
   // Where two takeovers overlap, the ground shows whoever holds more of it —
   // that is what "who is in the lead here" looks like, and without the sort it
   // was just whichever pop happened to be inserted last.
-  const byReach = dominancePaintOrder(claims.values())
+  const byReach = dominancePaintOrder(claims.values()).filter(paintsGround)
   const drawn = (c: Claim) => drawnRadiusKm(c.radiusKm, zoom, c.center[1])
   // Band first: a skipped push must not leave the band describing an older
   // camera, since other readers use it to decide their own work.
