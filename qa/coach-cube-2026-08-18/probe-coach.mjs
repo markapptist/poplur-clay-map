@@ -1,4 +1,4 @@
-// First-open coaching + the always-on cube spin.
+// First-open coaching + the demand-scheduled cube spin.
 import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -60,14 +60,41 @@ check('it does NOT teach the same screen twice', !(await ev(`!!document.querySel
 await send('Page.navigate', { url: `${BASE}/?view=feed` })
 check('the feed teaches itself too', await waitFor(`document.querySelector('[data-coach="tab-feed"]')`, 40_000))
 
-// ── the cube keeps turning (no self-imposed expiry) ────────────────────────
+// ── the cube spins on demand, then parks (Stage 0 demand scheduling) ───────
+// Rewritten 2 Sep: the 18 Aug "still rotating after the old 8s window" check
+// asserted an always-on idle spin that no longer exists. Owners now arm
+// bounded turn windows (model arrival, touches, device motion — armGlobeSpin
+// / cubeMotionThermalPolicy) and the render loop parks between them, saying
+// why in window.__poplurGlobeSpin — read that contract, not the DEV-only
+// __poplurCubeModel, which goes stale when the ambient showcase swaps models.
+// Those swaps re-arm 8s arrival turns, so "parked" is observed by polling,
+// never assumed after a fixed delay — and a tap only arms the spin while the
+// globe (not a swapped-in showcase object) is the loaded navigator model.
 await send('Page.navigate', { url: `${BASE}/?view=map` })
-await waitFor(`window.__poplurCubeModel`, 40_000)
-await sleep(12_000) // well past the old 8s arm
-const a = await ev(`window.__poplurCubeModel?.parent?.rotation?.y ?? null`)
-await sleep(2500)
-const b = await ev(`window.__poplurCubeModel?.parent?.rotation?.y ?? null`)
-check('the cube is still rotating after the old 8s window',
-  a !== null && b !== null && Math.abs(a - b) > 0.01, `yaw ${a} → ${b}`)
+await waitFor(`window.__poplurGlobeSpin`, 40_000)
+const GLOBE_UP = `/(?:globe|earth)/i.test(document.querySelector('[data-cube-renderer]')?.dataset.cubeModel ?? '')`
+const PARKED = `window.__poplurGlobeSpin?.spinning === false && ${GLOBE_UP}`
+check('the untouched cube parks between its bounded turn windows',
+  await waitFor(PARKED, 40_000, 500),
+  JSON.stringify(await ev(`window.__poplurGlobeSpin ?? null`)))
+// Guard + tap in ONE evaluate so an ambient model swap cannot slip between
+// "verified parked with the globe up" and the pointerdown; the immediate
+// pointercancel keeps the 500ms hold-menu timer from firing while leaving the
+// 3.5s turn window the pointerdown armed intact.
+let tapped = false
+for (let i = 0; i < 5 && !tapped; i++) {
+  await waitFor(PARKED, 20_000, 500)
+  tapped = await ev(`(() => {
+    const surface = document.querySelector('[data-cube-renderer]')
+    if (!surface || !(${PARKED})) return false
+    const opts = { bubbles: true, pointerId: 7, isPrimary: true }
+    surface.dispatchEvent(new PointerEvent('pointerdown', opts))
+    surface.dispatchEvent(new PointerEvent('pointercancel', opts))
+    return true
+  })()`)
+}
+check('a touch arms the demand-scheduled spin',
+  tapped && await waitFor(`window.__poplurGlobeSpin?.spinning === true`, 3000, 150),
+  tapped ? JSON.stringify(await ev(`window.__poplurGlobeSpin ?? null`)) : 'tap never dispatched — parked globe never observed')
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`)
 process.exit(failures ? 1 : 0)

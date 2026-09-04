@@ -143,6 +143,9 @@
 }
 
 .staticCat {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
   font-weight: 850;
   letter-spacing: 1.5px;
@@ -312,6 +315,33 @@
   margin-left: 5px;
   margin-bottom: 2px;
   filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4));
+}
+
+/* "DM @user" under the headline — the map card's person action, worn as a
+   quiet translucent pill so it reads as chrome, not as a second byline. */
+.dmPoster {
+  justify-self: center;
+  appearance: none;
+  border: 1px solid rgba(255, 242, 248, 0.35);
+  border-radius: 999px;
+  background: rgba(5, 4, 10, 0.55);
+  color: rgba(255, 242, 248, 0.92);
+  font: inherit;
+  font-size: clamp(11px, 3vw, 13px);
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 6px 12px;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+}
+
+.dmPoster:active {
+  transform: translateY(1px);
 }
 
 /* A tapped "viewed your post" notice: the reach line is what a view proves, so
@@ -904,23 +934,22 @@
 }
 
 /* ── live ───────────────────────────────────────────────────────────────────
-   LIVE is channel identity, not a status pill. It mirrors the channel icon on
-   the opposite top corner and stays out of the title/byline block. */
-.liveWord {
-  position: absolute;
-  top: var(--header-title-top, 44px);
-  right: max(12px, env(safe-area-inset-right, 0px));
-  z-index: 46;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  color: #ff4fa3;
-  font: 950 13px/1 system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.12em;
-  text-shadow: 0 2px 5px rgba(0, 0, 0, 0.9), 0 0 12px rgba(246, 59, 154, 0.65);
-  pointer-events: none;
-}
+   LIVE is channel identity, not a corner pill: the no-signal card's own LIVE
+   carries a blinking dot while nothing is on, and .liveFlag (further down)
+   takes over under the byline once a post plays. Nothing sits in the corners. */
 
+/* Read by assistive tech, drawn by nothing. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
 /* ── AI suggestion card ─────────────────────────────────────────────────────
    The tour's smart card, feed-sized: a quiet offer for the post you are
    watching (dish / score / sale / next step). Sits above the channel tag,
@@ -1138,32 +1167,31 @@
   }
 }
 
-/* The live channel's own mark. Sits under the wordmark, and drops below the
-   poster's line when a post is on so it never sits over who is speaking. */
+/* The live channel's own mark: under the poster's information line, so it
+   never sits over who is speaking. Only rendered while a post is on; the
+   no-signal card carries the dot beside its own LIVE otherwise. */
 .liveFlag {
   position: absolute;
   z-index: 5;
-  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 10px);
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 74px);
   left: 50%;
   display: flex;
   align-items: center;
   gap: 7px;
   transform: translateX(-50%);
   pointer-events: none;
-  animation: liveFlash 1.15s ease-in-out infinite;
 }
 
-/* Under the user information line when there is content behind it. */
-.liveFlagUnderInfo {
-  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 74px);
-}
-
+/* The dot is what blinks — the word stays put and readable. Opacity only, on
+   a 10px element: nothing here is worth a compositor layer. */
 .liveDot {
+  flex: 0 0 auto;
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: #ff2d55;
   box-shadow: 0 0 8px rgba(255, 45, 85, 0.9);
+  animation: liveBlink 1.15s steps(1, end) infinite;
 }
 
 .liveWord {
@@ -1173,12 +1201,12 @@
   text-shadow: 0 2px 0 rgba(40, 0, 12, 0.6);
 }
 
-@keyframes liveFlash {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.28; }
+@keyframes liveBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.18; }
 }
 
-/* A flashing badge is decoration, not information, when motion is unwanted. */
+/* A blinking dot is decoration, not information, when motion is unwanted. */
 @media (prefers-reduced-motion: reduce) {
-  .liveFlag { animation: none; }
+  .liveDot { animation: none; }
 }

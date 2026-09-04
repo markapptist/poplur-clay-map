@@ -360,8 +360,8 @@ const TAB_COACH: Record<CubeTab, { title: string; lines: string[]; split?: boole
   map: {
     title: 'THE MAP',
     lines: [
-      'Tap the LEFT half for the previous pop.',
-      'Tap the RIGHT half for the next pop.',
+      'Tap the LEFT edge for the previous pop.',
+      'Tap the RIGHT edge for the next pop.',
       'Hold anywhere on the map to drop a pop there.',
     ],
     split: true,
@@ -370,8 +370,8 @@ const TAB_COACH: Record<CubeTab, { title: string; lines: string[]; split?: boole
   feed: {
     title: 'THE FEED',
     lines: [
-      'Swipe up and down for the next pop in your radius.',
-      'Use the arrows to change channel.',
+      'Tap the left or right edge for the next pop in your radius.',
+      'Swipe up and down — or spin the dial — to change channel.',
       'Hold the cube for News, the TV Guide and more.',
     ],
   },
@@ -379,7 +379,7 @@ const TAB_COACH: Record<CubeTab, { title: string; lines: string[]; split?: boole
     title: 'THE CAMERA',
     lines: [
       'Tap the camera in your hand to shoot.',
-      'Hold the cube to switch between camera tools and your roll.',
+      'Hold the cube for camera tools; your roll is on the side rail.',
       'Everything you post lands in your radius.',
     ],
   },
@@ -1594,6 +1594,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // snapshot before opening it, so the notification cannot fabricate a
   // participant or bypass Firestore's membership check.
   const [dmOpenRequest, setDMOpenRequest] = useState<{ threadId: string; nonce: number } | null>(null)
+  // MAIL opened to a PERSON rather than a thread — the "DM them" action on a
+  // map pop. Mail resolves it to an existing conversation or a fresh draft.
+  const [dmComposeRequest, setDMComposeRequest] = useState<{
+    peerId: string
+    peerName: string | null
+    nonce: number
+  } | null>(null)
   useEffect(() => {
     const onOpen = (event: Event) => {
       const threadId = (event as CustomEvent<{ threadId?: unknown }>).detail?.threadId
@@ -1602,16 +1609,40 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       setViewingUser(null)
       setViewingUserId(null)
       setActiveTab('profile')
+      setDMComposeRequest(null)
       setDMOpenRequest(current => ({ threadId, nonce: (current?.nonce ?? 0) + 1 }))
     }
     window.addEventListener('poplur-open-dm', onOpen)
     return () => window.removeEventListener('poplur-open-dm', onOpen)
   }, [])
   useEffect(() => {
-    if (!dmOpenRequest) return
+    if (!dmOpenRequest && !dmComposeRequest) return
     setResume(current => ({ screen: 'profile-messages', n: current.n + 1 }))
     setHoldOpen(true)
-  }, [dmOpenRequest])
+  }, [dmOpenRequest, dmComposeRequest])
+  // One route for every person-addressed MAIL open: the map's opened-pop card
+  // arrives as a poplur-map-open-dm message, and the feed's intercepted pop —
+  // which renders in THIS document — calls it directly. Both end on the same
+  // draft-or-existing-conversation journey Mail runs from dmComposeRequest.
+  const openDMComposeForPeer = useCallback((rawPeerId: unknown, rawPeerName?: unknown) => {
+    const peerId = typeof rawPeerId === 'string'
+      && rawPeerId.trim().length > 0
+      && rawPeerId.trim().length <= 128
+      ? rawPeerId.trim()
+      : null
+    if (!peerId) return
+    const peerName = typeof rawPeerName === 'string' && rawPeerName.trim()
+      ? rawPeerName.trim()
+      : null
+    setProfileOrigin(tabForHoldRef.current)
+    setViewingUser(null)
+    setViewingUserId(null)
+    setActiveTab('profile')
+    // Person-addressed and thread-addressed opens steer the same MAIL
+    // screen; the newer request must not lose to a stale older one.
+    setDMOpenRequest(null)
+    setDMComposeRequest(current => ({ peerId, peerName, nonce: (current?.nonce ?? 0) + 1 }))
+  }, [])
 
   // Taking your profile picture is NOT a subscreen — it is overlay state inside
   // ProfileTwin, so it has no id and cannot be keyed in SUBSCREEN_CUBE_MODEL
@@ -3174,6 +3205,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         if (popId) setProfilePopFlash(prev => ({ ids: [popId], seq: (prev?.seq ?? 0) + 1 }))
         setActiveTab('profile')
       }
+      // "DM them" on a tapped pop. Same journey as a DM notification (the
+      // MAIL subscreen), but addressed by PERSON rather than by an existing
+      // thread id — the conversation may not exist yet, and Mail opens a
+      // draft whose first message is what creates the thread server-side.
+      if (event.data.type === 'poplur-map-open-dm') {
+        openDMComposeForPeer(event.data.userId, event.data.user)
+      }
       // Planet scope: all the way out, RADIUS reports the accumulated reach of
       // every pop combined; back inside, it returns to the current pop.
       if (event.data.type === 'poplur-map-scope') {
@@ -3342,7 +3380,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       window.removeEventListener('poplur-pick-podcast-location', onPickPodcastLocation)
       window.removeEventListener('message', onMapMessage)
     }
-  }, [applyMapWorldHover, beginNativeMapWebFallback, postWebMapAction])
+  }, [applyMapWorldHover, beginNativeMapWebFallback, openDMComposeForPeer, postWebMapAction])
 
   // Engagement reaches the SHELL, but the camera lives in the map.
   //
@@ -5564,6 +5602,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               setViewingUserId(userId?.trim() || null)
               setActiveTab('profile')
             }}
+            // The playing pop is a PERSON too. Same "DM them" journey the
+            // map's opened-pop card posts up as poplur-map-open-dm — the feed
+            // shares this document, so it takes the helper directly.
+            onOpenDM={openDMComposeForPeer}
           />
         )}
         {mainSurfaceVisible && committedTab === 'post' && (
@@ -6148,6 +6190,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           tab={activeTab}
           initialScreen={resume.screen ?? undefined}
           initialDMThreadId={resume.screen === 'profile-messages' ? dmOpenRequest?.threadId : undefined}
+          initialDMComposeTo={resume.screen === 'profile-messages' && dmComposeRequest
+            ? { peerId: dmComposeRequest.peerId, peerName: dmComposeRequest.peerName }
+            : undefined}
           initialBrowserURL={resume.screen === 'feed-browser' ? feedBrowserURL ?? undefined : undefined}
           initialNewsEventId={resume.screen === 'feed-news' ? newsOpenRequest?.eventId ?? undefined : undefined}
           wheelOverNonce={wheelOverNonce}

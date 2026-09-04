@@ -340,17 +340,37 @@ function startRealtimeFeed(): void {
       publish(posts)
     }, () => {
       unsubscribeRealtime = null
-      realtimeState = 'fallback'
-      // Fail closed while the native shell retrieves its bounded one-shot.
-      publish([])
-      requestNativeFallback()
+      failRealtimeFeed()
     })
   } catch {
     unsubscribeRealtime = null
+    failRealtimeFeed()
+  }
+}
+
+const REALTIME_RETRY_MS = 5_000
+let realtimeRetryTimer = 0
+
+/** A listener error inside a shell hands over to the native forward. In a
+ * plain browser there IS no native answerer, so "fail closed into fallback"
+ * meant one transient error during the boot storm left the feed empty for
+ * the whole session (found 3 Sep: snapshot stayed [] until a manual retry,
+ * which then delivered every post within seconds). Retry instead, and keep
+ * any healthy list we already had rather than wiping it on a mid-session
+ * blip. */
+function failRealtimeFeed(): void {
+  if (isRNWebShellRoute() || isNativeShell()) {
     realtimeState = 'fallback'
     publish([])
     requestNativeFallback()
+    return
   }
+  realtimeState = 'idle'
+  if (realtimeRetryTimer) return
+  realtimeRetryTimer = window.setTimeout(() => {
+    realtimeRetryTimer = 0
+    if (listeners.size) startRealtimeFeed()
+  }, REALTIME_RETRY_MS)
 }
 
 /** Legacy entry point retained for Home/native compatibility. Firestore is the
@@ -368,6 +388,10 @@ export function onNativeFeedPosts(listener: () => void): () => void {
     if (listeners.size) return
     unsubscribeRealtime?.()
     unsubscribeRealtime = null
+    if (realtimeRetryTimer) {
+      window.clearTimeout(realtimeRetryTimer)
+      realtimeRetryTimer = 0
+    }
     realtimeState = 'idle'
     snapshot = []
     if (nativeFallbackListening && typeof window !== 'undefined') {

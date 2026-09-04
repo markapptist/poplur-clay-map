@@ -64,6 +64,9 @@ export interface PopupItem {
   content?: MapPopContent
   /** Optional app-owned primary action, such as opening a creator profile. */
   action?: SuggestionPrimaryAction
+  /** Message the pop's owner. Present only on ANOTHER account's pop — your
+   *  own pop has nobody to DM. */
+  dmAction?: SuggestionPrimaryAction
   ttl: number
   /** Tapping the notice DOES something (an engagement opens its post in the
    *  feed). Runs on tap, then the notice leaves; without it a tap only
@@ -368,6 +371,14 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
                 onActivate: () => {
                   playPop()
                   item.action?.onActivate()
+                  dismissPopup(item.id)
+                },
+              } : undefined}
+              tertiaryAction={item.dmAction ? {
+                label: item.dmAction.label,
+                onActivate: () => {
+                  playPop()
+                  item.dmAction?.onActivate()
                   dismissPopup(item.id)
                 },
               } : undefined}

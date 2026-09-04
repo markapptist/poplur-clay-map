@@ -14,6 +14,7 @@ import {
   onNativeFeedPosts,
   type NativeFeedPost,
 } from './nativeFeedPosts'
+import { accountSnapshot, onAccountChange } from './accountStore'
 import {
   distanceMetersBetween,
   feedDiscoverySnapshot,
@@ -314,11 +315,16 @@ function cuesFor(video: string | undefined, fallback: string) {
   return (video && CAPTION_CUES[video]) || [{ t: 0, text: fallback }]
 }
 
+// useSyncExternalStore adapter: accountStore hands its listener a snapshot,
+// the store contract wants a bare change notification.
+const subscribeAccountUid = (onStoreChange: () => void) => onAccountChange(onStoreChange)
+
 export default function FeedTwin({
   index: controlledIndex,
   onIndexChange,
   bindActions,
   onOpenProfile,
+  onOpenDM,
   suppressed = false,
   onPostReach,
   onContentAdvance,
@@ -334,6 +340,10 @@ export default function FeedTwin({
   bindActions?: (fn: ((action: FeedAction) => void) | null) => void
   /** PROFILE opens the poster's profile, not yours */
   onOpenProfile?: (user: string, userId?: string) => void
+  /** "DM the poster" on the playing pop — the same person-addressed MAIL
+   *  journey the map's opened-pop card offers. Only rendered for a post owned
+   *  by ANOTHER account whose row carries the stable id a DM is addressed to. */
+  onOpenDM?: (userId: string, user?: string | null) => void
   /** a full screen is replacing the feed (News, TV Guide): go quiet */
   suppressed?: boolean
   /** The cube is the universal back. The comment box is a layer over the feed
@@ -870,6 +880,21 @@ export default function FeedTwin({
   const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
   // The byline's mark: the supplied check, by the same rule the profile uses.
   const bylineVerified = verifiedKindForHandle(post?.user, ownHandle)
+  // Whose account is watching, for telling somebody else's post from your own.
+  const accountUid = useSyncExternalStore(
+    subscribeAccountUid,
+    () => accountSnapshot().uid,
+    () => null,
+  )
+  // A pop is a person before it is a place, and a person can be written to —
+  // the map's opened-pop card rule (`!pin.mine && pin.ownerId`), applied to
+  // the post that intercepted you here. Only somebody ELSE'S post offers the
+  // DM, and only when the row carries the stable account id a DM must be
+  // addressed to; demo padding never carries one. A signed-out browser
+  // preview has no uid, so every owned post reads as somebody else's there.
+  const dmPeer = post?.ownerId && post.ownerId !== accountUid
+    ? { userId: post.ownerId, user: post.user }
+    : null
   // Never sit on an empty channel — and "empty" means nothing IN REACH: a
   // channel full of pops that cannot reach the viewer is empty to them, and
   // demo padding does not count. Whenever the channel under the viewer has
@@ -2008,11 +2033,6 @@ export default function FeedTwin({
         />
       )}
 
-      {/* The LIVE channel mirrors its icon with one plain word at top-right. */}
-      {ch.id === 'live' && !playerMode && (
-        <div className={styles.liveWord} aria-label="Live channel">LIVE</div>
-      )}
-
       {/* Static + channel identity while the video buffers or swaps; fades out
           over 0.5s (ease-out) exactly like the app, and stays up as the
           "no signal" card on channels with no creative yet. */}
@@ -2041,7 +2061,16 @@ export default function FeedTwin({
         )}
         <div className={styles.staticIdentity}>
           <span className={styles.staticCh}>CH {ch.number}</span>
-          <span className={styles.staticCat}>{ch.name.toUpperCase()}</span>
+          <span className={styles.staticCat}>
+            {/* On the live channel this card's own LIVE is the one live label
+                the screen carries while nothing is on; the blinking dot sits
+                beside it, not in a corner of its own. */}
+            {/* Only while nothing is on: once a post plays the flag under the
+                byline carries the dot, and this cover fades to opacity 0 —
+                which hides a layer but does not stop its animation. */}
+            {ch.id === 'live' && !post && <span className={styles.liveDot} aria-hidden="true" />}
+            {ch.name.toUpperCase()}
+          </span>
         </div>
       </div>
       {/* The TV dressing leaves with the rest of the chrome: fullscreen means
@@ -2103,16 +2132,18 @@ export default function FeedTwin({
           onLike={likeCurrentPost}
           onDislike={dislikeCurrentPost}
         />
-        {ch.id === 'live' && (
-          // The live channel says so, under the wordmark — and under the
-          // poster's line when there is content, so it never covers who is on.
-          // It flashes because "live" is a state, not a label: a static badge
-          // reads the same whether or not anything is happening.
-          <div
-            className={post ? `${styles.liveFlag} ${styles.liveFlagUnderInfo}` : styles.liveFlag}
-            role="status"
-            aria-label="Live channel"
-          >
+        {/* The no-signal card above is aria-hidden, so with nothing on the
+            live channel would otherwise announce nothing at all. */}
+        {ch.id === 'live' && !post && (
+          <span className={styles.srOnly} role="status">Live channel</span>
+        )}
+        {ch.id === 'live' && post && (
+          // The live channel says so once, under the poster's information
+          // line, so it never covers who is on and never floats in a corner.
+          // With nothing on, the no-signal card's own LIVE carries the dot
+          // instead. The dot blinks because "live" is a state, not a label:
+          // a static badge reads the same whether or not anything is happening.
+          <div className={styles.liveFlag} role="status" aria-label="Live channel">
             <span className={styles.liveDot} aria-hidden="true" />
             <span className={styles.liveWord} aria-hidden="true">LIVE</span>
           </div>
@@ -2135,6 +2166,20 @@ export default function FeedTwin({
                   )}
                 </div>
               </div>
+              {/* The map card's "DM @user", on the pop that reached you here.
+                  dmPeer already enforces the somebody-else's-post rule. */}
+              {onOpenDM && dmPeer && (
+                <button
+                  type="button"
+                  className={styles.dmPoster}
+                  onClick={() => {
+                    playPop()
+                    onOpenDM(dmPeer.userId, dmPeer.user)
+                  }}
+                >
+                  DM {dmPeer.user}
+                </button>
+              )}
             </div>
           </div>
         </div>

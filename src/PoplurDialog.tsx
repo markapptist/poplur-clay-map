@@ -35,6 +35,7 @@ export default function PoplurDialog({
   onMediaActivate,
   primaryAction,
   secondaryAction,
+  tertiaryAction,
   onClose,
   dataId,
   ariaLabel,
@@ -47,6 +48,10 @@ export default function PoplurDialog({
   onMediaActivate?: () => void
   primaryAction?: PoplurDialogAction
   secondaryAction?: PoplurDialogAction
+  /** A second quiet action beside `secondaryAction` — the pop card carries
+   *  both "view their profile" and "DM them", and neither outranks the
+   *  primary media action. */
+  tertiaryAction?: PoplurDialogAction
   onClose: () => void
   dataId?: string
   ariaLabel?: string
@@ -120,6 +125,11 @@ export default function PoplurDialog({
           {secondaryAction && (
             <button type="button" className={styles.secondary} onClick={secondaryAction.onActivate}>
               {secondaryAction.label}
+            </button>
+          )}
+          {tertiaryAction && (
+            <button type="button" className={styles.secondary} onClick={tertiaryAction.onActivate}>
+              {tertiaryAction.label}
             </button>
           )}
         </div>

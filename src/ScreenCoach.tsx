@@ -78,17 +78,17 @@ export default function ScreenCoach({ id, title, lines, split, pinArrows }: Coac
 
   return (
     <div className={styles.coach} data-coach={id} aria-live="polite">
-      {/* The map's two halves, drawn as the control they are. */}
+      {/* The map's two edge lanes, drawn as the control they are. */}
       {split && (
         <div className={styles.split} aria-hidden="true">
           <div className={styles.half}>
             <span className={styles.halfArrow}>‹</span>
-            <span className={styles.halfLabel}>TAP THIS SIDE<br /><b>PREVIOUS POP</b></span>
+            <span className={styles.halfLabel}>TAP THIS EDGE<br /><b>PREVIOUS POP</b></span>
           </div>
           <div className={styles.seam} />
           <div className={styles.half}>
             <span className={styles.halfArrow}>›</span>
-            <span className={styles.halfLabel}>TAP THIS SIDE<br /><b>NEXT POP</b></span>
+            <span className={styles.halfLabel}>TAP THIS EDGE<br /><b>NEXT POP</b></span>
           </div>
         </div>
       )}

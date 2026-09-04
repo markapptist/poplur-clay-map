@@ -313,6 +313,7 @@ export default function HoldMenuTwin({
   onWheelFocusChange,
   initialScreen,
   initialDMThreadId,
+  initialDMComposeTo,
   initialBrowserURL,
   initialNewsEventId,
   wheelOverNonce = 0,
@@ -364,6 +365,8 @@ export default function HoldMenuTwin({
   /** A system-notification deep link. Mail validates it against the live native
       thread snapshot before opening anything. */
   initialDMThreadId?: string
+  /** MAIL opened to a PERSON (map pop "DM them") rather than to a thread. */
+  initialDMComposeTo?: { peerId: string; peerName: string | null }
   /** A safe ad/source destination supplied by Home's Feed Browser route. */
   initialBrowserURL?: string
   /** Canonical live-news event selected by a map popup. */
@@ -1244,6 +1247,7 @@ export default function HoldMenuTwin({
           <MailScreen
             onClose={() => { playSubscreenNavigationPop(); onClose() }}
             initialThreadId={dmReturnThreadId ?? initialDMThreadId}
+            initialComposeTo={dmReturnThreadId ? undefined : initialDMComposeTo}
             onCallViaPhone={(id, name, threadId) => {
               const phoneTile = items.find(it => it.screen === 'profile-phone')
               if (phoneTile) {

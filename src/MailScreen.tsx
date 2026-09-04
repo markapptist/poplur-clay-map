@@ -839,10 +839,14 @@ function blobDataURL(blob: Blob): Promise<string> {
   })
 }
 
-export default function MailScreen({ onCallViaPhone, initialThreadId }: {
+export default function MailScreen({ onCallViaPhone, initialThreadId, initialComposeTo }: {
   onClose?: () => void
   onCallViaPhone?: (id: string, name: string, threadId: string) => void
   initialThreadId?: string
+  /** Open to a PERSON rather than a thread — the map pop's "DM them". The
+   *  conversation may not exist yet; Mail then opens a draft, and the first
+   *  message is what creates the canonical thread server-side. */
+  initialComposeTo?: { peerId: string; peerName: string | null }
 }) {
   const [activeThread, setActiveThread] = useState<Thread | null>(null)
   const [faceTimeWith, setFaceTimeWith] = useState<{ id: string; name: string } | null>(null)
@@ -872,6 +876,7 @@ export default function MailScreen({ onCallViaPhone, initialThreadId }: {
   const voiceLimitRef = useRef<number | null>(null)
   const voiceDiscardRef = useRef(false)
   const pendingInitialThreadIdRef = useRef(initialThreadId)
+  const pendingComposeToRef = useRef(initialComposeTo)
   // Discovery is radius-based; an established DM is participant history.
   // Never filter this list by current reach or either person's location.
   const threads = persistentDMThreads(liveThreads ?? THREADS, deletedIds)
@@ -948,6 +953,57 @@ export default function MailScreen({ onCallViaPhone, initialThreadId }: {
     }))
   }, [liveThreads, threads])
 
+  // A person-addressed open ("DM them" on a map pop) resolves against the same
+  // trustworthy list, but a missing conversation is not a failure: it opens a
+  // DRAFT instead. sendText already addresses every message by otherId, so the
+  // draft needs no send path of its own — the first message creates the
+  // canonical thread server-side, and the live snapshot then adopts the draft
+  // (see the poplurDMThreads handler below).
+  useEffect(() => {
+    const compose = pendingComposeToRef.current
+    if (!compose) return
+    if (isNativeShell() && liveThreads === null) return
+    pendingComposeToRef.current = undefined
+    setComposerText('')
+    setComposerTab('chat')
+    const existing = threads.find(thread => thread.otherId === compose.peerId)
+    if (existing) {
+      setActiveThread(existing)
+      window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+        detail: { type: 'openDMThread', threadId: existing.id },
+      }))
+      return
+    }
+    const title = compose.peerName ?? 'Poplur chat'
+    setActiveThread({
+      id: `draft:${compose.peerId}`,
+      otherId: compose.peerId,
+      initials: title.replace(/^@/, '').slice(0, 2).toUpperCase() || 'PC',
+      title,
+      preview: 'No messages yet',
+      when: 'now',
+      unread: 0,
+      messages: [],
+    })
+  }, [liveThreads, threads])
+
+  // The adopted draft (id flips from draft:… to the canonical thread id when
+  // the snapshot returns the real row) still needs the open call an ordinary
+  // openThread dispatches, so native starts streaming its messages and
+  // marking it read.
+  const previousActiveThreadIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    const previous = previousActiveThreadIdRef.current
+    const current = activeThread?.id ?? null
+    previousActiveThreadIdRef.current = current
+    if (!current || current === previous) return
+    if (previous?.startsWith('draft:') && !current.startsWith('draft:')) {
+      window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
+        detail: { type: 'openDMThread', threadId: current },
+      }))
+    }
+  }, [activeThread?.id])
+
   // The rendered DM card is not enough information to place a call: its
   // participant id must be the real Poplur uid. Native supplies that with the
   // live thread list, then supplies messages for the one opened conversation.
@@ -972,8 +1028,17 @@ export default function MailScreen({ onCallViaPhone, initialThreadId }: {
         })
         setActiveThread(current => {
           if (!current) return null
+          // A DRAFT has no server row yet, so it can never match by id: adopt
+          // it through the account on the other side the moment the snapshot
+          // carries that conversation (the first send created it), and keep
+          // it open untouched until then — a draft is not stale state to be
+          // validated away, it is a conversation waiting for its first word.
           const replacement = next.find(thread => thread.id === current.id)
-          return replacement ? { ...replacement, messages: current.messages } : null
+            ?? (current.id.startsWith('draft:') && current.otherId
+              ? next.find(thread => thread.otherId === current.otherId)
+              : undefined)
+          if (replacement) return { ...replacement, messages: current.messages }
+          return current.id.startsWith('draft:') ? current : null
         })
         const requestedThreadId = pendingInitialThreadIdRef.current
         const requestedThread = requestedThreadId
