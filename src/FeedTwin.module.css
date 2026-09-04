@@ -265,9 +265,9 @@
   text-overflow: ellipsis;
 }
 
-/* One still byline: the handle, large and unmoving, with the reach beside it.
-   It used to trade places with the reach on a six-second fade; a name you
-   have to wait for is a name you cannot read. */
+/* One still byline: the handle, large and unmoving. It used to trade places
+   with a "reached you from" line on a six-second fade; the reach line is gone
+   and a name you have to wait for is a name you cannot read. */
 .feedMetaRow {
   min-width: 0;
   display: flex;
@@ -279,11 +279,7 @@
   pointer-events: none;
 }
 
-/* Stacked, not side by side: the column is too narrow for a 17px handle and
-   the reach on one line, and a flex row settles that by squeezing the handle
-   to nothing. Each gets its own line and neither ever shrinks. */
-.feedMetaHandle,
-.feedReach {
+.feedMetaHandle {
   flex: 0 0 auto;
   max-width: 100%;
   overflow: hidden;
@@ -329,9 +325,6 @@
   white-space: nowrap;
 }
 
-.feedReach {
-  color: rgba(214, 246, 255, 0.9);
-}
 
 @keyframes feedCenterTextShader {
   to { background-position: -260% 0; }

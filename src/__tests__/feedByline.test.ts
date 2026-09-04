@@ -20,6 +20,8 @@ describe('feed byline', () => {
     const tsx = read('FeedTwin.tsx')
     expect(tsx).toContain('VERIFIED_CHECK_SRC[bylineVerified]')
     expect(tsx).not.toContain('viewBox="0 0 22 22"')
+    expect(tsx).not.toContain('reachLabel(')
+    expect(tsx).not.toContain('styles.feedReach')
   })
 
   it('never opens on an empty channel', () => {

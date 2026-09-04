@@ -113,12 +113,6 @@ function usesMiles(): boolean {
 }
 
 /** "◆ reached you from 12.4 km away" — renders a post's current reach. */
-function reachLabel(km: number): string {
-  const value = usesMiles() ? `${(km * 0.621371).toFixed(1)} mi` : `${km.toFixed(1)} km`
-  // Keep the distance and its unit together in the compact header byline.
-  return `◆ reached you from ${value.replace(' ', '\u00a0')} away`
-}
-
 export const CHANNELS: Channel[] = [
   { id: 'food', number: 101, name: 'Food', emoji: '🍔', icon: 'poplur_channel_101_food', flag: '🇨🇦', user: '@sauceboss', caption: 'late-night poutine run downtown', lang: 'EN', theme: ['#3a1206', '#c2410c', '#f59e0b'], videos: [feedUrl('ad-food.mp4')] },
   // LIVE is not a genre — it is whoever is broadcasting into your radius right
@@ -2096,7 +2090,7 @@ export default function FeedTwin({
               </div>
               <div
                 className={styles.feedMetaRow}
-                aria-label={post.reachKm == null ? post.user : `${post.user}, ${reachLabel(post.reachKm)}`}
+                aria-label={post.user}
               >
                 <div className={`${styles.feedHandle} ${styles.feedMetaHandle}`} aria-hidden="true">
                   {post.user}
@@ -2104,11 +2098,6 @@ export default function FeedTwin({
                     <img src={VERIFIED_CHECK_SRC[bylineVerified]} className={styles.verifyBadge} alt="" draggable="false" />
                   )}
                 </div>
-                {post.reachKm != null && (
-                  <span className={`${styles.reachText} ${styles.feedReach}`} aria-hidden="true">
-                    {reachLabel(post.reachKm)}
-                  </span>
-                )}
               </div>
             </div>
           </div>
