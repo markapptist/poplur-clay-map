@@ -832,6 +832,28 @@
   text-transform: uppercase;
 }
 
+/* The reach line and the place line of a framed point — the same two voices
+   the map's own card used (App.module.css .mapPointCardRadius), now in the
+   shell's card so title and point never disagree about where they sit. */
+.mapTitleRadius {
+  margin-top: 3px;
+  color: #7fe3ff;
+  font: 950 11px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: .06em;
+  text-shadow: 0 0 8px rgba(74, 196, 255, .58);
+}
+
+.mapTitlePlace {
+  margin-top: 4px;
+  max-width: 100%;
+  overflow: hidden;
+  color: rgba(255, 247, 251, .72);
+  font: 800 10px/1.1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: .04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .mapTitleName {
   max-width: 100%;
   overflow: hidden;

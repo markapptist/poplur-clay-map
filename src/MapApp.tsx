@@ -4679,7 +4679,11 @@ export default function MapApp() {
         </div>
       )}
 
-      {mapPointLabelActive && focusedMapPoint && (
+      {/* Embedded, the SHELL draws this card under its own title (HomeTwin's
+          .mapTitle) from the poplur-map-point message, so the two never sit
+          on different lines. Standalone there is no shell, and the QA probes
+          read this card, so it stays. */}
+      {!isEmbedded && mapPointLabelActive && focusedMapPoint && (
         <aside
           key={focusedMapPoint.key}
           className={styles.mapPointCard}

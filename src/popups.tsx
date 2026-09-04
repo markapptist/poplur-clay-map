@@ -105,14 +105,6 @@ const TTL: Record<PopupKind, number> = {
 // More than a few at once is a pile nobody reads. Oldest goes first.
 const MAX_LIVE = 3
 
-/** The pop's ground in the viewer's own unit — the same number the shell's
- *  RADIUS card and the point card show, said once more. */
-function popRadiusLabel(radiusKm: number): string {
-  const miles = shouldUseMiles()
-  const shown = miles ? radiusKm * KM_TO_MI : radiusKm
-  const text = shown >= 100 ? Math.round(shown).toLocaleString() : shown.toFixed(1)
-  return `${text} ${miles ? 'mi' : 'km'}`
-}
 
 let nextId = 1
 let items: PopupItem[] = []
@@ -336,18 +328,16 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
           ) : item.kind === 'mapContent' && item.content ? (
             // A tapped pop opens in the Poplur dialog: who, what they said,
             // the ground it holds, and one button to watch it in the feed.
+            // A tapped pin shows the pop itself and two ways to act on it —
+            // watch it in the feed, or message whoever posted it — and nothing
+            // else. The radius, channel and place pills and the profile
+            // button were cut on request: the radius already reads off the
+            // card under the title, and a preview that has to be read past
+            // three chips is not a preview.
             <PoplurDialog
               dataId={item.content.id}
-              eyebrow="Poplur pop"
               title={item.content.user ?? 'Your pop'}
               subtitle={item.content.caption ?? item.content.media?.alt ?? item.content.name}
-              pills={[
-                { icon: '📍', text: `${popRadiusLabel(item.content.radiusKm)} radius` },
-                ...(item.content.channel ? [{ icon: '📺', text: item.content.channel.toUpperCase() }] : []),
-                ...(item.content.name && item.content.name !== item.content.caption
-                  ? [{ icon: '🗺', text: item.content.name }]
-                  : []),
-              ]}
               media={item.content.media}
               onClose={() => {
                 playPop()
@@ -366,15 +356,7 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
                   dismissPopup(item.id)
                 },
               } : undefined}
-              secondaryAction={item.action ? {
-                label: item.action.label,
-                onActivate: () => {
-                  playPop()
-                  item.action?.onActivate()
-                  dismissPopup(item.id)
-                },
-              } : undefined}
-              tertiaryAction={item.dmAction ? {
+              secondaryAction={item.dmAction ? {
                 label: item.dmAction.label,
                 onActivate: () => {
                   playPop()

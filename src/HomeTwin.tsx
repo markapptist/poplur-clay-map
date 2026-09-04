@@ -2947,6 +2947,17 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       // poplur-map-pop flight below; landmarks and the current-location stop
       // hand the card back to the accumulated number.
       if (event.data.type === 'poplur-map-point') {
+        if (event.data.kind === 'pin' || event.data.kind === 'landmark' || event.data.kind === 'current') {
+          setMapFocusedPoint({
+            key: typeof event.data.key === 'string' && event.data.key ? event.data.key : String(event.data.id ?? ''),
+            kind: event.data.kind,
+            name: typeof event.data.name === 'string' ? event.data.name : '',
+            mine: event.data.mine === true,
+            radiusKm: typeof event.data.radiusKm === 'number' && Number.isFinite(event.data.radiusKm)
+              ? event.data.radiusKm
+              : null,
+          })
+        }
         if (event.data.kind === 'pin' && typeof event.data.radiusKm === 'number'
           && Number.isFinite(event.data.radiusKm)) {
           setMapPopRadiusKm(event.data.radiusKm)
@@ -3677,6 +3688,17 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // home chrome during a tab change.
   const [mapPlace, setMapPlace] = useState<string | null>(null)
   const [mapPointLabelActive, setMapPointLabelActive] = useState(false)
+  /** The map point the arrows or a tap have framed, for the title card: the
+   *  map iframe used to draw this on its own card mid-map, under a title it
+   *  cannot see, so the two were never quite aligned. Now the SHELL draws it,
+   *  as the same card the place name wears, directly under the wordmark. */
+  const [mapFocusedPoint, setMapFocusedPoint] = useState<{
+    key: string
+    kind: 'pin' | 'landmark' | 'current'
+    name: string
+    mine: boolean
+    radiusKm: number | null
+  } | null>(null)
   const [mapHudContext, setMapHudContext] = useState<MapHudContext | null>(null)
   // "N pops in this area" under the title — the map counts on every pop
   // arrival (it owns the pop list); a tap opens the profile with these pops
@@ -5874,11 +5896,48 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           that is animating in. Map tab only — and not while a subscreen is up:
           living in the chrome layer means it is ABOVE the subscreen stage, so
           it was narrating the map's camera across the top of the radio. */}
-      {activeTab === 'map' && mapPlace && !overlayOpen && (
+      {activeTab === 'map' && (mapPlace || (mapPointLabelActive && mapFocusedPoint)) && !overlayOpen && (
         <div
           className={`${styles.mapTitle} ${styles.overSubscreen}${chromeFaded ? ` ${styles.chromeIdle}` : ''}`}
           aria-live="polite"
         >
+          {/* Everything about the framed point, in the one card under the
+              title: what it is, whose it is, how far it reaches, and where.
+              The map iframe no longer draws its own copy of this. */}
+          {mapPointLabelActive && mapFocusedPoint && (
+            <span
+              key={`point-${mapFocusedPoint.key}`}
+              className={styles.mapTitleText}
+              data-map-point-card=""
+              data-map-point-kind={mapFocusedPoint.kind}
+            >
+              <em className={styles.mapTitleKind}>
+                {mapFocusedPoint.kind === 'landmark'
+                  ? 'LANDMARK'
+                  : mapFocusedPoint.kind === 'current'
+                    ? 'CURRENT LOCATION'
+                    : mapFocusedPoint.mine ? 'YOUR PIN' : 'PIN'}
+              </em>
+              <strong className={styles.mapTitleName}>{mapFocusedPoint.name}</strong>
+              {mapFocusedPoint.radiusKm != null && (
+                <span
+                  className={styles.mapTitleRadius}
+                  data-map-point-radius-km={mapFocusedPoint.radiusKm}
+                >
+                  {(() => {
+                    const shown = unitMi ? mapFocusedPoint.radiusKm * KM_TO_MI : mapFocusedPoint.radiusKm
+                    const text = shown >= 1_000
+                      ? Math.round(shown).toLocaleString()
+                      : Number.isInteger(shown) ? String(shown) : shown.toFixed(1)
+                    return `${text} ${unitMi ? 'MI' : 'KM'} RADIUS`
+                  })()}
+                </span>
+              )}
+              {mapPlace && mapPlace !== mapFocusedPoint.name && (
+                <span className={styles.mapTitlePlace}>{mapPlace}</span>
+              )}
+            </span>
+          )}
           {!mapPointLabelActive && (
             <span key={mapPlace} className={styles.mapTitleText}>
               {/* The eyebrow is what makes this the same object as the focused
