@@ -66,6 +66,19 @@ export interface ParsedLiveNewsResponse {
 const DEFAULT_ENDPOINT = 'https://us-central1-poplur2025.cloudfunctions.net/liveNewsApi'
 const CACHE_KEY = 'poplur.live-news.v1'
 const CACHE_FRESH_MS = 5 * 60_000
+/**
+ * How long to sit out after a failed wire fetch.
+ *
+ * Only the SUCCESS path wrote a cache entry, so a wire that is down was
+ * re-fetched on every map mount, every 5-minute foreground tick, every
+ * visibilitychange and every `online` event, forever, with no backoff. When
+ * the endpoint was returning 404 that was a request storm nobody could see —
+ * the paper still filled with local drops, so it looked fine.
+ *
+ * Deliberately shorter than CACHE_FRESH_MS: a wire that comes back should be
+ * picked up on the next ordinary refresh, not punished for having been down.
+ */
+const FAILURE_BACKOFF_MS = 60_000
 const CACHE_MAX_MS = 24 * 60 * 60_000
 const EVENT_MAX_AGE_MS = 7 * 24 * 60 * 60_000
 const WIRE_STALE_MS = 90 * 60_000
@@ -441,6 +454,8 @@ function writeCache(events: LiveNewsEvent[], generatedAt: string | null, checked
 
 const listeners = new Set<(snapshot: LiveNewsSnapshot) => void>()
 let inflight: Promise<LiveNewsSnapshot> | null = null
+/** When the wire last failed, so a dead endpoint is not re-asked every tick. */
+let lastFailureAtMs: number | null = null
 let snapshot: LiveNewsSnapshot = {
   events: [], generatedAt: null, checkedAt: null, loading: false, stale: false, source: 'empty', error: null,
 }
@@ -475,6 +490,11 @@ export async function loadLiveNews(force = false): Promise<LiveNewsSnapshot> {
     })
   }
   const cached = readCache(nowMs)
+  // A recent failure suppresses the retry, but never a user-forced refresh:
+  // `force` is the reader explicitly asking, and it must always reach the wire.
+  if (!force && lastFailureAtMs != null && nowMs - lastFailureAtMs < FAILURE_BACKOFF_MS) {
+    return publish({ ...snapshot, loading: false })
+  }
   if (!force && cached && cached.ageMs <= CACHE_FRESH_MS) {
     return publish({
       events: cached.events,
@@ -509,6 +529,7 @@ export async function loadLiveNews(force = false): Promise<LiveNewsSnapshot> {
       if (!events.length) throw new Error('News wire returned no publishable events.')
       const generatedAt = wire.generatedAt ?? new Date(nowMs).toISOString()
       writeCache(events, generatedAt, wire.checkedAt, wire.stale, nowMs)
+      lastFailureAtMs = null
       return publish({
         events,
         generatedAt,
@@ -526,7 +547,13 @@ export async function loadLiveNews(force = false): Promise<LiveNewsSnapshot> {
         const checkedAt = new Date(nowMs).toISOString()
         return publish({ events: previewLiveNewsEvents(nowMs), generatedAt: checkedAt, checkedAt, loading: false, stale: false, source: 'preview', error: null })
       }
-      return publish({ events: [], generatedAt: null, checkedAt: null, loading: false, stale: false, source: 'empty', error: error instanceof Error ? error.message : 'Live news is unavailable.' })
+      lastFailureAtMs = nowMs
+      // NOT error.message. That is the browser's string — a reader of The
+      // Poplur Times was being shown the literal words "Failed to fetch"
+      // under a LIVE WORLD WIRE masthead. The real message goes to the
+      // console for us; the page says something a person can act on.
+      console.warn('[liveNews] wire unavailable:', error instanceof Error ? error.message : error)
+      return publish({ events: [], generatedAt: null, checkedAt: null, loading: false, stale: false, source: 'empty', error: 'The world wire is quiet — showing stories from your radius.' })
     } finally {
       window.clearTimeout(timeout)
       inflight = null

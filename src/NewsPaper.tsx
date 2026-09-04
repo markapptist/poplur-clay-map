@@ -727,6 +727,10 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
             <b>{liveNews.loading
               ? 'Checking trusted sources…'
               : liveNews.error ?? `${liveNews.events.length} geolocated ${liveNews.events.length === 1 ? 'story' : 'stories'} shared with the map`}</b>
+            {/* `liveNews.error` is now always a sentence written for a reader.
+                It used to carry error.message straight from the failed fetch,
+                so the paper printed the browser's own words — "Failed to
+                fetch" — under a LIVE WORLD WIRE masthead. See liveNews.ts. */}
           </div>
         )}
 
