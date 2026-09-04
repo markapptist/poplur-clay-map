@@ -8,6 +8,7 @@ import styles from './MailScreen.module.css'
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
 import { playPop } from './pop'
+import SideControlIconButton from './SideControlIcon'
 import { playCubeNavigationPop } from './cubeNavigationSound'
 import { isNativeShell } from './nativeBridge'
 import CameraARButton from './CameraARButton'
@@ -466,12 +467,18 @@ const SWIPE_OPEN_PX = 88
 const SWIPE_COMMIT_PX = 56
 const SWIPE_DELETE_PX = 168
 
-function SwipeableThread({ thread, open, onOpenChange, onOpenThread, onDelete }: {
+function SwipeableThread({ thread, open, onOpenChange, onOpenThread, onDelete, selecting = false, selected = false, onToggleSelect }: {
   thread: Thread
   open: boolean
   onOpenChange: (id: string | null) => void
   onOpenThread: (thread: Thread) => void
   onDelete: (id: string) => void
+  /** The inbox is in SELECT mode: a tap marks the card instead of opening
+   *  it, and the swipe-to-delete is parked so a marking drag cannot also
+   *  reveal a delete. */
+  selecting?: boolean
+  selected?: boolean
+  onToggleSelect?: (id: string) => void
 }) {
   const cardRef = useRef<HTMLDivElement>(null)
   const drag = useRef({ pointerId: -1, startX: 0, startY: 0, dx: 0, axis: null as 'x' | 'y' | null, from: 0 })
@@ -540,6 +547,7 @@ function SwipeableThread({ thread, open, onOpenChange, onOpenThread, onDelete }:
   }
 
   const onClick = () => {
+    if (selecting) { playPop(); onToggleSelect?.(thread.id); return }
     if (drag.current.axis === 'x') { drag.current.axis = null; return }
     if (open) { onOpenChange(null); return }
     playCubeNavigationPop()
@@ -563,10 +571,11 @@ function SwipeableThread({ thread, open, onOpenChange, onOpenThread, onDelete }:
         className={styles.thread}
         role="button"
         tabIndex={0}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerEnd}
-        onPointerCancel={onPointerEnd}
+        onPointerDown={selecting ? undefined : onPointerDown}
+        onPointerMove={selecting ? undefined : onPointerMove}
+        onPointerUp={selecting ? undefined : onPointerEnd}
+        onPointerCancel={selecting ? undefined : onPointerEnd}
+        aria-selected={selecting ? selected : undefined}
         onClick={onClick}
         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
       >
@@ -580,9 +589,11 @@ function SwipeableThread({ thread, open, onOpenChange, onOpenThread, onDelete }:
             {thread.preview}
           </span>
         </div>
-        {thread.unread
-          ? <div className={styles.unreadBadge}>{thread.unread}</div>
-          : <div className={styles.threadChevron}>›</div>}
+        {selecting
+          ? <span className={selected ? `${styles.selectMark} ${styles.selectMarkOn}` : styles.selectMark} aria-hidden="true" />
+          : thread.unread
+            ? <div className={styles.unreadBadge}>{thread.unread}</div>
+            : <div className={styles.threadChevron}>›</div>}
       </div>
     </div>
   )
@@ -868,6 +879,20 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
   const [voiceError, setVoiceError] = useState('')
   const [deletedIds, setDeletedIds] = useState<Set<string>>(() => readDeletedThreads())
   const [swipeOpenId, setSwipeOpenId] = useState<string | null>(null)
+  // The inbox tools. SELECT turns every card into a checkbox; SELECT ALL
+  // marks (or unmarks) everything in view; DELETE removes what is marked and
+  // steps back out; SEARCH reveals the field, which otherwise stays folded
+  // away so the list starts at the first conversation.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [searchOpen, setSearchOpen] = useState(false)
+  const toggleSelected = useCallback((id: string) => {
+    setSelectedIds(current => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }, [])
   const remoteTypingTimerRef = useRef<number | null>(null)
   const typingStopTimerRef = useRef<number | null>(null)
   const typingSentForRef = useRef<string | null>(null)
@@ -1926,13 +1951,81 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
         <div className={styles.chatHeaderText}>
           <h1>Chats</h1>
           <span className={styles.chatHeaderSub}>
-            {threads.length === 0
-              ? 'No conversations'
-              : `${threads.length} saved conversation${threads.length === 1 ? '' : 's'}`}
+            {selectMode
+              ? `${selectedIds.size} selected`
+              : threads.length === 0
+                ? 'No conversations'
+                : `${threads.length} saved conversation${threads.length === 1 ? '' : 's'}`}
           </span>
         </div>
       </div>
-      <label className={styles.chatSearch}>
+      {/* The inbox tools, a row of the same side buttons the rails carry.
+          SELECT and SELECT ALL wear drawn glyphs for now — the icon set has
+          no clay art for them yet; when it does, they take it through the
+          registry like the other two. */}
+      <div className={styles.inboxTools} role="toolbar" aria-label="Inbox tools">
+        <button
+          type="button"
+          className={selectMode && visibleThreads.length > 0 && selectedIds.size === visibleThreads.length
+            ? `${styles.toolGlyph} ${styles.toolGlyphOn}`
+            : styles.toolGlyph}
+          aria-label={selectMode && selectedIds.size === visibleThreads.length ? 'Unselect all conversations' : 'Select all conversations'}
+          disabled={visibleThreads.length === 0}
+          onClick={() => {
+            playPop()
+            setSelectMode(true)
+            setSwipeOpenId(null)
+            setSelectedIds(current => current.size === visibleThreads.length
+              ? new Set()
+              : new Set(visibleThreads.map(thread => thread.id)))
+          }}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7l2.5 2.5L10 5M3 13l2.5 2.5L10 11M3 19l2.5 2.5L10 17M13 7h8M13 13h8M13 19h8" /></svg>
+        </button>
+        <button
+          type="button"
+          className={selectMode ? `${styles.toolGlyph} ${styles.toolGlyphOn}` : styles.toolGlyph}
+          aria-label={selectMode ? 'Stop selecting' : 'Select conversations'}
+          aria-pressed={selectMode}
+          disabled={visibleThreads.length === 0 && !selectMode}
+          onClick={() => {
+            playPop()
+            setSwipeOpenId(null)
+            setSelectMode(on => { if (on) setSelectedIds(new Set()); return !on })
+          }}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4" /><path d="M8.5 12.5l2.5 2.5 4.5-5" /></svg>
+        </button>
+        <SideControlIconButton
+          icon="profile.delete"
+          aria-label={selectMode
+            ? (selectedIds.size ? `Delete ${selectedIds.size} selected conversation${selectedIds.size === 1 ? '' : 's'}` : 'Select conversations to delete')
+            : 'Delete conversations'}
+          disabled={selectMode && selectedIds.size === 0}
+          onActivate={() => {
+            playPop()
+            if (!selectMode) { setSelectMode(true); return }
+            const ids = [...selectedIds]
+            ids.forEach(id => deleteThread(id))
+            setSelectedIds(new Set())
+            setSelectMode(false)
+          }}
+        />
+        <span className={styles.toolSpacer} aria-hidden="true" />
+        <SideControlIconButton
+          icon="map.search"
+          aria-label={searchOpen ? 'Hide search' : 'Search conversations'}
+          aria-pressed={searchOpen}
+          onActivate={() => {
+            playPop()
+            setSearchOpen(open => {
+              if (open) setSearchQuery('')
+              return !open
+            })
+          }}
+        />
+      </div>
+      {(searchOpen || searchQuery) && <label className={styles.chatSearch}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5L21 21" /></svg>
         <input
           type="search"
@@ -1940,8 +2033,9 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
           onChange={event => setSearchQuery(event.currentTarget.value.slice(0, 80))}
           placeholder="Search conversations"
           aria-label="Search conversations"
+          autoFocus={searchOpen}
         />
-      </label>
+      </label>}
       <div className={styles.threadList} ref={pullHost}>
         {/* The shared curtain, so Chats refreshes with the same clay lip and
             the same mark head the news page does — one component, not a second
@@ -1960,6 +2054,9 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
             onOpenChange={setSwipeOpenId}
             onOpenThread={openThread}
             onDelete={deleteThread}
+            selecting={selectMode}
+            selected={selectedIds.has(t.id)}
+            onToggleSelect={toggleSelected}
           />
         ))}
         {visibleThreads.length === 0 && (
@@ -1991,29 +2088,41 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
           <>
             <div className={styles.radiusLabel}>In your radius</div>
             {inYourRadius.map(person => (
-              <button
-                key={person.ownerId}
-                type="button"
-                className={styles.radiusRow}
-                onClick={() => openComposeWith(person.ownerId, person.handle)}
-              >
-                <span className={styles.radiusMark} aria-hidden="true">
-                  {person.handle.replace(/^@/, '').slice(0, 2).toUpperCase() || 'PC'}
-                </span>
-                <span className={styles.radiusText}>
-                  <strong>{person.handle}</strong>
-                  {/* Say WHY they are listed. Never "No messages yet" — that is
-                      the thread list's preview line, and reusing it here would
-                      read as a conversation you have not opened. */}
-                  <span>{person.worldwide
-                    ? 'Reaching everywhere'
-                    : person.distanceMeters == null
-                      ? 'In your radius'
-                      : person.distanceMeters < 1000
-                        ? `${Math.round(person.distanceMeters)} m away`
-                        : `${(person.distanceMeters / 1000).toFixed(1)} km away`}</span>
-                </span>
-              </button>
+              // The SAME card a conversation wears (see SwipeableThread), not
+              // a lighter row: it was a plain line with grey initials, which
+              // read as a different kind of thing from the chats above it.
+              // These are people you can talk to; they look like the people
+              // you already do.
+              <div key={person.ownerId} className={styles.radiusRow}>
+                <button
+                  type="button"
+                  className={`${styles.thread} ${styles.personCell}`}
+                  onClick={() => openComposeWith(person.ownerId, person.handle)}
+                  aria-label={`Message ${person.handle}`}
+                >
+                  <div className={styles.avatar}>
+                    {person.handle.replace(/^@/, '').slice(0, 2).toUpperCase() || 'PC'}
+                  </div>
+                  <div className={styles.threadInfo}>
+                    <div className={styles.threadTopLine}>
+                      <strong>{person.handle}</strong>
+                      {/* Say WHY they are listed, where a chat would say when. */}
+                      <time className={styles.threadWhen}>{person.worldwide
+                        ? 'Reaching everywhere'
+                        : person.distanceMeters == null
+                          ? 'In your radius'
+                          : person.distanceMeters < 1000
+                            ? `${Math.round(person.distanceMeters)} m away`
+                            : `${(person.distanceMeters / 1000).toFixed(1)} km away`}</time>
+                    </div>
+                    {/* Never "No messages yet" — that is the thread list's
+                        preview line, and reusing it here would read as a
+                        conversation you have not opened. */}
+                    <span className={styles.threadPreview}>Say hi</span>
+                  </div>
+                  <div className={styles.threadChevron}>›</div>
+                </button>
+              </div>
             ))}
           </>
         )}
