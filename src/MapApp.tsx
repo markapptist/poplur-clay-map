@@ -50,7 +50,7 @@ function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; ra
 }
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaimGroup, onClaimsSettled } from './mapClaims'
-import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin } from './ClayMap'
+import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin, installPinSpotlight, updatePinSpotlight } from './ClayMap'
 import WeatherMark from './WeatherMark'
 import { weatherIconIdForCode, weatherIconIdForMode } from './sideControlIcons'
 import { windyFromSpeed } from './weatherCode'
@@ -97,7 +97,7 @@ import { cancelVoiceSpeech, estimatedVoiceDurationMs, speakWithVoiceAudioFocus }
 import { smartCardFor } from './tourSmarts'
 import { startEngagementChips, engagementVerb, type EngagementEvent } from './engagement'
 import { ambientAllowed, currentQuality, onAmbientSleepChange, onQualityChange, onTick } from './frameGovernor'
-import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange } from './popups'
+import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange, onMapContentPopupChange } from './popups'
 import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
 import MapNewsButton from './MapNewsButton'
@@ -3440,6 +3440,15 @@ export default function MapApp() {
     setSelectedId(current => current && !liveIds.has(current) ? null : current)
   }, [liveMapPosts])
 
+  // The painted ground belongs to the open card; when the last map-content
+  // popup closes, take the paint off again.
+  useEffect(() => onMapContentPopupChange(open => {
+    if (open) return
+    const live = mapRef.current
+    if (!live) return
+    try { updatePinSpotlight(live, null) } catch { /* map already torn down */ }
+  }), [])
+
   const openClickedMapPinContent = useCallback((pin: PopPin) => {
     // A pin you can see and press must answer the press. This used to bail when
     // the media record was missing, so a real claim — with a place, a poster,
@@ -3463,6 +3472,15 @@ export default function MapApp() {
     markPostsSeen([feedPostIdFromPinId(pin.id)])
     setCurrentPlace(displayPlaceName(pin.name))
     focusMapPointForPin(pin.id)
+    // Show how much ground this pop holds: its radius painted on the land in
+    // the pin's own colour, cleared again when the card goes.
+    const live = mapRef.current
+    if (live) {
+      try {
+        installPinSpotlight(live)
+        updatePinSpotlight(live, pin)
+      } catch { /* style not ready yet; the card still opens */ }
+    }
 
     const ownPosts = accountPostedClaims(liveMapPosts)
     const ownNearby = ownPosts.filter(claim => distanceMeters(claim.coords, pin.coords) <= POPS_NEARBY_M)

@@ -1071,6 +1071,63 @@ function takeoverInsertBefore(map: mapboxgl.Map): string | undefined {
   return lines[lines.length - 1]?.id
 }
 
+const PIN_SPOTLIGHT_SOURCE = 'poplur-pin-spotlight'
+const PIN_SPOTLIGHT_FILL = 'poplur-pin-spotlight-fill'
+const PIN_SPOTLIGHT_EDGE = 'poplur-pin-spotlight-edge'
+
+/**
+ * The selected pin's ground. Every pin has a radius, but a number on a card
+ * says nothing about size; painting the land the pop actually covers, in that
+ * pin's own colour, does. Same stack position as the compose preview — under
+ * the clay water — so the paint stops at the shoreline and reads as territory.
+ * Paint only: the popup's own camera move is left alone.
+ */
+export function installPinSpotlight(map: mapboxgl.Map) {
+  if (!map.getSource(PIN_SPOTLIGHT_SOURCE)) {
+    map.addSource(PIN_SPOTLIGHT_SOURCE, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    })
+  }
+  const beforeId = takeoverInsertBefore(map)
+  if (!map.getLayer(PIN_SPOTLIGHT_FILL)) {
+    map.addLayer({
+      id: PIN_SPOTLIGHT_FILL,
+      type: 'fill',
+      source: PIN_SPOTLIGHT_SOURCE,
+      paint: { 'fill-color': '#E04791', 'fill-opacity': 0.5 },
+    }, beforeId)
+  }
+  if (!map.getLayer(PIN_SPOTLIGHT_EDGE)) {
+    map.addLayer({
+      id: PIN_SPOTLIGHT_EDGE,
+      type: 'line',
+      source: PIN_SPOTLIGHT_SOURCE,
+      paint: { 'line-color': '#E04791', 'line-width': 2.5, 'line-opacity': 0.9 },
+    }, beforeId)
+  }
+}
+
+/** Paint `pin`'s coverage, or clear it with null. Safe to call before install. */
+export function updatePinSpotlight(map: mapboxgl.Map, pin: PopPin | null) {
+  const source = map.getSource(PIN_SPOTLIGHT_SOURCE) as mapboxgl.GeoJSONSource | undefined
+  if (!source) return
+  const radiusKm = pin ? Math.max(0, Number.isFinite(pin.radiusKm) ? pin.radiusKm : 0) : 0
+  if (!pin || radiusKm === 0) {
+    source.setData({ type: 'FeatureCollection', features: [] })
+    return
+  }
+  source.setData({
+    type: 'FeatureCollection',
+    features: [ownershipTerrainPolygon(pin.coords, radiusKm, { kind: 'spotlight', pin: pin.id })],
+  })
+  const tint = takeoverTint(pin.color)
+  try {
+    if (map.getLayer(PIN_SPOTLIGHT_FILL)) map.setPaintProperty(PIN_SPOTLIGHT_FILL, 'fill-color', tint)
+    if (map.getLayer(PIN_SPOTLIGHT_EDGE)) map.setPaintProperty(PIN_SPOTLIGHT_EDGE, 'line-color', tint)
+  } catch { /* style changed while the spotlight was repainting */ }
+}
+
 export function installComposeRadiusPreview(map: mapboxgl.Map) {
   if (!map.getSource(COMPOSE_RADIUS_SOURCE)) {
     map.addSource(COMPOSE_RADIUS_SOURCE, {

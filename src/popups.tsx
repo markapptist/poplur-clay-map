@@ -159,6 +159,18 @@ export function onFoodSuggestionVisibilityChange(fn: (visible: boolean) => void)
   })
 }
 
+/** Fires with `true` when a map-content popup opens and `false` when the last
+ *  one is gone — the signal the map uses to clear the selected pin's ground. */
+export function onMapContentPopupChange(fn: (open: boolean) => void): () => void {
+  let last: boolean | null = null
+  return subscribe(current => {
+    const open = current.some(item => item.kind === 'mapContent')
+    if (open === last) return
+    last = open
+    fn(open)
+  })
+}
+
 export function dismissPopup(id: number): void {
   const timer = expiryTimers.get(id)
   if (timer != null) window.clearTimeout(timer)
