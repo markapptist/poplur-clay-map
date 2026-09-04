@@ -118,7 +118,7 @@ import { moonPhase } from './celestial'
 import { publishAccountRadiusKm } from './accountRadius'
 import { subscribeAccountRadiusPosts } from './accountRadiusPosts'
 import { distinctOwnerColor, liveMapPinGhost, nativeFeedPostsToMapPins, subscribeLiveMapPosts, type LiveMapPostPin } from './mapLivePosts'
-import { otherOwnerPinColor, type PinColorId } from './pinColors'
+import { otherOwnerPinColor, PIN_COLOR_SWATCH, type PinColorId } from './pinColors'
 import { normalizeNativeFeedPosts } from './nativeFeedPosts'
 import { currentUid, onUser } from './webFirebase'
 import { dominanceFameScore, effectiveDominanceLevel } from './mapDominance'
@@ -3206,29 +3206,40 @@ export default function MapApp() {
       // Your own pops always stand, and with no location fix yet nothing of
       // anybody else's is drawn, because reach cannot be proven without one.
       .filter(pin => !liveMapPinGhost(pin, reachViewer))
-      .map(pin => ({
+      .map(pin => {
+        // ONE colour decision per pin, made once and used by all three things
+        // that show it: the pin body, the ground it spreads, and the rim round
+        // the face. These used to be resolved independently right here — the
+        // terrain from a hash of the owner id into a 7-entry list, the pin from
+        // a different hash into a 5-entry one — so a red pin sat on teal ground
+        // for every pop that actually carried a colour.
+        //
+        // Someone else's pin never wears YOUR colour: the identity the document
+        // arrives with is re-picked against the viewer's current one, and it
+        // re-runs when that changes, because recolouring your own territory
+        // must not make a stranger's pins look like yours.
+        const pinColor: PinColorId | undefined = pin.mine
+          ? pin.pinColor
+          : (pin.pinColor && !myPinColours.has(pin.pinColor))
+            ? pin.pinColor
+            : otherOwnerPinColor(pin.ownerId ?? pin.id, myPinColours)
+        // The terrain follows the pin. Only when a pop carries no colour at all
+        // does this fall back to the old owner-hash, so nothing that used to be
+        // drawn goes uncoloured.
+        const skin = pinColor
+          ? PIN_COLOR_SWATCH[pinColor]
+          : (pin.mine ? myColor : distinctOwnerColor(pin.ownerId ?? pin.id, myColor))
+        return ({
         ...pin,
-        // Someone else's pin never wears YOUR colour. The identity colour the
-        // document arrives with is chosen from a fixed palette that includes
-        // the default takeover pink, so this re-picks against the viewer's
-        // current colour — and it re-runs when that colour changes, because
-        // recolouring your own territory must not make a stranger's pins look
-        // like yours.
-        color: pin.mine ? myColor : distinctOwnerColor(pin.ownerId ?? pin.id, myColor),
+        color: skin,
         avatar: pin.mine ? (ownAvatar ?? pin.avatar) : pin.avatar,
         selfieVideo: pin.mine && ownSelfieVideo
           ? { src: ownSelfieVideo, poster: ownAvatar ?? pin.avatar ?? undefined }
           : undefined,
         radiusDeltaKm: pinRadiusPulse?.id === pin.id ? pinRadiusPulse.deltaKm : undefined,
-        // Somebody else's pop never wears a colour of yours. Their own choice
-        // stands unless it happens to be one you are already using, in which
-        // case the board would stop answering "which of these are mine".
-        pinColor: pin.mine
-          ? pin.pinColor
-          : (pin.pinColor && !myPinColours.has(pin.pinColor))
-            ? pin.pinColor
-            : otherOwnerPinColor(pin.ownerId ?? pin.id, myPinColours),
-      }))
+        pinColor,
+      })
+      })
   }, [currentLocation, liveMapPosts, liveSimulation, myColor, ownAvatar, ownSelfieVideo, pinRadiusPulse, popLevel])
 
   // One route powers the horizontal arrows at every zoom. It comes from the

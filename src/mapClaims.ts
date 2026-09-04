@@ -35,18 +35,22 @@ export interface Claim {
   color?: string
   /** The poster's handle, for the pin that stands on this claim. */
   user?: string
-  /** Which OWNER GROUP this claim swaps with (see setClaimGroup). Absent means
-   *  the original colour partition applies: no colour is 'mine', a colour is
+  /** Which OWNER GROUP this claim swaps with (see setClaimGroup). Every claim
+   *  pushed through setClaimGroup now carries one, so ownership no longer has
+   *  to be inferred from the ABSENCE of a colour — which it was, and which
+   *  breaks the moment you get a colour of your own. Absent is still honoured
+   *  for anything pushed by another path: no colour is 'mine', a colour is
    *  'others'. Dropped GAMES carry a colour too, so without this tag the pop
    *  level switch would sweep them off the board along with other people's
    *  territory every time it swapped the 'others' half. */
-  group?: 'games'
+  group?: 'mine' | 'others' | 'games'
 }
 
 const CLAIMS_SOURCE = 'poplur-claims'
 const CLAIMS_FILL = 'poplur-claims-fill'
 const CLAIMS_REVEAL = 'poplur-claims-reveal'
 const CLAIMS_TEXTURE = 'poplur-claims-texture'
+const CLAIMS_EDGE = 'poplur-claims-edge'
 const CLAIMS_TEXTURE_IMAGE = 'poplur-claims-hatch'
 // Removed ownership-circle renderer ids are retained only as a one-way cleanup
 // list. This matters during Vite/HMR: the Mapbox document outlives the module,
@@ -271,6 +275,31 @@ export function installClaimsLayer(map: mapboxgl.Map) {
     },
   }, claimsInsertBefore(map))
 
+  // The BORDER of a territory, in that territory's own colour.
+  //
+  // Without it a clash is invisible. Overlap is painted smallest-first so the
+  // biggest holder covers the contested ground outright, and at overview zoom
+  // the fill is fully opaque — so where two terrains meet, one simply replaces
+  // the other with no seam. Two owners looked like one. An edge is what turns
+  // "somebody won here" into "these two met here".
+  //
+  // No new geometry and no new source: it is the same polygon the fill already
+  // draws, stroked. Not gated on liteTier — a hairline is cheap, and the A03 is
+  // exactly where a hard-covered clash is least legible.
+  map.addLayer({
+    id: CLAIMS_EDGE,
+    slot: DOMINANCE_GROUND_SLOT,
+    type: 'line',
+    source: CLAIMS_SOURCE,
+    paint: {
+      'line-color': claimColor('#D93D89') as never,
+      // Thin enough to read as a border rather than a second fill, and it
+      // holds its weight as the camera pulls out to world scale.
+      'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.6, 10, 1.6, 16, 2.4] as never,
+      'line-opacity': 0.9,
+    },
+  }, claimsInsertBefore(map))
+
   if (!liteTier()) map.addLayer({
       id: CLAIMS_TEXTURE,
       slot: DOMINANCE_GROUND_SLOT,
@@ -417,8 +446,22 @@ export function claimsFeatureCollection(): GeoJSON.FeatureCollection {
   }
 }
 
-/** Pops that are yours — the ones carrying no owner colour. */
-const mine = (): Claim[] => [...claims.values()].filter(c => !c.color)
+/**
+ * Pops that are yours.
+ *
+ * This used to be `filter(c => !c.color)` — ownership encoded as the ABSENCE
+ * of a colour, because your own territory was the only kind painted in the
+ * app's takeover pink. Give yourself a colour and that silently inverts:
+ * roads and grass stop recolouring inside your own ground, the intro fly-to
+ * loses its target, the planet scoreboard reads zero, and the 'others' sweep
+ * starts carrying your claims off the board. Nothing throws.
+ *
+ * The group tag is stamped by setClaimGroup, so this is now the same question
+ * the partition asks. The colour test survives only for claims pushed by some
+ * other path without a tag.
+ */
+const mine = (): Claim[] => [...claims.values()]
+  .filter(c => (c.group ? c.group === 'mine' : !c.color))
 
 /**
  * The same claims — for `within` PAINT EXPRESSIONS. The fill and masks share
@@ -869,7 +912,10 @@ function transitionClaims(map: mapboxgl.Map, moves: ClaimMove[]): void {
  * painted it back. Partitioning by owner lets the untouched half stay exactly
  * where it is while the other half arrives or leaves.
  */
-export function setClaimGroup(map: mapboxgl.Map, owner: 'mine' | 'others' | 'games', list: Claim[]): void {
+export function setClaimGroup(map: mapboxgl.Map, owner: 'mine' | 'others' | 'games', rawList: Claim[]): void {
+  // Tag on the way in, so ownership is carried explicitly rather than being
+  // re-derived from whether a colour happens to be set.
+  const list = rawList.map(claim => (claim.group === owner ? claim : { ...claim, group: owner }))
   installClaimsLayer(map)
   cancelAllClaimAnimations(map)
   // A claim already on the board whose radius moved is grown or shrunk rather
