@@ -123,6 +123,7 @@ import { normalizeNativeFeedPosts } from './nativeFeedPosts'
 import { currentUid, onUser } from './webFirebase'
 import { dominanceFameScore, effectiveDominanceLevel } from './mapDominance'
 import { worldCountryZoomActive, type WorldCountryUpdate } from './mapCountrySignal'
+import { countryFlagSprite } from './countryFlag3d'
 import {
   buildMapPointCycle,
   stepMapPointCycle,
@@ -179,6 +180,8 @@ import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationCon
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string
 const WEATHER_REFRESH_MS = 5 * 60_000
+/** How long a country flag stays popped after the camera crosses into it. */
+const COUNTRY_FLAG_POP_MS = 2_600
 
 // Brand-identity volume mark: clay-pink speaker with sound waves. Shown beside
 // the AI line whenever audio is playing.
@@ -847,9 +850,28 @@ export default function MapApp() {
   // the flight has settled at street scale (see arrivedAtPlace below); after
   // that this behaves exactly as before.
   const [arrivedAtPlace, setArrivedAtPlace] = useState(false)
-  const handleWorldCountryChange = useCallback(({ name }: WorldCountryUpdate) => {
+  // Scrolling over a country at world zoom pops that country's real flag —
+  // the supplied standard-flag GLB pack (countryFlag3d), baked to a rippled
+  // sprite and shown for a beat, keyed so a new country restarts the pop.
+  const [countryFlag, setCountryFlag] = useState<{ code: string; name: string; sprite: string; seq: number } | null>(null)
+  const flagSeqRef = useRef(0)
+  const flagHideTimerRef = useRef<number | null>(null)
+  const handleWorldCountryChange = useCallback(({ code, name }: WorldCountryUpdate) => {
     setCurrentPlace(name)
     setArrivedAtPlace(true)
+    const seq = ++flagSeqRef.current
+    void countryFlagSprite(code).then(sprite => {
+      // A later country won the race, or the pack has no flag for this one.
+      if (!sprite || flagSeqRef.current !== seq) return
+      setCountryFlag({ code, name, sprite, seq })
+      if (flagHideTimerRef.current !== null) window.clearTimeout(flagHideTimerRef.current)
+      flagHideTimerRef.current = window.setTimeout(() => {
+        setCountryFlag(current => (current?.seq === seq ? null : current))
+      }, COUNTRY_FLAG_POP_MS)
+    })
+  }, [])
+  useEffect(() => () => {
+    if (flagHideTimerRef.current !== null) window.clearTimeout(flagHideTimerRef.current)
   }, [])
   useEffect(() => {
     if (!isEmbedded || !arrivedAtPlace) return
@@ -4183,6 +4205,15 @@ export default function MapApp() {
       data-programmatic-camera-motion={programmaticCameraMoving ? 'true' : undefined}
     >
       <VolumeBars />
+      {/* The country flag pop: scrolling over a country at world zoom stands
+          its real flag up for a beat. Keyed on the sequence so each new
+          country replays the pop-in animation from the start. */}
+      {countryFlag && (
+        <div className={styles.countryFlagPop} key={countryFlag.seq} aria-hidden="true">
+          <img src={countryFlag.sprite} alt="" draggable={false} />
+          <span>{countryFlag.name}</span>
+        </div>
+      )}
       {/* Engagement + suggestions, centred and transient. Mounted here so the
           map gets them; the harness render below mounts it too, which is what
           puts the same notices on the feed. */}

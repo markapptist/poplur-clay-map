@@ -1087,7 +1087,12 @@
 .mapPointCard {
   position: absolute;
   left: 50%;
-  top: max(128px, calc(env(safe-area-inset-top, 0px) + 92px));
+  /* Tuck directly under the wordmark rather than floating mid-map. The map
+     iframe has no access to the shell's --header-title-* vars, so this mirrors
+     the wordmark band by hand: safe-inset + 8px top + a 44px wordmark + ~4px,
+     i.e. safe-inset + 56px, matching where the shell's own map title sits. Was
+     safe+92, which dropped it ~36px below the title with a conspicuous gap. */
+  top: max(96px, calc(env(safe-area-inset-top, 0px) + 56px));
   z-index: 33;
   display: grid;
   justify-items: center;
@@ -1160,4 +1165,49 @@
 .popStepperNewsHidden {
   visibility: hidden;
   pointer-events: none;
+}
+
+/* The country-flag pop: the real national flag (a rippled sprite baked from
+   the supplied standard-flag GLB) stands up centred over the map for a beat
+   whenever the camera scrolls into a new country at world zoom. Above the map
+   and its markers, below the popups/HUD; takes no pointer so it never blocks
+   a pan. The wrapper is remounted per country (React key), so this one
+   keyframe plays its whole life — pop in, hold, fall away. */
+.countryFlagPop {
+  position: absolute;
+  top: 34%;
+  left: 50%;
+  z-index: 60;
+  transform: translate(-50%, -50%);
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  pointer-events: none;
+  animation: countryFlagPop 2600ms cubic-bezier(0.18, 1.4, 0.36, 1) both;
+}
+.countryFlagPop img {
+  width: clamp(120px, 34vw, 180px);
+  height: auto;
+  filter: drop-shadow(0 12px 22px rgba(5, 4, 7, 0.55));
+}
+.countryFlagPop span {
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: rgba(5, 4, 7, 0.72);
+  box-shadow: 0 0 0 1px rgba(255, 138, 198, 0.4), 0 8px 22px rgba(5, 4, 7, 0.5);
+  color: #fff2f8;
+  font: 900 14px/1.1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.02em;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+}
+@keyframes countryFlagPop {
+  0%   { opacity: 0; transform: translate(-50%, -34%) scale(0.6); }
+  14%  { opacity: 1; transform: translate(-50%, -50%) scale(1.06); }
+  22%  { transform: translate(-50%, -50%) scale(1); }
+  78%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -58%) scale(0.9); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .countryFlagPop { animation: countryFlagPopFade 2600ms ease both; }
+  @keyframes countryFlagPopFade { 0%,100% { opacity: 0 } 12%,80% { opacity: 1 } }
 }

@@ -22,6 +22,7 @@ import {
 } from './arFilterCatalog'
 import FaceAROverlay, { drawFaceAREffect, hasCaptureCostume } from './FaceAROverlay'
 import PostComposer, { type ComposerMedia, type ComposerTarget, type PublishedPost } from './PostComposer'
+import CaptureReview from './CaptureReview'
 import PermissionAlert from './PermissionAlert'
 import CommerceSuggestionWindow from './CommerceSuggestionWindow'
 import { purchaseSuggestionForDetection } from './commerceSuggestions'
@@ -415,6 +416,10 @@ export default function Camera({
   // The capture currently in the post composer (photo taken, video recorded, or
   // a roll pick). Null when the camera is just a viewfinder.
   const [composing, setComposing] = useState<ComposerMedia | null>(null)
+  // A fresh capture is REVIEWED before it composes: preview what the shutter
+  // or recorder produced, then keep it (→ composer) or retake (→ live camera).
+  // Roll picks bypass this — choosing a saved photo is already a decision.
+  const [reviewMedia, setReviewMedia] = useState<ComposerMedia | null>(null)
   const [composerDraft, setComposerDraft] = useState<Omit<PendingMapPost, 'media'> | null>(null)
   // Camera→map, the return leg: a target arriving while a parked draft exists
   // means the user just picked their spot — resume the SAME draft at the
@@ -449,7 +454,7 @@ export default function Camera({
   // edit/preview screen. A web/Android broadcast may keep ownership of its
   // explicit MediaStream, but the native sensor always follows real surface
   // visibility and the OS thermal tripwire.
-  const liveSurfaceVisible = surfaceVisible && page === 'live' && !composing
+  const liveSurfaceVisible = surfaceVisible && page === 'live' && !composing && !reviewMedia
 
   // AR is scoped to one visit to the live viewfinder. Camera Roll, the post
   // composer, the hold menu, and another tab are all real exits: returning
@@ -564,6 +569,15 @@ export default function Camera({
     }
   }, [analysisRequested])
   const liveDetectionActive = analysisRequested && analysisGranted
+  // Object detection + voice narration ("I see a person…") is the SCAN
+  // feature, and must follow the SCAN toggle alone. `liveDetectionActive` also
+  // turns on for an AR face filter (which needs frames but does not narrate),
+  // so keying the native `detect` control off it left the AI talking after
+  // scan was switched off while a filter was up. The analysis lease still
+  // tracks liveDetectionActive; only the narration-arming control is scoped
+  // to detectOn here.
+  const scanNarrationActive = detectOn && analysisGranted
+    && effectiveLiveSurfaceVisible && !nativePreviewParked
   useEffect(() => {
     if (isNativeShell()) {
       postNativeEvent({ type: 'cameraLiveVisibilityChanged', visible: effectiveLiveSurfaceVisible })
@@ -586,15 +600,15 @@ export default function Camera({
   }, [])
   useEffect(() => {
     if (isNativeShell()) {
-      postNativeEvent({ type: 'cameraControl', control: 'detect', on: liveDetectionActive })
+      postNativeEvent({ type: 'cameraControl', control: 'detect', on: scanNarrationActive })
     }
-    if (!liveDetectionActive) {
+    if (!scanNarrationActive) {
       setDetections([])
       resetScan()
       onScanTotal?.(null)
       cancelVoiceSpeech()
     }
-  }, [liveDetectionActive, onScanTotal])
+  }, [scanNarrationActive, onScanTotal])
 
   // Turning the torch off is needed by listeners mounted above the real
   // setFlashEnabled, so it is reached through this ref (assigned once the
@@ -662,7 +676,7 @@ export default function Camera({
         nativeRecordingRef.current = false
         setRecStart(null)
         const capture = addCapture(finished)
-        setComposing({ kind: capture.kind, src: capture.src, length: capture.length })
+        setReviewMedia({ kind: capture.kind, src: capture.src, length: capture.length })
       }
       void bakeNativeEffects(media).then(finish)
       // Put the torch out once the device hands the media back. This is THE
@@ -1318,9 +1332,9 @@ export default function Camera({
       ctx.drawImage(faceAR, 0, 0, faceAR.width, faceAR.height, 0, 0, canvas.width, canvas.height)
     }
     const shot = addCapture({ kind: 'photo', src: canvas.toDataURL('image/jpeg', 0.9) })
-    // A capture that only lands in the roll looks like nothing happened. Open
-    // the composer on it, the way the native flow does.
-    setComposing({ kind: 'photo', src: shot.src })
+    // A capture that only lands in the roll looks like nothing happened. Review
+    // it first — accept moves on to the composer, retake returns to live.
+    setReviewMedia({ kind: 'photo', src: shot.src })
     // The shot is taken — put the light out. "Flash on" drives a continuous
     // TORCH on the rear camera, and nothing was turning it off, so it burned
     // on through the composer while you reviewed the photo (and kept burning
@@ -1369,8 +1383,8 @@ export default function Camera({
       recorderRef.current = null
       setRecStart(null)
       playPop()
-      // Same as a photo: the recording goes straight into the composer.
-      setComposing({ kind: 'video', src: clip.src })
+      // Same as a photo: the recording is reviewed before it composes.
+      setReviewMedia({ kind: 'video', src: clip.src, length: clip.length })
       // …and the same for the light: recording is over, so the torch goes out
       // instead of running on into the composer.
       setFlashEnabled(false)
@@ -2055,6 +2069,16 @@ export default function Camera({
           : emptySlot()}
         {slotBuilt(3) ? live('live-b', false) : emptySlot()}
       </div>
+      {/* The review gate between a fresh capture and the composer. Retake
+          discards the review and returns to the live camera; accept hands the
+          exact reviewed media to the composer. */}
+      {reviewMedia && !composing && (
+        <CaptureReview
+          media={reviewMedia}
+          onAccept={() => { setComposing(reviewMedia); setReviewMedia(null) }}
+          onRetake={() => setReviewMedia(null)}
+        />
+      )}
       {/* Every capture route — shutter, recording, roll pick — ends here. */}
       {composing && (
         <PostComposer
