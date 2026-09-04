@@ -271,24 +271,24 @@
 .feedMetaRow {
   min-width: 0;
   display: flex;
-  justify-content: center;
-  align-items: baseline;
-  gap: 8px;
-  min-height: clamp(20px, 5vw, 24px);
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
   padding-inline: 8px;
   overflow: hidden;
   pointer-events: none;
 }
 
+/* Stacked, not side by side: the column is too narrow for a 17px handle and
+   the reach on one line, and a flex row settles that by squeezing the handle
+   to nothing. Each gets its own line and neither ever shrinks. */
 .feedMetaHandle,
 .feedReach {
+  flex: 0 0 auto;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-.feedMetaHandle { flex: 0 1 auto; }
-.feedReach { flex: 0 0 auto; }
 
 .verifyBadge {
   display: inline-block;
