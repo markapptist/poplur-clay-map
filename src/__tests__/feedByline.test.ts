@@ -5,8 +5,11 @@ import { verifiedKindForHandle } from '../verifiedCheck'
 const read = (name: string) => readFileSync(new URL(`../${name}`, import.meta.url), 'utf8')
 
 describe('feed byline', () => {
-  it('holds the handle still, larger, with the reach beside it', () => {
+  it('lets the title and the handle take turns on one still line', () => {
     const css = read('FeedTwin.module.css')
+    expect(css).toContain('@keyframes feedHeadlineTitleSwap')
+    expect(css).toContain('@keyframes feedHeadlineHandleSwap')
+    expect(read('FeedTwin.tsx')).toContain('className={styles.feedHeadline}')
     expect(css).not.toContain('feedMetaHandleSwap')
     expect(css).not.toContain('feedMetaReachSwap')
     expect(css).not.toContain('feedTitleMarquee')

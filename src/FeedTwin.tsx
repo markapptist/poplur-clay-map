@@ -2084,15 +2084,13 @@ export default function FeedTwin({
         <div className={`${styles.topBar} ${controlSide === 'right' ? styles.topBarRailRight : styles.topBarRailLeft}`}>
           <div className={styles.infoRow}>
             <div className={styles.feedHeaderCopy}>
-              <div className={styles.feedTitle} aria-label={title}>
-                <div className={styles.feedTitleTrack} key={title}>
+              {/* One line, two turns: the title and the handle share a cell and
+                  trade places on a slow fade. Keyed on the title so a new pop
+                  restarts both in step — title first. */}
+              <div className={styles.feedHeadline} aria-label={`${title}, ${post.user}`} key={title}>
+                <div className={styles.feedTitleTrack}>
                   <span>{title}</span>
                 </div>
-              </div>
-              <div
-                className={styles.feedMetaRow}
-                aria-label={post.user}
-              >
                 <div className={`${styles.feedHandle} ${styles.feedMetaHandle}`} aria-hidden="true">
                   {post.user}
                   {bylineVerified && (
