@@ -1,4 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { accountSnapshot, onAccountChange } from './accountStore'
+import { nativeFeedPostsSnapshot, onNativeFeedPosts } from './nativeFeedPosts'
+import { currentViewerCoords } from './viewerFix'
+import { visiblePeopleFromRealtimePosts } from './visiblePeople'
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import styles from './MailScreen.module.css'
 import pullStyles from './PullToRefresh.module.css'
@@ -959,14 +963,14 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
   // draft needs no send path of its own — the first message creates the
   // canonical thread server-side, and the live snapshot then adopts the draft
   // (see the poplurDMThreads handler below).
-  useEffect(() => {
-    const compose = pendingComposeToRef.current
-    if (!compose) return
-    if (isNativeShell() && liveThreads === null) return
-    pendingComposeToRef.current = undefined
+  // One route into a conversation with a person, whether it arrived as a prop
+  // from a tapped pop or from a row in the radius roster below. Extracted
+  // rather than duplicated so a roster row cannot drift from the DM path the
+  // map and feed already use.
+  const openComposeWith = useCallback((peerId: string, peerName: string | null) => {
     setComposerText('')
     setComposerTab('chat')
-    const existing = threads.find(thread => thread.otherId === compose.peerId)
+    const existing = threads.find(thread => thread.otherId === peerId)
     if (existing) {
       setActiveThread(existing)
       window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
@@ -974,10 +978,10 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
       }))
       return
     }
-    const title = compose.peerName ?? 'Poplur chat'
+    const title = peerName ?? 'Poplur chat'
     setActiveThread({
-      id: `draft:${compose.peerId}`,
-      otherId: compose.peerId,
+      id: `draft:${peerId}`,
+      otherId: peerId,
       initials: title.replace(/^@/, '').slice(0, 2).toUpperCase() || 'PC',
       title,
       preview: 'No messages yet',
@@ -985,7 +989,31 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
       unread: 0,
       messages: [],
     })
-  }, [liveThreads, threads])
+  }, [threads])
+
+  useEffect(() => {
+    const compose = pendingComposeToRef.current
+    if (!compose) return
+    if (isNativeShell() && liveThreads === null) return
+    pendingComposeToRef.current = undefined
+    openComposeWith(compose.peerId, compose.peerName)
+  }, [liveThreads, openComposeWith])
+
+  // ── Who is in your radius right now ──────────────────────────────────────
+  //
+  // A SECOND LANE, never a filter on the list above. Discovery is radius
+  // based; an established DM is participant history, and this screen's own
+  // rule is that a thread must never be filtered by current reach. So people
+  // you can see are shown BELOW your conversations, and anyone who already
+  // has a thread is dropped from the roster rather than appearing twice.
+  const livePosts = useSyncExternalStore(onNativeFeedPosts, nativeFeedPostsSnapshot, nativeFeedPostsSnapshot)
+  const [rosterUid, setRosterUid] = useState<string | null>(() => accountSnapshot().uid)
+  useEffect(() => onAccountChange(snapshot => setRosterUid(snapshot.uid)), [])
+  const inYourRadius = useMemo(() => {
+    const known = new Set(threads.map(thread => thread.otherId).filter(Boolean))
+    return visiblePeopleFromRealtimePosts(livePosts, currentViewerCoords(), rosterUid)
+      .filter(person => !known.has(person.ownerId))
+  }, [livePosts, rosterUid, threads])
 
   // The adopted draft (id flips from draft:… to the canonical thread id when
   // the snapshot returns the real row) still needs the open call an ordinary
@@ -1937,11 +1965,57 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
         {visibleThreads.length === 0 && (
           <div className={styles.emptyState}>
             <span className={styles.emptyMark}>💬</span>
-            <strong>{threads.length === 0 ? 'All clear' : 'No matching chats'}</strong>
+            <strong>{threads.length === 0
+              ? (inYourRadius.length ? 'Nobody yet' : 'All clear')
+              : 'No matching chats'}</strong>
+            {/* Do not promise "someone in your radius" when the roster below
+                is empty — with no location fix, or nobody in reach, that
+                sentence sends the reader looking for a list that is not
+                there. */}
             <span>{threads.length === 0
-              ? 'Start with someone in your radius. Once connected, the chat stays here.'
+              ? (inYourRadius.length
+                ? 'Start with anyone below. Once you speak, the chat stays here.'
+                : 'When somebody\u2019s pop reaches you, they show up here to start with.')
               : 'Try another name or message.'}</span>
           </div>
+        )}
+
+        {/* ── In your radius ────────────────────────────────────────────────
+            A SECOND LANE under your conversations, never a filter on them.
+            This screen's own rule is that discovery is radius-based while an
+            established DM is participant history, so a thread is never hidden
+            because somebody moved — and equally, somebody in reach is never
+            promoted into the thread list before you have spoken. Anyone who
+            already has a thread above is dropped so nobody appears twice. */}
+        {!normalizedSearch && inYourRadius.length > 0 && (
+          <>
+            <div className={styles.radiusLabel}>In your radius</div>
+            {inYourRadius.map(person => (
+              <button
+                key={person.ownerId}
+                type="button"
+                className={styles.radiusRow}
+                onClick={() => openComposeWith(person.ownerId, person.handle)}
+              >
+                <span className={styles.radiusMark} aria-hidden="true">
+                  {person.handle.replace(/^@/, '').slice(0, 2).toUpperCase() || 'PC'}
+                </span>
+                <span className={styles.radiusText}>
+                  <strong>{person.handle}</strong>
+                  {/* Say WHY they are listed. Never "No messages yet" — that is
+                      the thread list's preview line, and reusing it here would
+                      read as a conversation you have not opened. */}
+                  <span>{person.worldwide
+                    ? 'Reaching everywhere'
+                    : person.distanceMeters == null
+                      ? 'In your radius'
+                      : person.distanceMeters < 1000
+                        ? `${Math.round(person.distanceMeters)} m away`
+                        : `${(person.distanceMeters / 1000).toFixed(1)} km away`}</span>
+                </span>
+              </button>
+            ))}
+          </>
         )}
         </div>
       </div>
