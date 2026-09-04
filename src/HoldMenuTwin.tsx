@@ -312,6 +312,7 @@ export default function HoldMenuTwin({
   onSubscreenChange,
   onWheelFocusChange,
   initialScreen,
+  initialScreenOrigin,
   initialDMThreadId,
   initialDMComposeTo,
   initialBrowserURL,
@@ -362,6 +363,10 @@ export default function HoldMenuTwin({
       page you were on when you left the tab. Backing out of it still lands on
       the wheel, so the rest of the menu stays one gesture away. */
   initialScreen?: string
+  /** How `initialScreen` was asked for. `bell` is the profile's bell (or a
+   *  tapped notification) opening NOTIFICATIONS for a specific row; anything
+   *  else — a tab resume, the wheel, the cube — is a fresh visit. */
+  initialScreenOrigin?: 'bell'
   /** A system-notification deep link. Mail validates it against the live native
       thread snapshot before opening anything. */
   initialDMThreadId?: string
@@ -452,6 +457,8 @@ export default function HoldMenuTwin({
       ?? (Object.values(TAB_MENUS).flat() as Item[]).find(openable)
       ?? null
   })
+  // Every later navigation inside this instance is the wheel or the cube.
+  const screenOriginRef = useRef<'bell' | 'cube'>(initialScreenOrigin === 'bell' ? 'bell' : 'cube')
   // Channel-arrow presses can arrive faster than React commits the next
   // render. Keep the semantic screen current synchronously so two quick
   // presses advance twice instead of both calculating from the same stale
@@ -492,6 +499,7 @@ export default function HoldMenuTwin({
     setDMReturnThreadId(threadId)
     setAutoCall(null)
     activeScreenRef.current = mailTile
+    screenOriginRef.current = 'cube'
     setActiveScreen(mailTile)
   }, [autoCall])
 
@@ -721,6 +729,7 @@ export default function HoldMenuTwin({
       const next = pages[nextIdx - 1]
       if (!next) return false
       activeScreenRef.current = next
+      screenOriginRef.current = 'cube'
       setActiveScreen(next)
       // Keep the wheel behind in step, so backing out of the subscreen leaves
       // you standing on the tile you actually arrived at.
@@ -985,6 +994,7 @@ export default function HoldMenuTwin({
     // The synchronous report above handed this exact sound to HomeTwin. The
     // passive active-screen report must not lend it to a later navigation.
     subscreenNavigationPopRef.current = false
+    screenOriginRef.current = 'cube'
     setActiveScreen(item)
   }
 
@@ -1203,6 +1213,7 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Notifications">
           <NotificationsScreen
+            freshOnEntry={screenOriginRef.current !== 'bell'}
             onClose={() => { playSubscreenNavigationPop(); onClose() }}
             // The profile owns the highlight a notification leads to (a lit
             // grid tile, a lit message row), so the row is handed BACK to it
@@ -1257,6 +1268,7 @@ export default function HoldMenuTwin({
                 subscreenNavigationPopRef.current = true
                 markCubeNavigationPop()
                 activeScreenRef.current = phoneTile
+                screenOriginRef.current = 'cube'
                 setActiveScreen(phoneTile)
               }
             }}
@@ -1348,6 +1360,7 @@ export default function HoldMenuTwin({
               // report consumes the local ownership flag. Podcasts stays on
               // Studio and must not leave that flag armed for a later swipe.
               subscreenNavigationPopRef.current = true
+              screenOriginRef.current = 'cube'
               setActiveScreen({ icon: 'Ipod', title: 'IPOD', screen: 'map-ipod', native: true })
             }}
           />

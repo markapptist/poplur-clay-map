@@ -1351,7 +1351,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // tab remounted the menu in the same render the tab changed, and the fresh
   // instance's explicit "no subscreen" report erased the record of the page
   // being left before the effect below could store it.
-  const [resume, setResume] = useState<{ screen: string | null; n: number }>(
+  const [resume, setResume] = useState<{ screen: string | null; n: number; origin?: 'bell' }>(
     { screen: bootResume, n: 0 },
   )
   /** Bumped by a cube long-press while the menu is already up. Unlike the
@@ -1560,7 +1560,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   }, [])
   useEffect(() => {
     if (notifOpenNonce === 0) return
-    setResume(current => ({ screen: 'profile-notifications', n: current.n + 1 }))
+    setResume(current => ({ screen: 'profile-notifications', n: current.n + 1, origin: 'bell' }))
     setHoldOpen(true)
   }, [notifOpenNonce])
 
@@ -6189,6 +6189,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           key={`hold-${resume.n}`}
           tab={activeTab}
           initialScreen={resume.screen ?? undefined}
+          initialScreenOrigin={resume.origin}
           initialDMThreadId={resume.screen === 'profile-messages' ? dmOpenRequest?.threadId : undefined}
           initialDMComposeTo={resume.screen === 'profile-messages' && dmComposeRequest
             ? { peerId: dmComposeRequest.peerId, peerName: dmComposeRequest.peerName }
