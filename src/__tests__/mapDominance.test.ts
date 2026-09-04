@@ -9,6 +9,7 @@ import {
   dominanceInsertBefore,
   dominanceLeaders,
   dominancePaintOrder,
+  groundPaintOrder,
   dominancePower,
   effectiveDominanceLevel,
   isDominanceOverviewZoom,
@@ -107,5 +108,18 @@ describe('map dominance overview', () => {
     expect(rows[0]?.territories).toBe(2)
     expect(rows[0]?.topPlace).toBe('Large')
     expect(rows[0]?.avatar).toBe('/large.jpg')
+  })
+})
+
+describe('ground paint order', () => {
+  it('is the reverse of the dominance order: widest first, most local on top', () => {
+    const claims = [
+      { id: 'local', radiusKm: 9.3 },
+      { id: 'wide', radiusKm: 157.9 },
+      { id: 'tiny', radiusKm: 1.9 },
+    ]
+    expect(groundPaintOrder(claims).map(claim => claim.id)).toEqual(['wide', 'local', 'tiny'])
+    // The dominance order itself is untouched — other readers still get it.
+    expect(dominancePaintOrder(claims).map(claim => claim.id)).toEqual(['tiny', 'local', 'wide'])
   })
 })

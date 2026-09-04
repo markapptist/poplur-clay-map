@@ -209,3 +209,25 @@ export function dominancePaintOrder<T extends { id: string; radiusKm: number; fa
     || a.radiusKm - b.radiusKm
     || a.id.localeCompare(b.id))
 }
+
+/**
+ * The order conquered GROUND is drawn in: the largest claim first, so it lands
+ * at the BOTTOM and every smaller claim keeps a visible patch of its own on
+ * top of it.
+ *
+ * This is the reverse of `dominancePaintOrder`, and deliberately so. Painting
+ * the biggest last answers "who is in the lead here", which reads correctly
+ * for two neighbours arguing over a block. It stops meaning anything the
+ * moment one claim is larger than the screen: a 158km claim covers every
+ * pixel of a city view, so the board showed one flat colour and the nine
+ * local claims underneath it were invisible — measured 4 Sep on the live map.
+ *
+ * A map of who holds what has to show the most LOCAL owner of each spot; the
+ * wider claim is still there, as the wash the smaller patches sit on. Reach is
+ * unchanged: this is only the order the same polygons are drawn in.
+ */
+export function groundPaintOrder<T extends { id: string; radiusKm: number; fameScore?: number }>(
+  list: Iterable<T>,
+): T[] {
+  return dominancePaintOrder(list).reverse()
+}

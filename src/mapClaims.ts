@@ -9,8 +9,8 @@ import {
   DOMINANCE_GROUND_SLOT,
   dominanceFillOpacityExpression,
   dominanceInsertBefore,
-  dominancePaintOrder,
   dominancePower,
+  groundPaintOrder,
 } from './mapDominance'
 import { ownershipTerrainPolygon } from './ownershipTerrain'
 import { EARTH_RADIUS_KM, isWorldRadiusKm } from './worldRadius'
@@ -572,11 +572,11 @@ function pushClaims(map: mapboxgl.Map): boolean {
   // Where the camera is decides how much ground a claim must cover to still
   // BE ground rather than a speck. Read once per push, not per claim.
   const zoom = map.getZoom()
-  // SMALLEST FIRST, so the biggest claim paints last and therefore on top.
-  // Where two takeovers overlap, the ground shows whoever holds more of it —
-  // that is what "who is in the lead here" looks like, and without the sort it
-  // was just whichever pop happened to be inserted last.
-  const byReach = dominancePaintOrder(claims.values()).filter(paintsGround)
+  // LARGEST FIRST, so a wide claim lands at the bottom and every smaller one
+  // keeps its own visible patch on top. See groundPaintOrder: painting the
+  // biggest last says "who leads here", and says nothing at all once a claim
+  // is wider than the screen.
+  const byReach = groundPaintOrder(claims.values()).filter(paintsGround)
   const drawn = (c: Claim) => drawnRadiusKm(c.radiusKm, zoom, c.center[1])
   // Band first: a skipped push must not leave the band describing an older
   // camera, since other readers use it to decide their own work.

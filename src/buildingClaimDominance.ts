@@ -51,7 +51,14 @@ export function buildingClaimColorExpression(
   unclaimedColor: unknown,
   limit = MAX_VISIBLE_BUILDING_CLAIMS,
 ): unknown {
-  const ordered = dominantBuildingClaims(claims, limit)
+  // WHICH claims are represented is a question of dominance (the bounded top
+  // N). WHICH ONE WINS a building they both cover is a different question,
+  // and the answer is the most local: a `case` takes its first matching
+  // branch, so the branches run smallest-radius first. Selected by
+  // significance, ordered by locality — without the second sort a single
+  // 158km claim answered for every building on screen.
+  const ordered = [...dominantBuildingClaims(claims, limit)]
+    .sort((a, b) => a.radiusKm - b.radiusKm)
   if (!ordered.length) return unclaimedColor
 
   const branches: unknown[] = []

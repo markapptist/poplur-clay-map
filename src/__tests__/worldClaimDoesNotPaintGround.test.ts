@@ -83,11 +83,13 @@ describe('a world-radius claim is reach, not ground', () => {
     ])
 
     // The exact shape of the live bug: the planetary claim sorted last, so it
-    // painted on top of all five and the board showed one colour.
-    expect(drawnIds(pushes)).toEqual(locals.map(claim => claim.id))
+    // painted on top of all five and the board showed one colour. Every local
+    // claim is still drawn — now widest first, so each keeps a patch on top
+    // (see groundPaintOrder).
+    expect(drawnIds(pushes)).toEqual([...locals].reverse().map(claim => claim.id))
   })
 
-  it('still paints the largest LOCAL claim last, so dominance is unchanged', () => {
+  it('paints the largest LOCAL claim first, under the smaller ones', () => {
     const { map, pushes } = fakeMap()
     setClaimGroup(map as never, 'others', [
       { id: 'big', center: TORONTO, radiusKm: 157, color: '#FF8A3D' },
@@ -95,8 +97,42 @@ describe('a world-radius claim is reach, not ground', () => {
       { id: 'planet', center: TORONTO, radiusKm: EARTH_RADIUS_KM, color: '#5FB0FF' },
     ])
 
-    // Smallest first: where two takeovers overlap the ground still shows
-    // whoever holds more of it. Only the planetary claim is excluded.
-    expect(drawnIds(pushes)).toEqual(['small', 'big'])
+    // Widest first: where two takeovers overlap the ground shows the more
+    // LOCAL of them, and the wider one is the wash it sits on. The planetary
+    // claim is excluded from both.
+    expect(drawnIds(pushes)).toEqual(['big', 'small'])
+  })
+})
+
+describe('every pin keeps a visible patch of its own coverage', () => {
+  beforeEach(() => { governor.attended = false })
+  afterEach(() => { clearClaims({ getSource: () => undefined } as never) })
+
+  it('paints the widest claim FIRST, so smaller ones are not buried', () => {
+    const { map, pushes } = fakeMap()
+    // The live Toronto board on 4 Sep: nine local claims under four from one
+    // account at 112-158km. Painting the biggest last made the whole city one
+    // colour, because a 158km claim covers every pixel of a city view.
+    setClaimGroup(map as never, 'others', [
+      { id: 'local-1.9', center: TORONTO, radiusKm: 1.9, color: '#4FD6B8' },
+      { id: 'wide-158', center: TORONTO, radiusKm: 157.9, color: '#5FB0FF' },
+      { id: 'local-9.3', center: TORONTO, radiusKm: 9.3, color: '#FF8A3D' },
+      { id: 'wide-112', center: TORONTO, radiusKm: 112, color: '#5FB0FF' },
+    ])
+
+    // Widest first = drawn at the bottom; the smallest is drawn last and so
+    // keeps its own ground on top.
+    expect(drawnIds(pushes)).toEqual(['wide-158', 'wide-112', 'local-9.3', 'local-1.9'])
+  })
+
+  it('still excludes a planetary claim while ordering the rest', () => {
+    const { map, pushes } = fakeMap()
+    setClaimGroup(map as never, 'others', [
+      { id: 'small', center: TORONTO, radiusKm: 2, color: '#4FD6B8' },
+      { id: 'planet', center: TORONTO, radiusKm: EARTH_RADIUS_KM, color: '#5FB0FF' },
+      { id: 'wide', center: TORONTO, radiusKm: 152, color: '#5FB0FF' },
+    ])
+
+    expect(drawnIds(pushes)).toEqual(['wide', 'small'])
   })
 })

@@ -7,7 +7,7 @@ import {
 import { ownershipTerrainMask } from '../ownershipTerrain'
 
 describe('building claim dominance', () => {
-  it('checks the largest radius first so it wins every overlap', () => {
+  it('selects by dominance, then lets the most LOCAL claim win an overlap', () => {
     const claims = [
       { id: 'small-mine', center: [0, 0] as [number, number], radiusKm: 2 },
       { id: 'large-rival', center: [0, 0] as [number, number], radiusKm: 9, color: '#29A6E6' },
@@ -19,11 +19,17 @@ describe('building claim dominance', () => {
       'small-mine',
     ])
 
+    // WHICH claims are represented is dominance's question, answered above.
+    // WHICH ONE WINS a building both cover is a different one: a `case` takes
+    // its first matching branch, and the branches run smallest-radius first so
+    // the most local owner answers for the building. Before this, one 158km
+    // claim answered for every building on screen and the local ones were
+    // invisible.
     const expression = buildingClaimColorExpression(claims, '#FF4BA1', '#C3A67E') as unknown[]
     expect(expression[0]).toBe('case')
-    expect(expression[2]).toBe('#29A6E6')
+    expect(expression[2]).toBe('#FF4BA1')
     expect(expression[4]).toBe('#FFD24B')
-    expect(expression[6]).toBe('#FF4BA1')
+    expect(expression[6]).toBe('#29A6E6')
     expect(expression[expression.length - 1]).toBe('#C3A67E')
   })
 
@@ -40,10 +46,13 @@ describe('building claim dominance', () => {
 
     const expression = buildingClaimColorExpression(claims, '#FF4BA1', '#C3A67E') as unknown[]
     expect(expression).toHaveLength(2 + MAX_VISIBLE_BUILDING_CLAIMS * 2)
+    // Selection is by dominance (asserted above); the BRANCH order is by
+    // locality, so the first `within` is the most local of the selected set.
+    const mostLocal = [...ordered].sort((a, b) => a.radiusKm - b.radiusKm)[0]
     const firstWithin = expression[1] as [string, GeoJSON.FeatureCollection<GeoJSON.Polygon>]
     expect(firstWithin[0]).toBe('within')
     expect(firstWithin[1].features[0].geometry.coordinates[0]).toHaveLength(13)
-    expect(firstWithin[1]).toEqual(ownershipTerrainMask(claims[0].center, claims[0].radiusKm))
+    expect(firstWithin[1]).toEqual(ownershipTerrainMask(mostLocal.center, mostLocal.radiusKm))
   })
 
   it('returns the ordinary building palette untouched when no claim applies', () => {
