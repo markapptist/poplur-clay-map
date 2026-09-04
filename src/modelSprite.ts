@@ -54,6 +54,13 @@ const PRODUCTION_SPRITE_SOURCES = new Set([
   'poplur_camera_kodak.glb',
   'poplur_dice_lite.glb',
   'poplur_mark_head_navigator.glb',
+  // The zoom rail's radius trophies (radiusTrophies.ts). Baked once; the
+  // models never ship.
+  'models/poplur_trophy_bronze.glb',
+  'models/poplur_trophy_silver.glb',
+  'models/poplur_trophy_gold.glb',
+  'models/poplur_trophy_platinum.glb',
+  'models/poplur_trophy_diamond.glb',
 ])
 
 export interface SpriteView {

@@ -907,6 +907,18 @@ export default function MapApp() {
       : center)
     setNavigationOrigin(center)
   }, [])
+  // The Map can learn the viewer on its own (the clay map's geolocation
+  // landing) while the shell above it still has no fix. Tell the shell, so
+  // the Feed measures reach from the same place the Map does. One viewer,
+  // two surfaces, one answer — see viewerFix.ts.
+  useEffect(() => {
+    if (!currentLocation || typeof window === 'undefined' || window.parent === window) return
+    window.parent.postMessage({
+      type: 'poplur-map-location',
+      latitude: currentLocation[1],
+      longitude: currentLocation[0],
+    }, '*')
+  }, [currentLocation])
   // Mirror for callbacks that outlive renders (the engagement chips' anchor).
   const navigationOriginRef = useRef<[number, number]>(DEFAULT_NAV_ORIGIN)
   useEffect(() => { navigationOriginRef.current = navigationOrigin }, [navigationOrigin])
@@ -3316,6 +3328,33 @@ export default function MapApp() {
     setMapPointPosition({ n: 1, of: mapPointRoute.length })
   }, [focusedPostPicker, mapLive, mapPointRoute])
 
+  // Tapping a pin SELECTS it, exactly as arrowing onto it does. The point
+  // card, the zoom rail's radius striker and the shell's RADIUS counter all
+  // key off the focused point, so a tap has to land on that same point or the
+  // three tell different stories about which pop is the subject.
+  const focusMapPointForPin = useCallback((pinId: string) => {
+    const route = mapPointRouteRef.current
+    const index = route.findIndex(point => point.kind === 'pin' && point.id === pinId)
+    if (index < 0) return
+    const point = route[index]
+    focusedMapPointKeyRef.current = point.key
+    setFocusedMapPoint(point)
+    setMapPointPosition({ n: index + 1, of: route.length })
+    try {
+      window.parent?.postMessage({
+        type: 'poplur-map-point',
+        key: point.key,
+        id: point.id,
+        kind: point.kind,
+        name: point.name,
+        index,
+        total: route.length,
+        radiusKm: point.radiusKm,
+        mine: point.mine,
+      }, '*')
+    } catch { /* standalone route has no separate shell consumer */ }
+  }, [])
+
   const cycleMapPoint = useCallback((direction: -1 | 1) => {
     const route = mapPointRouteRef.current
     const step = stepMapPointCycle(route, focusedMapPointKeyRef.current, direction)
@@ -3423,6 +3462,7 @@ export default function MapApp() {
     // same pop's channel tile in the Feed.
     markPostsSeen([feedPostIdFromPinId(pin.id)])
     setCurrentPlace(displayPlaceName(pin.name))
+    focusMapPointForPin(pin.id)
 
     const ownPosts = accountPostedClaims(liveMapPosts)
     const ownNearby = ownPosts.filter(claim => distanceMeters(claim.coords, pin.coords) <= POPS_NEARBY_M)
@@ -3487,7 +3527,7 @@ export default function MapApp() {
         },
       },
     })
-  }, [accountPostCount, accountRadiusKm, liveMapPosts])
+  }, [accountPostCount, accountRadiusKm, focusMapPointForPin, liveMapPosts])
 
   const mapPinsRef = useRef(mapPins)
   mapPinsRef.current = mapPins
@@ -4578,7 +4618,12 @@ export default function MapApp() {
             >
               {(() => {
                 const shown = preferMiles ? focusedMapPoint.radiusKm * KM_TO_MI : focusedMapPoint.radiusKm
-                return `${Number.isInteger(shown) ? shown : shown.toFixed(1)} ${preferMiles ? 'MI' : 'KM'} RADIUS`
+                // Same formatting as the shell's counter: whole, grouped
+                // figures past a thousand, tenths below.
+                const text = shown >= 1_000
+                  ? Math.round(shown).toLocaleString()
+                  : Number.isInteger(shown) ? String(shown) : shown.toFixed(1)
+                return `${text} ${preferMiles ? 'MI' : 'KM'} RADIUS`
               })()}
             </span>
           )}

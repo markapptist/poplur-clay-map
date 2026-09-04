@@ -52,5 +52,11 @@
   "poplur_cube_gear.glb|0|14|256": "sprites/poplur_cube_gear_y0_p14_s256.png",
   "poplur_dice_lite.glb|28|28|320": "sprites/poplur_dice_lite_y28_p28_s320.png",
   "poplur_moon_full_lite.glb|0|0|256": "sprites/poplur_moon_full_lite_y0_p0_s256.png",
-  "poplur_sun_lite.glb|0|0|256": "sprites/poplur_sun_lite_y0_p0_s256.png"
+  "poplur_sun_lite.glb|0|0|256": "sprites/poplur_sun_lite_y0_p0_s256.png",
+  "models/poplur_trophy_bronze.glb|20|12|256": "sprites/poplur_trophy_bronze_y20_p12_s256.png",
+  "models/poplur_trophy_diamond.glb|20|12|256": "sprites/poplur_trophy_diamond_y20_p12_s256.png",
+  "models/poplur_trophy_gold.glb|20|12|256": "sprites/poplur_trophy_gold_y20_p12_s256.png",
+  "models/poplur_trophy_platinum.glb|20|12|256": "sprites/poplur_trophy_platinum_y20_p12_s256.png",
+  "models/poplur_trophy_silver.glb|20|12|256": "sprites/poplur_trophy_silver_y20_p12_s256.png",
+  "poplur_pin_blue_lite.glb|20|14|256": "sprites/poplur_pin_blue_lite_y20_p14_s256.png"
 }

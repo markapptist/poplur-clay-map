@@ -203,6 +203,8 @@ import {
   visibleHomeTestActivityScreen,
   type TestActivityScreen,
 } from './testActivity'
+import { EARTH_RADIUS_KM } from './worldRadius'
+import { publishViewerFix } from './viewerFix'
 
 
 /**
@@ -625,7 +627,6 @@ function pageIsVisible(): boolean {
 
 // Sample data matching the rest of the harness: 128 posts, 41.8 km radius.
 const POST_COUNT = 128
-const EARTH_RADIUS_KM = 6_371
 // Stable spoofed reach until presence is wired to the live audience service.
 const SPOOFED_ONLINE_AUDIENCE = 1_200_000
 // Radius describes the content currently playing, so it owns most of the HUD
@@ -663,6 +664,7 @@ function AnimatedRadiusMetrics({
   unit,
   active,
   accumulated = false,
+  recountKey = null,
 }: {
   radius: number
   ceiling: number
@@ -671,19 +673,30 @@ function AnimatedRadiusMetrics({
   /** Planet scope: the number is every pop's reach COMBINED, and it wears gold
    *  so it can never be misread as one post's radius. */
   accumulated?: boolean
+  /** Selecting a pin on the map is a stated request to see THAT radius, so the
+   *  counter re-tallies for it — the one value change that replays the whole
+   *  count instead of snapping. The key is the selected point; a new key is a
+   *  new selection, and the map's zoom rail runs its trophy striker on the
+   *  same beat (radiusTrophies.ts), so the number and the puck arrive together. */
+  recountKey?: string | null
 }) {
   const [progress, setProgress] = useState(active ? 0 : 1)
   const [counting, setCounting] = useState(active)
   const wasActive = useRef(false)
+  const lastRecountKey = useRef<string | null>(null)
 
   useEffect(() => {
     // Only the false->true edge is an arrival; a value change under a card that
-    // is already showing snaps instead of replaying the whole count.
+    // is already showing snaps instead of replaying the whole count — unless
+    // the change IS a selection (a new recount key), which is the one case
+    // where replaying is the point.
     const arriving = active && !wasActive.current
     wasActive.current = active
+    const recount = active && recountKey != null && recountKey !== lastRecountKey.current
+    lastRecountKey.current = recountKey
     let raf = 0
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (!active || reduced || !arriving) {
+    if (!active || reduced || !(arriving || recount)) {
       setProgress(1)
       setCounting(false)
       return
@@ -709,9 +722,13 @@ function AnimatedRadiusMetrics({
     }
     raf = requestAnimationFrame(frame)
     return () => cancelAnimationFrame(raf)
-  }, [active, ceiling, radius, unit])
+  }, [active, ceiling, radius, unit, recountKey])
 
-  const currentText = (radius * progress).toFixed(1)
+  // Past a thousand the tenths stop meaning anything and the digits stop
+  // fitting: a world-radius pop reads "3,959 mi", the same way its ceiling
+  // does, rather than "3958.8" spilling off the card.
+  const shown = radius * progress
+  const currentText = shown >= 1_000 ? Math.round(shown).toLocaleString() : shown.toFixed(1)
   const ceilingText = Math.round(ceiling * progress).toLocaleString()
   return (
     <>
@@ -2876,6 +2893,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       if (event.data.type === 'poplur-map-point-focus') {
         setMapPointLabelActive(event.data.active === true)
       }
+      // The Map found the viewer on its own (its geolocation landing) while
+      // this shell still had no CoreLocation fix. Publish it here as THE fix,
+      // so the Feed measures reach from the same place the Map does — a pin
+      // that stands on the map must stand in the feed too.
+      if (event.data.type === 'poplur-map-location') {
+        publishViewerFix({ latitude: event.data.latitude, longitude: event.data.longitude }, 'map')
+      }
       // Arrow-cycling the map points. When the focused point is a pin, the
       // RADIUS card reads THAT post's radius — the same contract as the
       // poplur-map-pop flight below; landmarks and the current-location stop
@@ -2892,12 +2916,16 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           // after you asked for this pin. Holding the traversed radius apart
           // keeps the card on the pin you chose until you choose another.
           setTraversedPinRadiusKm(event.data.radiusKm)
+          setTraversedPinKey(typeof event.data.key === 'string' && event.data.key
+            ? event.data.key
+            : String(event.data.id ?? ''))
           setMapHudContext(previous => previous
             ? { ...previous, scope: 'pop', popRadiusKm: event.data.radiusKm }
             : previous)
         } else if (event.data.kind === 'landmark' || event.data.kind === 'current') {
           setMapPopRadiusKm(null)
           setTraversedPinRadiusKm(null)
+          setTraversedPinKey(null)
           setMapHudContext(previous => previous && previous.scope === 'pop'
             ? { ...previous, scope: 'area' }
             : previous)
@@ -4352,6 +4380,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
    *  camera-derived scope so a later world/area report cannot silently
    *  replace the radius the user just asked to see. */
   const [traversedPinRadiusKm, setTraversedPinRadiusKm] = useState<number | null>(null)
+  /** Which point that traversal landed on — an arrow press or a tap onto a
+   *  pin. The RADIUS counter re-tallies whenever this changes. */
+  const [traversedPinKey, setTraversedPinKey] = useState<string | null>(null)
   // What the RADIUS card is actually reporting, in km. Three cases, in order:
   //   a recognised user in the camera — their reach
   //   travelling the map            — the CURRENT POP's takeover
@@ -4383,6 +4414,15 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               ? profileReachKm
             : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : earnedRadiusKm)
 
+  if (import.meta.env.DEV && typeof window !== 'undefined') {
+    // Dev-only readout of the RADIUS card's inputs, for headless probes: the
+    // card is a derivation of six states and a probe can only see its output.
+    ;(window as unknown as { __poplurRadiusCard?: unknown }).__poplurRadiusCard = {
+      activeTab, cubeScreen, shownRadiusKm, feedReachKm, earnedRadiusKm, scanKm,
+      seenUser: seenUser ? { handle: seenUser.handle, radiusKm: seenUser.radiusKm } : null,
+      traversedPinRadiusKm, mapWorldTotalKm, mapPopRadiusKm, profileReachKm, newsReachKm,
+    }
+  }
   const mapHasPopSubject = activeTab === 'map'
     && (traversedPinRadiusKm != null || mapHudContext?.scope === 'pop')
   const mapHasAccumulatedRadius = activeTab === 'map' && mapHudContext != null && !mapHasPopSubject
@@ -4409,6 +4449,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     if (activeTab !== 'map') {
       setMapPopRadiusKm(null)
       setTraversedPinRadiusKm(null)
+      setTraversedPinKey(null)
       setMapWorldTotalKm(null)
       setMapHudContext(null)
       setMapAreaPops(null)
@@ -5737,6 +5778,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               unit={unitMi ? 'mi' : 'km'}
               active={recordMs == null && !chromeIdle && (activeTab === 'profile' ? profileMetric === 'radius' : !showOnlineAudience)}
               accumulated={!seenUser && (mapHasAccumulatedRadius || (activeTab === 'profile' && !profileHasPopSubject))}
+              recountKey={activeTab === 'map' ? traversedPinKey : null}
             />
             <span className={styles.statTrend}>{activeTab === 'map' ? mapRadiusTrend : activeTab === 'profile' ? (profileHasPopSubject ? 'this pop' : `${profilePostCount} posts`) : cubeScreen === 'feed-news' ? 'current story' : `${POST_COUNT} nearby`}</span>
           </div>

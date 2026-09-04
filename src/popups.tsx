@@ -3,8 +3,9 @@ import surfaceStyles from './TransientPopupSurface.module.css'
 import styles from './popups.module.css'
 import type { SmartCard } from './tourSmarts'
 import CommerceSuggestionWindow, { type SuggestionPrimaryAction } from './CommerceSuggestionWindow'
-import NewsPopCard from './NewsPopCard'
+import PoplurDialog from './PoplurDialog'
 import { playPop, playPopAmbient } from './pop'
+import { KM_TO_MI, shouldUseMiles } from './units'
 
 // The app's one transient popup layer: engagement and suggestions, centred on
 // screen, alive for a few seconds, then gone.
@@ -100,6 +101,15 @@ const TTL: Record<PopupKind, number> = {
 
 // More than a few at once is a pile nobody reads. Oldest goes first.
 const MAX_LIVE = 3
+
+/** The pop's ground in the viewer's own unit — the same number the shell's
+ *  RADIUS card and the point card show, said once more. */
+function popRadiusLabel(radiusKm: number): string {
+  const miles = shouldUseMiles()
+  const shown = miles ? radiusKm * KM_TO_MI : radiusKm
+  const text = shown >= 100 ? Math.round(shown).toLocaleString() : shown.toFixed(1)
+  return `${text} ${miles ? 'mi' : 'km'}`
+}
 
 let nextId = 1
 let items: PopupItem[] = []
@@ -309,16 +319,20 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
               <span className={styles.engageText}>{item.text}</span>
             </>
           ) : item.kind === 'mapContent' && item.content ? (
-            <NewsPopCard
-              embedded
+            // A tapped pop opens in the Poplur dialog: who, what they said,
+            // the ground it holds, and one button to watch it in the feed.
+            <PoplurDialog
               dataId={item.content.id}
-              status="POPLUR POP"
-              statusKind="pop"
-              place={`${item.content.user ?? 'YOUR POP'} · ${item.content.channel?.toUpperCase() ?? 'POP'}`}
-              title={item.content.name}
-              summary={item.content.caption ?? item.content.media?.alt ?? ''}
-              summaryLabel="FROM THE MAP"
-              meta={`${item.content.radiusKm.toFixed(1)} km radius`}
+              eyebrow="Poplur pop"
+              title={item.content.user ?? 'Your pop'}
+              subtitle={item.content.caption ?? item.content.media?.alt ?? item.content.name}
+              pills={[
+                { icon: '📍', text: `${popRadiusLabel(item.content.radiusKm)} radius` },
+                ...(item.content.channel ? [{ icon: '📺', text: item.content.channel.toUpperCase() }] : []),
+                ...(item.content.name && item.content.name !== item.content.caption
+                  ? [{ icon: '🗺', text: item.content.name }]
+                  : []),
+              ]}
               media={item.content.media}
               onClose={() => {
                 playPop()
@@ -330,7 +344,7 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
                 dismissPopup(item.id)
               } : undefined}
               primaryAction={item.onActivate ? {
-                label: 'SHOW IN FEED',
+                label: 'See in Feed',
                 onActivate: () => {
                   playPop()
                   item.onActivate?.()

@@ -1,3 +1,5 @@
+import { isWorldRadiusMeters } from './worldRadius'
+
 export type FeedDiscoveryMode = 'radius' | 'local' | 'trending'
 
 export const FEED_DISCOVERY_MODES: ReadonlyArray<{
@@ -263,6 +265,10 @@ export function feedPostReachesViewer(
     || typeof originLongitude !== 'number' || !Number.isFinite(originLongitude) || Math.abs(originLongitude) > 180
     || !Number.isFinite(viewerLatitude) || Math.abs(viewerLatitude) > 90
     || !Number.isFinite(viewerLongitude) || Math.abs(viewerLongitude) > 180) return false
+  // The top of the radius scale is the Earth's own radius, and a post that
+  // has climbed there has taken over the world: it reaches every viewer,
+  // however far from its origin they stand. See worldRadius.ts.
+  if (isWorldRadiusMeters(radiusMeters)) return true
   return distanceMetersBetween(
     [viewerLongitude, viewerLatitude],
     [originLongitude, originLatitude],

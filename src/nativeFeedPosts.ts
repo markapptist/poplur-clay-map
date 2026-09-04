@@ -11,9 +11,9 @@ import {
 import { isNativeShell, isRNWebShellRoute, postNativeEvent } from './nativeBridge'
 import { webDb } from './webFirebase'
 import { pinColorId, type PinColorId } from './pinColors'
+import { clampRadiusMeters } from './worldRadius'
 
 const LIVE_FEED_POST_LIMIT = 160
-const MAX_RADIUS_METERS = 40_075_000
 
 export interface NativeFeedPost {
   id: string
@@ -174,7 +174,7 @@ function normalizeFeedPost(
     channelId,
     radiusMeters: radiusMeters == null
       ? undefined
-      : Math.max(0, Math.min(MAX_RADIUS_METERS, radiusMeters)),
+      : clampRadiusMeters(radiusMeters),
     createdAtMillis: timestampMillis(row.createdAtMillis ?? row.createdAt),
     viewCount: boundedCount(row.viewCount),
     likeCount: boundedCount(row.likeCount ?? row.upvoteCount),

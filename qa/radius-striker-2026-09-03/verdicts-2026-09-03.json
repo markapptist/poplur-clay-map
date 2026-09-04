@@ -1,0 +1,216 @@
+{
+  "origin": "http://127.0.0.1:5173",
+  "at": "2026-09-03T23:41:28.326Z",
+  "verdicts": [
+    {
+      "name": "shell learned the viewer fix from the map",
+      "ok": true,
+      "detail": "{\"type\":\"poplur-location\",\"latitude\":43.6512,\"longitude\":-79.3832,\"source\":\"map\"}"
+    },
+    {
+      "name": "arrowed onto a pin",
+      "ok": true,
+      "detail": "{\"id\":\"pin:firestore:post-radius-lab-cohort-2026-09-03-orange-2-eohy\",\"name\":\"@orange.peel\",\"km\":3.6}"
+    },
+    {
+      "name": "zoom rail became a radius striker",
+      "ok": true,
+      "detail": "17 samples, tiers [\"bronze\"], thumbs [\"trophy-bronze\"]"
+    },
+    {
+      "name": "striker settled at the pin's radius",
+      "ok": true,
+      "detail": "{\"t\":1175,\"tier\":\"bronze\",\"running\":\"false\",\"level\":\"0.324\",\"thumb\":\"trophy-bronze\",\"marks\":5,\"progress\":\"34.494868840678684%\"}"
+    },
+    {
+      "name": "tier notches drawn on the rail",
+      "ok": true,
+      "detail": "5 marks"
+    },
+    {
+      "name": "RADIUS card shows the pin's radius",
+      "ok": true,
+      "detail": "0.0mi → 2.2mi · Radius 2.2 miles — tap to change units · pin 3.6 km"
+    },
+    {
+      "name": "cohort pins standing on the board",
+      "ok": true,
+      "detail": "{\"pins\":2,\"owners\":[null],\"labels\":[null,null]}"
+    },
+    {
+      "name": "tapping a pin opens the Poplur dialog",
+      "ok": true,
+      "detail": "pin:firestore:post-official-photo-selfies → {\"id\":\"firestore:post-official-photo-selfies\",\"title\":\"@glowgetter\",\"pills\":[\"📍3,959 mi radius📺BEAUTY🗺Toronto\",\"📍3,959 mi radius\",\"📺BEAUTY\",\"🗺Toronto\"],\"buttons\":[\"×\",\"See in Feed →\",\"VIEW @glowgetter\"]}"
+    },
+    {
+      "name": "dialog offers See in Feed",
+      "ok": true,
+      "detail": "See in Feed →"
+    },
+    {
+      "name": "feed opened on the tapped post",
+      "ok": true,
+      "detail": "feed shows post-official-photo-selfies, tapped post-official-photo-selfies"
+    },
+    {
+      "name": "POST RADIUS card reads the tapped post's radius",
+      "ok": true,
+      "detail": "coach dismissed · expected ≈3959 mi · samples [\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\",\"Radius 3958.8 miles\"]"
+    }
+  ],
+  "samples": [
+    {
+      "t": 0,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 71,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 137,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 336,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 401,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 464,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 530,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 597,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 665,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 728,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 791,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 855,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 919,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 983,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 1048,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 1111,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    },
+    {
+      "t": 1175,
+      "tier": "bronze",
+      "running": "false",
+      "level": "0.324",
+      "thumb": "trophy-bronze",
+      "marks": 5,
+      "progress": "34.494868840678684%"
+    }
+  ]
+}

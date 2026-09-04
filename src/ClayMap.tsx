@@ -143,6 +143,8 @@ import {
   mapHoverCubeKind,
   type MapHoverCubeKind,
 } from './mapHoverCube'
+import { EARTH_RADIUS_KM, isWorldRadiusKm } from './worldRadius'
+import { RADIUS_TROPHIES, RADIUS_TROPHY_SPRITE_VIEW, STRIKER_MS, radiusMeterLevel, radiusTrophiesRung, radiusTrophyLevel, strikerEase, type RadiusTrophyTier } from './radiusTrophies'
 
 export interface ClayMapProps {
   token: string
@@ -1205,7 +1207,11 @@ function reachRingFeature(center: [number, number], radiusKm: number): GeoJSON.F
   const steps = 128
   // Cap just short of the antipode: at half the circumference the ring is a
   // point on the far side of the planet and the geometry degenerates.
-  const angular = Math.min(radiusKm, 6371 * Math.PI * 0.995) / 6371
+  // A world-radius ring (the top of the scale) wraps the planet the same way
+  // the territory paint does — see worldRadius.ts for why the ceiling means
+  // "everywhere" rather than one radian of arc.
+  const antipodeKm = EARTH_RADIUS_KM * Math.PI * 0.995
+  const angular = (isWorldRadiusKm(radiusKm) ? antipodeKm : Math.min(radiusKm, antipodeKm)) / EARTH_RADIUS_KM
   const latRad = (center[1] * Math.PI) / 180
   const lngRad = (center[0] * Math.PI) / 180
   const coordinates: [number, number][] = []
@@ -1660,11 +1666,48 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   const incidentalLandmarkSprite = landmarkThumbId
     ? WORLD_LANDMARK_THUMB_SPRITES[landmarkThumbId] ?? null
     : null
-  const activeZoomThumb = pointThumbSprite && focusedMapPoint
-    ? { id: `point-${focusedMapPoint.key}`, sprite: pointThumbSprite }
-    : incidentalLandmarkSprite
-      ? { id: `landmark-${landmarkThumbId}`, sprite: incidentalLandmarkSprite }
-      : zoomStage
+  // ── The radius high striker ───────────────────────────────────────────────
+  // Selecting a pin turns the zoom rail into a radius MEASUREMENT: the puck
+  // shoots up from the foot of the rail to the post's radius and rings each
+  // trophy it passes — bronze, silver, gold, platinum, diamond — with a pop
+  // per tier, the way a carnival high striker rings its bells. The top of the
+  // tower is the Earth's radius, the same ceiling the shell's RADIUS counter
+  // counts "of", and the two run on one beat (radiusTrophies.ts) so the
+  // number and the puck arrive together. Grabbing the rail hands it back to
+  // zoom; the knob then wears the pin again.
+  const [striker, setStriker] = useState<{
+    key: string
+    targetLevel: number
+    tier: RadiusTrophyTier | null
+    done: boolean
+  } | null>(null)
+  const strikerRef = useRef<{ key: string; level: number; tier: RadiusTrophyTier | null } | null>(null)
+  const strikerRafRef = useRef(0)
+  const zoomWrapRef = useRef<HTMLDivElement>(null)
+  const zoomThumbRef = useRef<HTMLDivElement>(null)
+  // The trophies the knob wears, one baked sprite per tier. Resolved through
+  // the same pre-render manifest as every other knob object — a plain PNG
+  // URL in production, and during a sprite bake the runtime render that the
+  // bake collects. Nothing here decodes a GLB on a phone.
+  const [trophySprites, setTrophySprites] = useState<Partial<Record<RadiusTrophyTier, string>>>({})
+  useEffect(() => {
+    let live = true
+    for (const trophy of RADIUS_TROPHIES) {
+      void modelSprite(trophy.model, RADIUS_TROPHY_SPRITE_VIEW)
+        .then(url => { if (live) setTrophySprites(current => current[trophy.tier] === url ? current : { ...current, [trophy.tier]: url }) })
+        .catch(err => console.warn('[modelSprite]', trophy.model, err))
+    }
+    return () => { live = false }
+  }, [])
+  const strikerThumb = striker?.tier && trophySprites[striker.tier]
+    ? { id: `trophy-${striker.tier}`, sprite: trophySprites[striker.tier] as string }
+    : null
+  const activeZoomThumb = strikerThumb
+    ?? (pointThumbSprite && focusedMapPoint
+      ? { id: `point-${focusedMapPoint.key}`, sprite: pointThumbSprite }
+      : incidentalLandmarkSprite
+        ? { id: `landmark-${landmarkThumbId}`, sprite: incidentalLandmarkSprite }
+        : zoomStage)
   const landmarkThumbSprite = pointThumbSprite ?? incidentalLandmarkSprite
   // Fill percentage aligned to the CENTER of the native thumb: a range thumb
   // only travels (track − thumb) px, so a raw value-percentage mask leads the
@@ -1691,6 +1734,91 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   }, [])
   const zoomRatio = Math.max(0, Math.min(1, (zoomValue - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)))
   const zoomProgress = `${((zoomRatio * (zoomRailMetrics.length - zoomRailMetrics.thumb) + zoomRailMetrics.thumb / 2) / zoomRailMetrics.length) * 100}%`
+  // What the rail paints when it is a zoom control. Kept in a ref so the
+  // striker can hand the exact zoom picture back the instant it lets go,
+  // without waiting for a render that may compare equal and never write.
+  const zoomTravel = Math.max(0, zoomRailMetrics.length - zoomRailMetrics.thumb)
+  const zoomPaintRef = useRef({ progress: zoomProgress, bottom: zoomRatio * zoomTravel })
+  zoomPaintRef.current = { progress: zoomProgress, bottom: zoomRatio * zoomTravel }
+  const strikerProgressFor = (level: number) =>
+    `${((level * zoomTravel + zoomRailMetrics.thumb / 2) / zoomRailMetrics.length) * 100}%`
+  const paintRail = (progress: string, bottomPx: number) => {
+    zoomWrapRef.current?.style.setProperty('--zoomProgress', progress)
+    if (zoomThumbRef.current) zoomThumbRef.current.style.bottom = `${bottomPx}px`
+  }
+  const releaseStriker = () => {
+    if (strikerRafRef.current) cancelAnimationFrame(strikerRafRef.current)
+    strikerRafRef.current = 0
+    if (!strikerRef.current) return
+    strikerRef.current = null
+    setStriker(null)
+    paintRail(zoomPaintRef.current.progress, zoomPaintRef.current.bottom)
+  }
+  const strikerPin = focusedMapPoint?.kind === 'pin' ? focusedMapPoint : null
+  const strikerKey = strikerPin?.key ?? null
+  const strikerRadiusKm = strikerPin?.radiusKm ?? null
+  useEffect(() => {
+    if (strikerRafRef.current) cancelAnimationFrame(strikerRafRef.current)
+    strikerRafRef.current = 0
+    if (!strikerKey || strikerRadiusKm == null) {
+      if (strikerRef.current) {
+        strikerRef.current = null
+        setStriker(null)
+        paintRail(zoomPaintRef.current.progress, zoomPaintRef.current.bottom)
+      }
+      return
+    }
+    const targetLevel = radiusMeterLevel(strikerRadiusKm)
+    const rung = radiusTrophiesRung(strikerRadiusKm)
+    const travel = zoomTravel
+    const paint = (level: number) => paintRail(strikerProgressFor(level), level * travel)
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (reduced) {
+      const tier = rung.length ? rung[rung.length - 1].tier : null
+      strikerRef.current = { key: strikerKey, level: targetLevel, tier }
+      setStriker({ key: strikerKey, targetLevel, tier, done: true })
+      paint(targetLevel)
+      return
+    }
+    strikerRef.current = { key: strikerKey, level: 0, tier: null }
+    setStriker({ key: strikerKey, targetLevel, tier: null, done: false })
+    paint(0)
+    let ringIndex = 0
+    const started = performance.now()
+    const frame = (now: number) => {
+      const raw = Math.min(1, (now - started) / STRIKER_MS)
+      const level = targetLevel * strikerEase(raw)
+      let rang = false
+      while (ringIndex < rung.length && level >= radiusTrophyLevel(rung[ringIndex]) - 1e-6) {
+        ringIndex += 1
+        rang = true
+      }
+      const tier = ringIndex > 0 ? rung[ringIndex - 1].tier : null
+      strikerRef.current = { key: strikerKey, level, tier }
+      paint(level)
+      // The bell: one pop per trophy the puck rings, a beat apart because the
+      // easing is hard at the start and the tiers sit a decade apart.
+      if (rang) {
+        playPop(0.55)
+        setStriker({ key: strikerKey, targetLevel, tier, done: false })
+      }
+      if (raw < 1) {
+        strikerRafRef.current = requestAnimationFrame(frame)
+      } else {
+        strikerRafRef.current = 0
+        setStriker({ key: strikerKey, targetLevel, tier, done: true })
+      }
+    }
+    strikerRafRef.current = requestAnimationFrame(frame)
+    return () => {
+      if (strikerRafRef.current) cancelAnimationFrame(strikerRafRef.current)
+      strikerRafRef.current = 0
+    }
+    // The rail's own metrics are read through the paint helpers; a resize
+    // mid-climb is repainted by the next React render, which reads them live.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strikerKey, strikerRadiusKm])
+  const strikerLevel = striker ? strikerRef.current?.level ?? 0 : null
   const fovProgress = `${Math.max(0, Math.min(100, ((fovValue - FOV_MIN) / (FOV_MAX - FOV_MIN)) * 100))}%`
   const dominancePinsKey = (pins ?? []).map(pin => {
     const e = pin.engagement
@@ -5867,7 +5995,28 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       const zoom = map.getZoom()
       const maxLive = zoom < 3.2 ? 10 : PIN_MAX_LIVE
       const inView = viewportDominancePins(map, list)
-      // Dominance first: world holders, then by how much ground they hold.
+      // A marker draws at its pop's ORIGIN. A world-holder standing in Tokyo
+      // owns the ground under a Toronto camera, so it is "in view" by
+      // territory — but its marker is thousands of km off-screen and draws
+      // nothing, while it takes one of the seats a pin actually standing on
+      // this screen needed. Twenty-nine world posts filled every seat on every
+      // board that way, and a stranger's coloured pin two blocks away never
+      // mounted. Seat the pins that can be SEEN first; off-screen holders only
+      // fill what is left. (Globe distance keeps the old order: everything is
+      // on screen there.)
+      const onScreen = new Set<string>()
+      if (zoom >= 3.2) {
+        const box = map.getContainer()
+        const pad = 96
+        for (const pin of inView) {
+          try {
+            const point = map.project([pin.coords[0], pin.coords[1]])
+            if (point.x >= -pad && point.y >= -pad
+              && point.x <= box.clientWidth + pad && point.y <= box.clientHeight + pad) onScreen.add(pin.id)
+          } catch { /* the style can be mid-reload; treat as off-screen */ }
+        }
+      }
+      // Then dominance: world holders, then by how much ground they hold.
       // Your own pops sort with the rest — on a shared board the question is
       // who leads here, and pinning yours to the top would answer a different
       // one.
@@ -5875,6 +6024,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // the capped board keeps every in-reach pop ahead of the dotted outlines.
       inView.sort((a, c) =>
         (a.ghost === true ? 1 : 0) - (c.ghost === true ? 1 : 0)
+        || (onScreen.has(c.id) ? 1 : 0) - (onScreen.has(a.id) ? 1 : 0)
         || dominanceFameScore(c.radiusKm, c.engagement) - dominanceFameScore(a.radiusKm, a.engagement)
         || (c.world === true ? 1 : 0) - (a.world === true ? 1 : 0)
         || c.radiusKm - a.radiusKm)
@@ -6223,6 +6373,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   const handleZoomDown = (e: React.PointerEvent<HTMLDivElement>) => {
     const rail = zoomRailRef.current
     if (!rail) return
+    // Grabbing the rail makes it a zoom control again: the striker lets go
+    // and the knob is back where the camera actually is.
+    releaseStriker()
     e.preventDefault()
     initialCameraInteractionRef.current = true
     stopOrbitRef.current()
@@ -6773,13 +6926,19 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       )}
 
       <div
+        ref={zoomWrapRef}
         className={controlsObscured ? `${styles.zoomWrap} ${styles.mapControlsObscured}` : styles.zoomWrap}
+        data-radius-striker={striker ? striker.tier ?? 'below-bronze' : undefined}
+        data-radius-striker-running={striker ? String(!striker.done) : undefined}
+        data-radius-striker-level={strikerLevel != null ? strikerLevel.toFixed(3) : undefined}
         style={{
           // The knob is a pre-rendered view of the real 3D object at this
           // zoom band. Unlike decoding a GLB just to decorate a control, this
           // costs one cached 2D image and is visible on the first frame.
           '--zoomThumb': `url("${activeZoomThumb.sprite}")`,
-          '--zoomProgress': zoomProgress,
+          // While the rail measures a radius, the fill is the puck's climb,
+          // not the camera's zoom; the striker paints between renders.
+          '--zoomProgress': strikerLevel != null ? strikerProgressFor(strikerLevel) : zoomProgress,
           // The rail's fill follows the takeover colour. `takeoverFace` is in
           // this component's state and changes with the wheel, so these
           // re-evaluate on the same render that repaints the world.
@@ -6802,11 +6961,23 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         onKeyDown={handleZoomKey}
       >
         <div className={styles.zoomRail} ref={zoomRailRef}>
+          {/* Tier notches while the rail measures: bronze at the foot, diamond
+              at the top, each lit once the puck has rung it. */}
+          {striker && RADIUS_TROPHIES.map(trophy => (
+            <i
+              key={trophy.tier}
+              className={`${styles.zoomTierMark}${striker.tier && RADIUS_TROPHIES.findIndex(t => t.tier === striker.tier) >= RADIUS_TROPHIES.findIndex(t => t.tier === trophy.tier) ? ` ${styles.zoomTierMarkRung}` : ''}`}
+              data-tier={trophy.tier}
+              style={{ bottom: `${radiusTrophyLevel(trophy) * zoomTravel + zoomRailMetrics.thumb / 2}px` }}
+              aria-hidden="true"
+            />
+          ))}
           <div
             key={activeZoomThumb.id}
-            className={`${styles.zoomThumb}${landmarkThumbSprite ? ` ${styles.zoomThumbLandmark}` : ''}`}
+            ref={zoomThumbRef}
+            className={`${styles.zoomThumb}${strikerThumb ? ` ${styles.zoomThumbTrophy}` : landmarkThumbSprite ? ` ${styles.zoomThumbLandmark}` : ''}`}
             data-zoom-thumb={activeZoomThumb.id}
-            style={{ bottom: `${zoomRatio * Math.max(0, zoomRailMetrics.length - zoomRailMetrics.thumb)}px` }}
+            style={{ bottom: `${(strikerLevel != null ? strikerLevel : zoomRatio) * zoomTravel}px` }}
           />
         </div>
         {/* One button, one job, in a fixed slot below the rail. When a pop is

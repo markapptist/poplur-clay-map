@@ -1,3 +1,5 @@
+import { EARTH_RADIUS_METERS } from './worldRadius'
+
 export interface MapFeedHandoff {
   id: string
   channelId: string
@@ -96,7 +98,7 @@ export function normalizeMapFeedHandoff(value: unknown): MapFeedHandoff | null {
     mediaURL,
     mediaType,
     posterURL: safeMediaURL(row.posterURL, true),
-    radiusMeters: boundedNumber(row.radiusMeters, 0, 40_075_000),
+    radiusMeters: boundedNumber(row.radiusMeters, 0, EARTH_RADIUS_METERS),
     createdAtMillis,
     locationVisibility,
     originLatitude: hasPublicOrigin ? originLatitude : undefined,

@@ -13,6 +13,7 @@ import {
   dominancePower,
 } from './mapDominance'
 import { ownershipTerrainPolygon } from './ownershipTerrain'
+import { EARTH_RADIUS_KM, isWorldRadiusKm } from './worldRadius'
 
 // ── Land-claim clay territory ───────────────────────────────────────────────
 // A Poplur post claims land: its radius (km) becomes an angular clay ownership
@@ -96,7 +97,14 @@ const EARTH_CIRCUMFERENCE_KM = 40_075
  * fixed pixel floor is fewer km up north. Using the equatorial figure
  * everywhere would over-inflate high-latitude claims into the Arctic.
  */
+/** A claim at the top of the radius scale owns the whole planet, so it is
+ *  drawn out to the antipode (just short, where the cap degenerates to a
+ *  point) rather than as the one-radian cap 6,371 km of arc would literally
+ *  be. Same rule the reach ring and the reach predicate use. */
+const WORLD_DRAW_KM = EARTH_RADIUS_KM * Math.PI * 0.995
+
 function drawnRadiusKm(trueKm: number, zoom: number, lat: number): number {
+  if (isWorldRadiusKm(trueKm)) return WORLD_DRAW_KM
   const kmPerPixel =
     (EARTH_CIRCUMFERENCE_KM * Math.cos((Math.min(85, Math.abs(lat)) * Math.PI) / 180))
     / (WORLD_PX_AT_Z0 * Math.pow(2, zoom))

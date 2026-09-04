@@ -59,6 +59,7 @@ import {
   recordPostView,
   recordProfileVisitAfterView,
 } from './radiusLedger'
+import { currentViewerCoords as viewerCoordsFromFix } from './viewerFix'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
 // a fullscreen vertical TV-channel video pager. Vertical swipe changes channel;
@@ -252,22 +253,13 @@ function canonicalFeedPostId(id: string): string {
   return id.startsWith('firestore:') ? id.slice('firestore:'.length) : id
 }
 
-function currentViewerCoords(): [number, number] | null {
-  if (typeof window === 'undefined') return null
-  const row = (window as typeof window & {
-    __poplurNativeLocation?: { latitude?: unknown; longitude?: unknown }
-  }).__poplurNativeLocation
-  const latitude = Number(row?.latitude)
-  const longitude = Number(row?.longitude)
-  if (Number.isFinite(latitude) && Math.abs(latitude) <= 90
-    && Number.isFinite(longitude) && Math.abs(longitude) <= 180) {
-    return [longitude, latitude]
-  }
-  // The browser artifact has no shell fix. Its established Toronto centre is
-  // a deterministic preview origin; native shells fail closed until a real fix
-  // arrives so Local never pretends the device is in Toronto.
-  return isNativeShell() ? null : [-79.3811, 43.6487]
-}
+// The viewer the reach test measures from. This is the SAME resolution the
+// Map runs (viewerFix.ts): the shell fix when one exists, the deterministic
+// Toronto preview origin in a browser, fail-closed on a native shell with no
+// fix yet. One reader, so the two surfaces can never disagree about where you
+// are — and the Map now publishes any fix it finds on its own back into the
+// shell, so a pin standing on the map means the same post stands in the feed.
+const currentViewerCoords = viewerCoordsFromFix
 
 function rankedPostsFor(
   channel: Channel,
@@ -881,7 +873,16 @@ export default function FeedTwin({
     reportedReachRef.current = signature
     onPostReach?.(km)
   }, [onPostReach, post?.reachKm, postId])
-  useEffect(() => () => { onPostReach?.(null) }, [onPostReach])
+  // Leaving reports "no post". The signature ref is FORGOTTEN here on purpose:
+  // a remount (React's dev-mode double mount included) runs this cleanup and
+  // then the report effect again, and with the old signature still held the
+  // effect judged the post already reported and stayed silent — so the shell's
+  // RADIUS card read 0.0 under a post whose own header said how far it had
+  // reached. One surface said 3,959 mi, the other said nothing.
+  useEffect(() => () => {
+    reportedReachRef.current = null
+    onPostReach?.(null)
+  }, [onPostReach])
 
   const desiredAdSrc = post?.stream || post?.mediaType === 'photo'
     ? undefined

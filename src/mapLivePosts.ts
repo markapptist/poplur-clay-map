@@ -13,9 +13,9 @@ import { feedPostReachesViewer } from './feedDiscovery'
 import { pinColorId } from './pinColors'
 import type { NativeFeedPost } from './nativeFeedPosts'
 import { webDb } from './webFirebase'
+import { clampRadiusMeters } from './worldRadius'
 
 const LIVE_MAP_POST_LIMIT = 160
-const MAX_RADIUS_METERS = 40_075_000
 const OWNER_COLORS = ['#FF4BA1', '#4FD6B8', '#FFD24B', '#A97BFF', '#5FB0FF', '#FF8A3D', '#7CE04F'] as const
 
 function rgb(hex: string): [number, number, number] {
@@ -161,7 +161,10 @@ export function normalizeLiveMapPost(
   const ownerId = text(row.userID ?? row.userId, 128)
   if (!ownerId) return null
   const rawRadius = finite(row.radiusMeters ?? row.radius ?? row.organicRadiusMeters) ?? 0
-  const radiusKm = Math.max(0, Math.min(MAX_RADIUS_METERS, rawRadius)) / 1_000
+  // Clamped into the radius scale (its ceiling is the Earth's radius), so a
+  // document minted at the planet's circumference still reads as a radius
+  // the counter can show "of 3,959 mi".
+  const radiusKm = clampRadiusMeters(rawRadius) / 1_000
   const handleSource = text(row.username ?? row.handle ?? row.displayName, 48)
   const user = handleSource
     ? (handleSource.startsWith('@') ? handleSource : `@${handleSource}`)
