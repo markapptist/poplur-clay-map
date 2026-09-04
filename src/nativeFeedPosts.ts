@@ -7,13 +7,17 @@ import {
   type DocumentData,
   type QueryDocumentSnapshot,
   type Unsubscribe,
+  where,
 } from 'firebase/firestore'
 import { isNativeShell, isRNWebShellRoute, postNativeEvent } from './nativeBridge'
 import { webDb } from './webFirebase'
+import { accountSnapshot, onAccountChange } from './accountStore'
 import { pinColorId, type PinColorId } from './pinColors'
 import { clampRadiusMeters } from './worldRadius'
 
 const LIVE_FEED_POST_LIMIT = 160
+/** The account's own posts ride along regardless of age (see subscribeLiveFeedPosts). */
+const OWN_FEED_POST_LIMIT = 64
 
 export interface NativeFeedPost {
   id: string
@@ -220,22 +224,50 @@ export function normalizeLiveFeedDocuments(
   }).sort((a, b) => b.createdAtMillis - a.createdAtMillis || a.id.localeCompare(b.id))
 }
 
+/** The newest window plus the account's own posts, deduplicated by id. Exported for tests. */
+export function mergeFeedDocuments(
+  latest: readonly LiveFeedPostDocument[],
+  own: readonly LiveFeedPostDocument[],
+): LiveFeedPostDocument[] {
+  const seen = new Set(latest.map(document => document.id))
+  return [...latest, ...own.filter(document => !seen.has(document.id))]
+}
+
 export function subscribeLiveFeedPosts(
   listener: (posts: NativeFeedPost[]) => void,
   onError: (error: Error) => void = () => {},
 ): Unsubscribe {
+  // The newest window alone loses the account's own posts once the board
+  // outpaces them — and Feed, Map and Profile all read this one pool, so the
+  // profile's map button, the map's own claims and the feed's "yours" all went
+  // with them. Fold in what this account wrote, whatever its age.
+  let latest: LiveFeedPostDocument[] = []
+  let own: LiveFeedPostDocument[] = []
+  const emit = () => listener(normalizeLiveFeedDocuments(mergeFeedDocuments(latest, own)))
   const posts = query(
     collection(webDb(), 'posts'),
     orderBy('createdAt', 'desc'),
     limit(LIVE_FEED_POST_LIMIT),
   )
-  return onSnapshot(posts, next => {
-    listener(normalizeLiveFeedDocuments(
-      next.docs as QueryDocumentSnapshot<DocumentData>[],
-    ))
+  const stopLatest = onSnapshot(posts, next => {
+    latest = next.docs as QueryDocumentSnapshot<DocumentData>[]
+    emit()
   }, error => {
     onError(error instanceof Error ? error : new Error('Live Feed posts are unavailable.'))
   })
+  const uid = accountSnapshot().uid
+  const stopOwn = uid
+    ? onSnapshot(query(
+      collection(webDb(), 'posts'),
+      where('userID', '==', uid),
+      orderBy('createdAt', 'desc'),
+      limit(OWN_FEED_POST_LIMIT),
+    ), next => {
+      own = next.docs as QueryDocumentSnapshot<DocumentData>[]
+      emit()
+    }, () => { /* the newest window still flows without the account's own */ })
+    : () => {}
+  return () => { stopLatest(); stopOwn() }
 }
 
 function publish(posts: NativeFeedPost[]): void {
@@ -261,6 +293,22 @@ function requestNativeFallback(): void {
   postNativeEvent({ type: 'requestFeedPosts' })
 }
 
+let accountWatch: (() => void) | null = null
+let accountWatchUid: string | null = null
+
+function watchAccountForOwnPosts(): void {
+  if (accountWatch) return
+  accountWatchUid = accountSnapshot().uid
+  accountWatch = onAccountChange(snapshot => {
+    if (snapshot.uid === accountWatchUid) return
+    accountWatchUid = snapshot.uid
+    // A different account owns different posts: rebuild the pool around it.
+    if (unsubscribeRealtime) { unsubscribeRealtime(); unsubscribeRealtime = null }
+    realtimeState = 'idle'
+    if (listeners.size) startRealtimeFeed()
+  })
+}
+
 function startRealtimeFeed(): void {
   if (unsubscribeRealtime || realtimeState === 'connecting' || realtimeState === 'live') return
   // Inside a native shell the shell's forward is the authority: it holds the
@@ -276,6 +324,7 @@ function startRealtimeFeed(): void {
     return
   }
   realtimeState = 'connecting'
+  watchAccountForOwnPosts()
   try {
     unsubscribeRealtime = subscribeLiveFeedPosts(posts => {
       realtimeState = 'live'
