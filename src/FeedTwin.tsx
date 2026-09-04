@@ -419,9 +419,6 @@ export default function FeedTwin({
   const playerModeRef = useRef(false)
   const [playerPaused, setPlayerPaused] = useState(false)
   const playerPausedByUserRef = useRef(false)
-  const [playerTime, setPlayerTime] = useState(0)
-  const [playerDuration, setPlayerDuration] = useState(0)
-  const [playerBuffered, setPlayerBuffered] = useState(0)
   const longPressTimerRef = useRef<number | null>(null)
   const longPressAnchorRef = useRef<{ x: number; y: number } | null>(null)
 
@@ -726,22 +723,6 @@ export default function FeedTwin({
       Math.max(0, video.currentTime + deltaSeconds),
       Math.max(0, video.duration - 0.05),
     )
-    setPlayerTime(video.currentTime)
-  }, [])
-
-  // Scrub: drag anywhere on the timeline's hit strip. Direct currentTime
-  // writes — the clips are small bundled files, seeks land within a frame.
-  const timelineRef = useRef<HTMLDivElement>(null)
-  const scrubbingRef = useRef(false)
-  const [scrubbing, setScrubbing] = useState(false)
-  const seekToClientX = useCallback((clientX: number) => {
-    const video = adVideoRef.current
-    const strip = timelineRef.current
-    if (!video || !strip || !Number.isFinite(video.duration) || video.duration <= 0) return
-    const rect = strip.getBoundingClientRect()
-    const fraction = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
-    video.currentTime = Math.min(fraction * video.duration, video.duration - 0.05)
-    setPlayerTime(video.currentTime)
   }, [])
 
 
@@ -1116,23 +1097,18 @@ export default function FeedTwin({
     })
   }, [adReady, posterReady, post?.id, post?.stream, postId])
 
-  // While the player is up, mirror the video's clock into the timeline. Native
-  // media events only — no rAF loop, so the layer is idle between events and
-  // the thermal census sees nothing running. Keyed on adSrc because the <video>
-  // element itself is keyed on it: a clip change is a NEW node to listen to.
+  // While the player is up, mirror whether the clip is paused so the middle
+  // button shows the right face. There is no timeline any more, so the clock
+  // is not mirrored: three native events, nothing per frame, and the layer is
+  // idle between them. Keyed on adSrc because the <video> element itself is
+  // keyed on it: a clip change is a NEW node to listen to.
   useEffect(() => {
     if (!playerMode) return
     const video = adVideoRef.current
     if (!video) return
-    const sync = () => {
-      setPlayerPaused(video.paused)
-      setPlayerTime(video.currentTime)
-      setPlayerDuration(Number.isFinite(video.duration) ? video.duration : 0)
-      const ranges = video.buffered
-      setPlayerBuffered(ranges.length ? ranges.end(ranges.length - 1) : 0)
-    }
+    const sync = () => setPlayerPaused(video.paused)
     sync()
-    const events = ['timeupdate', 'progress', 'durationchange', 'loadedmetadata', 'play', 'pause', 'seeked'] as const
+    const events = ['play', 'pause', 'ended'] as const
     events.forEach(name => video.addEventListener(name, sync))
     return () => events.forEach(name => video.removeEventListener(name, sync))
   }, [playerMode, adSrc])
@@ -1291,6 +1267,7 @@ export default function FeedTwin({
     if (!video || !adSrc || suppressed || !mediaUnlocked || !decoderGranted || completedAdSrc === adSrc) return
     let retryTimer = 0
     let rotateTimer = 0
+    let silenceTimer = 0
     let checkpoint = video.currentTime
     let awaitingPostLoadProgress = false
     const clearRecovery = () => {
@@ -1298,6 +1275,26 @@ export default function FeedTwin({
       if (rotateTimer) window.clearTimeout(rotateTimer)
       retryTimer = 0
       rotateTimer = 0
+    }
+    const clearSilence = () => {
+      if (silenceTimer) window.clearTimeout(silenceTimer)
+      silenceTimer = 0
+    }
+    // A clip that is "playing" but whose clock has stopped is frozen, and
+    // some WebKit stalls announce it with no event at all — no waiting, no
+    // stalled, no error. So every real advance re-arms one deadline, and if
+    // the next advance never comes while the clip is meant to be playing, the
+    // same bounded recovery runs: reload and play, then move on. This is not
+    // a heartbeat: the timer exists only between two frames of a live clip,
+    // and a paused, ended or retired clip holds none.
+    const armSilence = () => {
+      clearSilence()
+      if (!stillOwnsVideo() || video.paused || video.ended) return
+      silenceTimer = window.setTimeout(() => {
+        silenceTimer = 0
+        if (!stillOwnsVideo() || video.paused || video.ended) return
+        armRecovery()
+      }, 2_500)
     }
     const stillOwnsVideo = () => (
       adVideoRef.current === video
@@ -1319,6 +1316,7 @@ export default function FeedTwin({
       clearRecovery()
       setRecoveringPlayback(false)
       markAdReady(adSrc)
+      armSilence()
     }
     const armRecovery = () => {
       if (!stillOwnsVideo() || retryTimer || rotateTimer) return
@@ -1374,10 +1372,14 @@ export default function FeedTwin({
     }
     const onError = () => {
       clearRecovery()
+      clearSilence()
       if (stillOwnsVideo()) advanceAdSource(adSrc)
     }
+    const onRest = () => clearSilence()
     video.addEventListener('timeupdate', onProgress)
     video.addEventListener('playing', onPlaying)
+    video.addEventListener('pause', onRest)
+    video.addEventListener('ended', onRest)
     video.addEventListener('waiting', armRecovery)
     video.addEventListener('stalled', armRecovery)
     video.addEventListener('error', onError)
@@ -1390,8 +1392,11 @@ export default function FeedTwin({
     armRecovery()
     return () => {
       clearRecovery()
+      clearSilence()
       video.removeEventListener('timeupdate', onProgress)
       video.removeEventListener('playing', onPlaying)
+      video.removeEventListener('pause', onRest)
+      video.removeEventListener('ended', onRest)
       video.removeEventListener('waiting', armRecovery)
       video.removeEventListener('stalled', armRecovery)
       video.removeEventListener('error', onError)
@@ -2307,89 +2312,47 @@ export default function FeedTwin({
       )}
 
       {/* ── Fullscreen player chrome ──
-          The ONLY thing on screen besides the clip: a thin white timeline you
-          can scrub (buffered range in ghost white, played in solid), and the
-          three transport buttons. A live broadcast gets neither — there is no
-          duration to scrub and no frame to pause on; fullscreen there is just
-          the clean picture. */}
+          The ONLY thing on screen besides the clip: three clay transport
+          buttons — rewind, play/pause, fast forward — in the same pink clay
+          as every other side control, using the Map's own play button. There
+          is no timeline and no knob: a clip is short, ±10 s is the whole
+          journey, and a line you can scrub was a thing to hold still for. A
+          live broadcast gets no chrome at all — there is no frame to pause on;
+          fullscreen there is just the clean picture. */}
       {playerMode && adSrc && !post?.stream && (
-        <>
-          <div className={styles.playerControls}>
-            <button
-              className={styles.playerBtn}
-              onClick={() => seekBy(-10)}
-              aria-label="Rewind 10 seconds"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M11.5 5 4.5 12l7 7v-5.2l6 5.2V5l-6 5.2V5Z" fill="currentColor" />
-              </svg>
-            </button>
-            {playerPaused ? (
-              <button
-                className={`${styles.playerBtn} ${styles.playerBtnMain}`}
-                onClick={togglePlayback}
-                aria-label="Play"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M8 4.5v15L20 12 8 4.5Z" fill="currentColor" />
-                </svg>
-              </button>
-            ) : (
-              <SideControlIconButton
-                icon="media.pause"
-                className={`${styles.playerBtn} ${styles.playerBtnMain} ${styles.playerArtButton}`}
-                imageSize={70}
-                aria-label="Pause"
-                onActivate={togglePlayback}
-              />
-            )}
-            <button
-              className={styles.playerBtn}
-              onClick={() => seekBy(10)}
-              aria-label="Fast forward 10 seconds"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12.5 5 19.5 12l-7 7v-5.2l-6 5.2V5l6 5.2V5Z" fill="currentColor" />
-              </svg>
-            </button>
-          </div>
-          <div
-            ref={timelineRef}
-            className={styles.playerTimeline}
-            role="slider"
-            aria-label="Video position"
-            aria-valuemin={0}
-            aria-valuemax={Math.max(0, Math.round(playerDuration))}
-            aria-valuenow={Math.min(Math.round(playerTime), Math.max(0, Math.round(playerDuration)))}
-            onPointerDown={e => {
-              // The scrub owns this pointer: the feed root must never read the
-              // drag as a swipe or arm its long press from it.
-              e.stopPropagation()
-              scrubbingRef.current = true
-              setScrubbing(true)
-              e.currentTarget.setPointerCapture(e.pointerId)
-              seekToClientX(e.clientX)
-            }}
-            onPointerMove={e => { if (scrubbingRef.current) seekToClientX(e.clientX) }}
-            onPointerUp={() => { scrubbingRef.current = false; setScrubbing(false) }}
-            onPointerCancel={() => { scrubbingRef.current = false; setScrubbing(false) }}
-          >
-            <div className={styles.playerTrack}>
-              <span
-                className={styles.playerBuffered}
-                style={{ width: `${playerDuration > 0 ? Math.min(100, (playerBuffered / playerDuration) * 100) : 0}%` }}
-              />
-              <span
-                className={scrubbing ? `${styles.playerPlayed} ${styles.playerPlayedScrubbing}` : styles.playerPlayed}
-                style={{ width: `${playerDuration > 0 ? Math.min(100, (playerTime / playerDuration) * 100) : 0}%` }}
-              />
-              <span
-                className={styles.playerHandle}
-                style={{ left: `${playerDuration > 0 ? Math.min(100, (playerTime / playerDuration) * 100) : 0}%` }}
-              />
-            </div>
-          </div>
-        </>
+        <div className={styles.playerControls}>
+          <SideControlIconButton
+            icon="media.rewind"
+            className={`${styles.playerBtn} ${styles.playerArtButton}`}
+            imageSize={58}
+            aria-label="Rewind 10 seconds"
+            onActivate={() => seekBy(-10)}
+          />
+          {playerPaused ? (
+            <SideControlIconButton
+              icon="map.tour_play"
+              className={`${styles.playerBtn} ${styles.playerBtnMain} ${styles.playerArtButton}`}
+              imageSize={70}
+              aria-label="Play"
+              onActivate={togglePlayback}
+            />
+          ) : (
+            <SideControlIconButton
+              icon="media.pause"
+              className={`${styles.playerBtn} ${styles.playerBtnMain} ${styles.playerArtButton}`}
+              imageSize={70}
+              aria-label="Pause"
+              onActivate={togglePlayback}
+            />
+          )}
+          <SideControlIconButton
+            icon="media.forward"
+            className={`${styles.playerBtn} ${styles.playerArtButton}`}
+            imageSize={58}
+            aria-label="Fast forward 10 seconds"
+            onActivate={() => seekBy(10)}
+          />
+        </div>
       )}
     </div>
   )

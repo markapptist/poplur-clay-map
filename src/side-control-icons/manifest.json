@@ -8,7 +8,7 @@
   256
  ],
  "style": "Glossy rounded 3D clay/plastic icons using Poplur hot pink, black, white, and selective weather accents.",
- "buttonCount": 39,
+ "buttonCount": 41,
  "weatherConditionCount": 14,
  "buttons": [
   {
@@ -265,6 +265,30 @@
     "1024": "assets/1024/media/pause.png",
     "512": "assets/512/media/pause.png",
     "256": "assets/256/media/pause.png"
+   }
+  },
+  {
+   "id": "media.rewind",
+   "asset": "media/rewind",
+   "screen": "Feed media",
+   "purpose": "Step the playing video back ten seconds without leaving the post.",
+   "accessibilityLabel": "Rewind 10 seconds",
+   "files": {
+    "1024": "assets/1024/media/rewind.png",
+    "512": "assets/512/media/rewind.png",
+    "256": "assets/256/media/rewind.png"
+   }
+  },
+  {
+   "id": "media.forward",
+   "asset": "media/forward",
+   "screen": "Feed media",
+   "purpose": "Step the playing video forward ten seconds without leaving the post.",
+   "accessibilityLabel": "Fast forward 10 seconds",
+   "files": {
+    "1024": "assets/1024/media/forward.png",
+    "512": "assets/512/media/forward.png",
+    "256": "assets/256/media/forward.png"
    }
   },
   {

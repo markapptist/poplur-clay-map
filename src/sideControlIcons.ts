@@ -23,6 +23,8 @@ export const SIDE_CONTROL_ICON_IDS = [
   'feed.like',
   'feed.dislike',
   'media.pause',
+  'media.rewind',
+  'media.forward',
   'media.volume',
   'media.radio',
   'media.tv',
