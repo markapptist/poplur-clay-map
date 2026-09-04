@@ -2927,7 +2927,13 @@ export default function ProfileTwin({
             />
           )}
 
-      {/* Direct message to the person whose profile you are on. */}
+        </div>
+      )}
+
+      {/* Direct message to the person whose profile you are on. This must sit
+          OUTSIDE the fullscreen post viewer: the Message control that opens it
+          belongs to the control rail, which only renders while no viewer is
+          open, so a dialog nested in the viewer could never appear at all. */}
       {mailingUser && (
         <div className={`${styles.shareScrim} ${surfaceStyles.scrim}`} onClick={() => setMailingUser(false)}>
           <div className={`${styles.shareAlert} ${surfaceStyles.surface}`} role="dialog" aria-modal="true" aria-label={`Message ${shownName}`} onClick={e => e.stopPropagation()}>
@@ -2960,8 +2966,6 @@ export default function ProfileTwin({
               {pendingProfileDM?.source === 'profile' && <p className={styles.profileEmpty}>Sending…</p>}
             </div>
           </div>
-        </div>
-      )}
         </div>
       )}
 

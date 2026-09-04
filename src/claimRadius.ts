@@ -54,6 +54,37 @@ export function preferredClaimRadiusKm(
   )
 }
 
+/**
+ * What a picker should show when the account's entitlement changes under it.
+ *
+ * The authoritative total arrives from Firestore after the composer may
+ * already be open, and until it lands the entitlement reads as zero. Clamping
+ * alone can only ever lower a value, so a picker that opened at zero stayed at
+ * zero for the whole session and published a post claiming no ground at all,
+ * even for an account with plenty of earned radius. When the entitlement goes
+ * from nothing to something, adopt the friendly default; otherwise keep the
+ * chosen value, lowered if the account can no longer back it.
+ *
+ * `previousLimitKm` is what made this legitimate: a deliberate zero is only
+ * reachable while an entitlement already existed, so keying off that
+ * transition never overrides a real choice.
+ */
+export function claimRadiusAfterEntitlementChange(
+  currentRadiusKm: number,
+  accountRadiusKm: number,
+  previousLimitKm: number,
+  preferredRadiusKm?: number,
+): number {
+  const limit = claimRadiusLimitKm(accountRadiusKm)
+  const entitlementJustArrived = finiteNonNegative(previousLimitKm) === 0 && limit > 0
+  if (entitlementJustArrived && finiteNonNegative(currentRadiusKm) === 0) {
+    return preferredRadiusKm === undefined
+      ? preferredClaimRadiusKm(accountRadiusKm)
+      : preferredClaimRadiusKm(accountRadiusKm, preferredRadiusKm)
+  }
+  return clampClaimRadiusKm(currentRadiusKm, accountRadiusKm)
+}
+
 export function formatClaimRadiusKm(value: number): string {
   const safe = finiteNonNegative(value)
   return Number.isInteger(safe) ? String(safe) : safe.toFixed(1)

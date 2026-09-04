@@ -40,7 +40,7 @@ import {
   hidesPublicPostOrigin,
   onAccountPrivacyChange,
 } from './accountPrivacy'
-import { clampClaimRadiusKm, formatClaimRadiusKm, preferredClaimRadiusKm } from './claimRadius'
+import { claimRadiusAfterEntitlementChange, clampClaimRadiusKm, formatClaimRadiusKm, preferredClaimRadiusKm } from './claimRadius'
 import { useClaimRadiusLimitKm } from './useClaimRadiusLimit'
 
 // Web twin of PostCaptureComposerOverlay.swift — the one composer every capture
@@ -244,8 +244,19 @@ export default function PostComposer({
     setRadiusKm(clampClaimRadiusKm(target.radiusKm, claimRadiusMaxKm))
   }, [claimRadiusMaxKm, reviewMode, target?.radiusKm])
 
+  // The account total arrives from Firestore after this composer can already
+  // be open. Clamping alone only lowers, so a picker that opened before the
+  // total landed published a post claiming nothing.
+  const previousClaimLimitRef = useRef(claimRadiusMaxKm)
   useEffect(() => {
-    setRadiusKm(current => clampClaimRadiusKm(current, claimRadiusMaxKm))
+    const previousLimit = previousClaimLimitRef.current
+    previousClaimLimitRef.current = claimRadiusMaxKm
+    setRadiusKm(current => claimRadiusAfterEntitlementChange(
+      current,
+      claimRadiusMaxKm,
+      previousLimit,
+      3,
+    ))
   }, [claimRadiusMaxKm])
 
   // The cube's back: one screen at a time, closing from the first. Matches

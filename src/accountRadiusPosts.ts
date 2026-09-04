@@ -8,8 +8,8 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import { webDb } from './webFirebase'
+import { clampRadiusMeters } from './worldRadius'
 
-const MAX_RADIUS_METERS = 40_075_000
 
 export interface AccountRadiusPostDocument {
   id: string
@@ -26,10 +26,28 @@ function finite(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-/** Match the radius field precedence used by the Map, Watch and Wear clients. */
+/**
+ * What ONE post contributes to the account's entitlement — the ground this
+ * account may claim on its next post.
+ *
+ * Entitlement counts earned radius only. A post's reach is its discovery seed
+ * plus what it earned, but the seed is granted, not earned: if it counted here,
+ * publishing would mint entitlement, and a thousand posts at a 5 km seed would
+ * be 5,000 km of claim power that nobody ever looked at.
+ *
+ * A post from before seeds existed has no seed field, so its whole radius is
+ * earned and it contributes exactly what it always did.
+ */
 export function radiusKmFromAccountPost(row: DocumentData): number {
-  const rawMeters = finite(row.radiusMeters ?? row.radius ?? row.organicRadiusMeters) ?? 0
-  return Math.max(0, Math.min(MAX_RADIUS_METERS, rawMeters)) / 1_000
+  const declaredEarned = finite(row.organicRadiusMeters)
+  const total = finite(row.radiusMeters ?? row.radius) ?? 0
+  const seed = Math.max(0, finite(row.seedRadiusMeters) ?? 0)
+  const earnedMeters = declaredEarned === null
+    ? Math.max(0, total - seed)
+    : Math.max(0, declaredEarned)
+  // Clamped into the radius scale (its ceiling is the Earth's radius) — the
+  // same rule every other radius reader applies, see worldRadius.ts.
+  return clampRadiusMeters(earnedMeters) / 1_000
 }
 
 export function accountRadiusSnapshotFromDocuments(

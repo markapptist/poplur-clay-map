@@ -4,6 +4,7 @@ import UploadStatusView from './UploadStatusView'
 import { playPop } from './pop'
 import {
   CLAIM_RADIUS_STEP_KM,
+  claimRadiusAfterEntitlementChange,
   clampClaimRadiusKm,
   formatClaimRadiusKm,
   preferredClaimRadiusKm,
@@ -337,8 +338,18 @@ export default function UploadFlowReview() {
     if (currentComposerStep) setComposerRouteStep(currentComposerStep)
   }, [currentComposerStep])
 
+  // Same late-arriving entitlement as the shipping composer: adopt the default
+  // when the total lands, instead of staying stuck at the zero it opened with.
+  const previousClaimLimitRef = useRef(claimRadiusMaxKm)
   useEffect(() => {
-    setRadius(currentRadius => clampClaimRadiusKm(currentRadius, claimRadiusMaxKm))
+    const previousLimit = previousClaimLimitRef.current
+    previousClaimLimitRef.current = claimRadiusMaxKm
+    setRadius(currentRadius => claimRadiusAfterEntitlementChange(
+      currentRadius,
+      claimRadiusMaxKm,
+      previousLimit,
+      SAMPLE_TARGET.radiusKm ?? 3.5,
+    ))
   }, [claimRadiusMaxKm])
 
   const setAuthorizedRadius = useCallback((nextRadius: number) => {

@@ -1837,6 +1837,7 @@ export default function FeedTwin({
       className={styles.feed}
       data-poplur-screen="feed"
       data-feed-post-id={post?.id}
+      data-feed-post-owner={post?.ownerId}
       onWheel={onWheel}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

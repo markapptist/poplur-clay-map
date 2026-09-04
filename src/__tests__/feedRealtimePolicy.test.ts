@@ -31,4 +31,11 @@ describe('production Feed realtime policy', () => {
   it('exposes the visible Firestore post id for shared-backend proof', () => {
     expect(source).toContain('data-feed-post-id={post?.id}')
   })
+
+  // Profile-visit and message flows act on the poster, so a test (or any
+  // observer) must be able to see WHICH account the visible post belongs to,
+  // not infer it from a handle that two accounts could share.
+  it('exposes the visible post owner alongside its id', () => {
+    expect(source).toContain('data-feed-post-owner={post?.ownerId}')
+  })
 })

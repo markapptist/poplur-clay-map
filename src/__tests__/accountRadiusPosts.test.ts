@@ -29,3 +29,30 @@ describe('authoritative account post radius', () => {
     expect(radiusKmFromAccountPost({ radius: Number.NaN })).toBe(0)
   })
 })
+
+describe('entitlement counts earned radius, never a seed', () => {
+  it('excludes a discovery seed from what the account may claim', () => {
+    // A brand-new post: seeded so it can be found, earning nothing yet.
+    expect(radiusKmFromAccountPost({ radius: 5_000, seedRadiusMeters: 5_000, organicRadiusMeters: 0 })).toBe(0)
+    // The same post after a stranger's like: only the earned kilometre counts.
+    expect(radiusKmFromAccountPost({ radius: 6_000, seedRadiusMeters: 5_000, organicRadiusMeters: 1_000 })).toBe(1)
+  })
+
+  it('gives volume no claim power at all', () => {
+    const spam = Array.from({ length: 1_000 }, () => ({
+      radius: 5_000, seedRadiusMeters: 5_000, organicRadiusMeters: 0,
+    }))
+    const total = spam.reduce((sum, post) => sum + radiusKmFromAccountPost(post), 0)
+    expect(total).toBe(0)
+  })
+
+  it('leaves posts from before seeds existed exactly as they were', () => {
+    expect(radiusKmFromAccountPost({ radius: 4_000 })).toBe(4)
+    expect(radiusKmFromAccountPost({ radiusMeters: 12_500 })).toBe(12.5)
+  })
+
+  it('falls back to total minus seed when the earned field is missing', () => {
+    expect(radiusKmFromAccountPost({ radius: 7_000, seedRadiusMeters: 5_000 })).toBe(2)
+    expect(radiusKmFromAccountPost({ radius: 3_000, seedRadiusMeters: 5_000 })).toBe(0)
+  })
+})
