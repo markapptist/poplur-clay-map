@@ -77,21 +77,21 @@
    * on the smallest phones the floors already consume the column, and a seam
    * that insisted on 10px would push the rail's last buttons INTO the stepper
    * — the one outcome worse than touching. */
-  /* Eleven equal rows — six rail buttons above, the stepper's five below (its
-   * readout counts as a row) — with one gap between every neighbour, and the
+  /* Twelve equal rows — six rail buttons above, the stepper's six below (each
+   * of its two readouts counts as a row) — with one gap between every neighbour, and the
    * seam between the rail and the stepper is that same gap. Equal spacing is
    * the whole point: a shorter readout row or a wider seam reads as a column
    * that was never lined up. Tiles shrink to a 40px floor before anything
    * touches. */
   --poplur-feed-ctl: clamp(
     40px,
-    calc((var(--poplur-feed-column) - 10 * 6px) / 11),
+    calc((var(--poplur-feed-column) - 11 * 6px) / 12),
     64px
   );
   --poplur-feed-number: var(--poplur-feed-ctl);
   --poplur-feed-gap: clamp(
     2px,
-    calc((var(--poplur-feed-column) - 11 * var(--poplur-feed-ctl)) / 10),
+    calc((var(--poplur-feed-column) - 12 * var(--poplur-feed-ctl)) / 11),
     16px
   );
   --poplur-feed-seam: var(--poplur-feed-gap);

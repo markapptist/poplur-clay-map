@@ -41,6 +41,7 @@ import SideControlIconButton from './SideControlIcon'
 import PoplurStatusToast from './PoplurStatusToast'
 import FeedChannelRail from './FeedChannelRail'
 import FeedChannelStep from './FeedChannelStep'
+import { nextFilledChannelIndex } from './feedChannelSelection'
 import { VERIFIED_CHECK_SRC, verifiedKindForHandle } from './verifiedCheck'
 import PostActionRail from './PostActionRail'
 import { useControlSide, type ControlSide } from './controlPlacement'
@@ -542,6 +543,9 @@ export default function FeedTwin({
   }, [storedDiscovery.mode])
   const [, setLocationRevision] = useState(0)
   const contentIdxRef = useRef<Record<string, number>>({})
+  // Which way the person last stepped the dial, so steering past an empty
+  // channel keeps going the way they were going.
+  const lastChannelDirRef = useRef<1 | -1>(1)
   const [contentRevision, forceContentRender] = useState(0)
 
   // A Discovery post result is a direct navigation, not a recommendation
@@ -736,7 +740,6 @@ export default function FeedTwin({
   // audio focus and record the skip — a jump that skipped that bookkeeping left
   // the previous channel's clip decoding behind the new one.
   const goToChannel = useCallback((next: number) => {
-    userPickedChannelRef.current = true
     if (next === index || next < 0 || next > CHANNELS.length - 1) return
     const currentPosts = rankedPostsFor(
       ch,
@@ -758,10 +761,16 @@ export default function FeedTwin({
   }, [ch, focusedContent, index, onIndexChange, publishedPosts])
 
   // The dial is a loop: up from the highest channel lands on the first, down
-  // from the first on the highest. No dead end at either edge.
+  // from the first on the highest. No dead end at either edge — and no dead
+  // channel either: a step keeps going in its direction past channels with
+  // nothing in reach, because the feed should always be showing something.
   const change = useCallback((dir: 1 | -1) => {
-    goToChannel((index + dir + CHANNELS.length) % CHANNELS.length)
-  }, [goToChannel, index])
+    lastChannelDirRef.current = dir
+    const snapshot = radiusDiscoverySnapshot()
+    const isFilled = (candidate: number) =>
+      rankedPostsFor(CHANNELS[candidate], publishedPosts, snapshot).some(post => !post.demo)
+    goToChannel(nextFilledChannelIndex(CHANNELS.length, index, dir, isFilled))
+  }, [goToChannel, index, publishedPosts])
 
   const toggleMute = () => {
     const next = !muted
@@ -861,13 +870,13 @@ export default function FeedTwin({
   const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
   // The byline's mark: the supplied check, by the same rule the profile uses.
   const bylineVerified = verifiedKindForHandle(post?.user, ownHandle)
-  // Never open on an empty channel — and "empty" means nothing IN REACH: a
+  // Never sit on an empty channel — and "empty" means nothing IN REACH: a
   // channel full of pops that cannot reach the viewer is empty to them, and
-  // demo padding does not count. Keep steering to the first channel with a
-  // real pop in reach until the person picks a channel themselves (the pool,
-  // the location fix and the simulation switch all arrive after open, so this
-  // must re-run, not fire once). A Map handoff names its own channel.
-  const userPickedChannelRef = useRef(false)
+  // demo padding does not count. Whenever the channel under the viewer has
+  // nothing, steer to the nearest one with a real pop in reach, in the
+  // direction they were last stepping (the pool, the location fix and the
+  // simulation switch all arrive after open, so this must re-run, not fire
+  // once). A Map handoff names its own channel and is left alone.
   const liveSimulation = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
   const [viewerFixTick, setViewerFixTick] = useState(0)
   useEffect(() => {
@@ -882,14 +891,19 @@ export default function FeedTwin({
   useEffect(() => {
     void liveSimulation
     void viewerFixTick
-    if (userPickedChannelRef.current || focusedContent || publishedPosts.length === 0) return
+    if (focusedContent || publishedPosts.length === 0) return
     const filledInReach = (channel: Channel) =>
       rankedPostsFor(channel, publishedPosts, discovery).some(post => !post.demo)
     if (filledInReach(ch)) return
-    const first = CHANNELS.findIndex(filledInReach)
-    if (first < 0 || first === index) return
-    if (onIndexChange) onIndexChange(first)
-    else setOwnIndex(first)
+    const next = nextFilledChannelIndex(
+      CHANNELS.length,
+      index,
+      lastChannelDirRef.current,
+      candidate => filledInReach(CHANNELS[candidate]),
+    )
+    if (next === index || !filledInReach(CHANNELS[next])) return
+    if (onIndexChange) onIndexChange(next)
+    else setOwnIndex(next)
   }, [ch, discovery, focusedContent, index, liveSimulation, onIndexChange, publishedPosts, viewerFixTick])
   // Going to a channel is seeing what it holds: the badge on its tile comes
   // off on arrival, not one pop at a time. The pop actually on screen is
@@ -2065,6 +2079,8 @@ export default function FeedTwin({
           onChannelDown={() => change(-1)}
           onPostPrevious={() => handleEdgeTap('left')}
           onPostNext={() => handleEdgeTap('right')}
+          postIndex={posts.length ? (contentIdxRef.current[ch.id] ?? 0) % posts.length : 0}
+          postCount={posts.length}
         />
         <FeedChannelRail
           activeIndex={index}

@@ -98,6 +98,9 @@ export default function ClayWheel({
   const velocityRef = useRef(0)
   const snapIndexRef = useRef<number | null>(null)
   const draggingRef = useRef(false)
+  // True while the wheel is travelling to a selection made elsewhere (the
+  // stepper on the other edge). The notches crossed on the way are not picks.
+  const glideRef = useRef(false)
   const dragYRef = useRef(0)
   const lastScrubRef = useRef(0)
   const downPtRef = useRef({ x: 0, y: 0 })
@@ -128,6 +131,12 @@ export default function ClayWheel({
     offsetRef.current = o
     scheduleOffsetPaint()
     const notch = ((Math.round(o) % n) + n) % n
+    if (glideRef.current) {
+      // The lit tile moves with the wheel so the travel reads as travel, but
+      // nothing on the way is a pick and nothing on the way pops.
+      setSelected(notch)
+      return
+    }
     if (notch !== lastNotchRef.current) {
       lastNotchRef.current = notch
       setSelected(notch)
@@ -140,6 +149,7 @@ export default function ClayWheel({
   const scrub = (deltaY: number) => {
     if (countRef.current <= 1 || Math.abs(deltaY) < 0.25) return
     snapIndexRef.current = null
+    glideRef.current = false
     const now = performance.now() / 1000
     const dt = Math.max(now - lastScrubRef.current, 1 / 120)
     lastScrubRef.current = now
@@ -159,20 +169,33 @@ export default function ClayWheel({
   }
 
   // An external selection change (the stepper on the other edge, a restored
-  // session, a reordered catalog) JUMPS the wheel there, the way the hold
-  // menu does. Spinning would cross every notch in between and report each
-  // one as a pick — one external change fanning out into N selections and N
-  // pops. Our own onSelect echo lands on the notch we already hold and is a
-  // no-op here.
+  // session, a reordered catalog) TRAVELS the wheel there, so the dial is
+  // seen to move to the channel rather than flip. It used to jump, because
+  // spinning would cross every notch in between and report each as a pick;
+  // the glide mode in applyOffsetDelta crosses them silently, so one external
+  // change is still exactly one selection. The notch is claimed up front, so
+  // our own onSelect echo on arrival is a no-op. A viewer who asked for
+  // reduced motion, or who is mid-drag, still gets the jump.
   useEffect(() => {
     const index = items.findIndex(item => item.id === selectedId)
     if (index < 0 || index === lastNotchRef.current) return
     velocityRef.current = 0
-    snapIndexRef.current = null
-    offsetRef.current = index
+    const reduceMotion = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (reduceMotion || draggingRef.current) {
+      snapIndexRef.current = null
+      glideRef.current = false
+      offsetRef.current = index
+      lastNotchRef.current = index
+      setOffset(index)
+      setSelected(index)
+      return
+    }
     lastNotchRef.current = index
-    setOffset(index)
-    setSelected(index)
+    glideRef.current = true
+    snapIndexRef.current = index
+    ensureLoop()
   }, [items, selectedId])
 
   // Momentum + snap, on the governed clock — but only WHILE the wheel moves.
@@ -195,7 +218,15 @@ export default function ClayWheel({
         let d = (snapIndexRef.current - o) % n
         if (d > n / 2) d -= n
         if (d <= -n / 2) d += n
-        if (Math.abs(d) < 0.001) { applyOffsetDelta(d); snapIndexRef.current = null; stopLoop() }
+        if (Math.abs(d) < 0.001) {
+          applyOffsetDelta(d)
+          snapIndexRef.current = null
+          if (glideRef.current) {
+            glideRef.current = false
+            setSelected(lastNotchRef.current)
+          }
+          stopLoop()
+        }
         else applyOffsetDelta(d * ease)
         return
       }

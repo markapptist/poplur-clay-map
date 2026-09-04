@@ -22,6 +22,8 @@ export default function FeedChannelStep({
   onChannelDown,
   onPostPrevious,
   onPostNext,
+  postIndex,
+  postCount,
 }: {
   side: ControlSide
   channelNumber: number
@@ -30,6 +32,9 @@ export default function FeedChannelStep({
   onChannelDown: () => void
   onPostPrevious: () => void
   onPostNext: () => void
+  /** Where the visible post sits among the people posting on this channel. */
+  postIndex: number
+  postCount: number
 }) {
   return (
     <div
@@ -66,6 +71,12 @@ export default function FeedChannelStep({
         imageStyle={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'rotate(-90deg)' }}
         onActivate={onPostPrevious}
       />
+      {/* The same readout the channel pair has: which post this is among the
+          ones on the channel, so stepping through them is a position, not a
+          blind tap. */}
+      <span className={styles.number} aria-hidden="true" data-feed-post-readout="">
+        {postCount > 0 ? `${postIndex + 1}/${postCount}` : '–'}
+      </span>
       <SideControlIconButton
         icon="global.channel_down"
         aria-label="Next post"

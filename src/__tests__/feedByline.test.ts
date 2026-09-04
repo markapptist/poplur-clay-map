@@ -30,17 +30,22 @@ describe('feed byline', () => {
 
   it('never opens on an empty channel', () => {
     const tsx = read('FeedTwin.tsx')
-    expect(tsx).toContain('const first = CHANNELS.findIndex(filledInReach)')
+    // Steering is directional and keeps working after a pick: land on an
+    // empty channel and the feed moves on to the nearest one with a pop.
+    expect(tsx).toContain('nextFilledChannelIndex(')
+    expect(tsx).not.toContain('userPickedChannelRef')
     expect(tsx).toContain('rankedPostsFor(channel, publishedPosts, discovery).some(post => !post.demo)')
   })
 
   it('loops the channels at both ends', () => {
     const tsx = read('FeedTwin.tsx')
-    expect(tsx).toContain('goToChannel((index + dir + CHANNELS.length) % CHANNELS.length)')
+    // The wrap lives in nextFilledChannelIndex now, which also steps past
+    // channels with nothing in reach in the direction of travel.
+    expect(tsx).toContain('goToChannel(nextFilledChannelIndex(CHANNELS.length, index, dir, isFilled))')
     expect(tsx).not.toContain('Math.min(CHANNELS.length - 1, index + dir)')
   })
 
-  it('keeps the left column on eleven equal rows', () => {
+  it('keeps the left column on twelve equal rows', () => {
     const css = read('index.css')
     expect(css).toContain('--poplur-feed-number: var(--poplur-feed-ctl);')
     expect(css).toContain('--poplur-feed-seam: var(--poplur-feed-gap);')

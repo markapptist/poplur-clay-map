@@ -60,7 +60,7 @@ export default function PostActionRail({
       side={side}
       label={label}
       fill
-      fillReserveBelow="calc(4 * var(--poplur-feed-ctl) + var(--poplur-feed-number) + 4 * var(--poplur-feed-gap) + var(--poplur-feed-seam))"
+      fillReserveBelow="calc(4 * var(--poplur-feed-ctl) + 2 * var(--poplur-feed-number) + 5 * var(--poplur-feed-gap) + var(--poplur-feed-seam))"
     >
       <SideControlIconButton
         fluid
