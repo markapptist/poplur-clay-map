@@ -72,6 +72,8 @@ export function distinctOwnerColor(ownerId: string, viewerColor: string | null |
 }
 
 export interface LiveMapPostPin extends PopPin {
+  /** A synthetic beta-cohort post; reaches every viewer while the simulation switch is on. */
+  syntheticCohort?: true
   source: 'firestore'
   createdAtMs: number
 }
@@ -232,6 +234,7 @@ export function normalizeLiveMapPost(
     source: 'firestore',
     createdAtMs,
     syntheticPostId: syntheticJourney ? id : undefined,
+    syntheticCohort: row.syntheticJourney === 'five-actor-live' || row.syntheticBeta === true ? true : undefined,
   }
 }
 
@@ -275,6 +278,7 @@ export function nativeFeedPostsToMapPins(
       audience: 'public',
       status: 'published',
       syntheticJourney: post.syntheticJourney,
+      syntheticBeta: post.syntheticCohort === true,
       pinColor: post.pinColor,
     }, ownUid, { allowSyntheticOnboarding: syntheticOnly })
     return pin ? [pin] : []
@@ -288,11 +292,12 @@ export function nativeFeedPostsToMapPins(
  * does not reaches the viewer on neither.
  */
 export function liveMapPinReachesViewer(
-  pin: Pick<LiveMapPostPin, 'coords' | 'radiusKm'>,
+  pin: Pick<LiveMapPostPin, 'coords' | 'radiusKm' | 'syntheticCohort'>,
   viewerCoords: readonly [number, number] | null,
 ): boolean {
   return feedPostReachesViewer({
     radiusMeters: pin.radiusKm * 1_000,
+    syntheticCohort: pin.syntheticCohort === true,
     locationVisibility: 'approximate',
     originLatitude: pin.coords[1],
     originLongitude: pin.coords[0],

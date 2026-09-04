@@ -173,6 +173,7 @@ import { KM_TO_MI, shouldUseMiles } from './units'
 import { playClaimDecay, playClaimGrowth } from './motionEffectsAudio'
 import styles from './App.module.css'
 import dropStyles from './ClayMap.module.css'
+import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
 
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string
@@ -3183,7 +3184,9 @@ export default function MapApp() {
   // Other users keep their own colour: it is their identity, not your setting.
   const [myColor, setMyColor] = useState(() => takeoverTint(PALETTE.pinkHot))
   useEffect(() => onTakeoverColor(() => setMyColor(takeoverTint(PALETTE.pinkHot))), [])
+  const liveSimulation = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
   const mapPins = useMemo(() => {
+    void liveSimulation // test mode changes what reaches the viewer
     // Every colour you are already using, so nobody else can be handed one.
     const myPinColours = new Set<PinColorId | 'default'>(
       liveMapPosts.filter(pin => pin.mine).map(pin => pin.pinColor ?? 'default'),
@@ -3226,7 +3229,7 @@ export default function MapApp() {
             ? pin.pinColor
             : otherOwnerPinColor(pin.ownerId ?? pin.id, myPinColours),
       }))
-  }, [currentLocation, liveMapPosts, myColor, ownAvatar, ownSelfieVideo, pinRadiusPulse, popLevel])
+  }, [currentLocation, liveMapPosts, liveSimulation, myColor, ownAvatar, ownSelfieVideo, pinRadiusPulse, popLevel])
 
   // One route powers the horizontal arrows at every zoom. It comes from the
   // authoritative data, not the handful of DOM markers ClayMap keeps mounted

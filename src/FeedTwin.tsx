@@ -213,6 +213,7 @@ export interface ChannelPost {
    *  workbench simulation is on. It renders like a post but is never written
    *  back: no engagement, no discovery signal, no radius ledger entry. */
   demo?: boolean
+  syntheticCohort?: boolean
 }
 
 /** Production Feed rows come only from the shared Firestore snapshot. A wiped
@@ -241,6 +242,7 @@ export function feedPostsForChannel(
       locationVisibility: post.locationVisibility,
       originLatitude: post.originLatitude,
       originLongitude: post.originLongitude,
+      syntheticCohort: post.syntheticCohort === true,
     }))
 }
 
@@ -278,6 +280,7 @@ function rankedPostsFor(
     ...post,
     channelId: channel.id,
     radiusMeters: (post.reachKm ?? 0) * 1_000,
+    syntheticCohort: post.syntheticCohort === true,
   })), discovery, Date.now(), viewer)
   // Licensed demo media pads a channel that real uploads have not reached
   // yet. It is appended AFTER the ranked authentic posts and never mixed into

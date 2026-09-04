@@ -45,6 +45,9 @@ export interface NativeFeedPost {
    *  stands up the same pin the web does. */
   pinColor?: PinColorId
   syntheticJourney?: 'first-user-v1'
+  /** A synthetic beta-cohort post (the five-actor testers). Provenance only —
+   *  it relaxes nothing about URLs; the reach rule reads it in test mode. */
+  syntheticCohort?: true
 }
 
 type NativeFeedDetail = { posts?: unknown[] }
@@ -167,7 +170,9 @@ function normalizeFeedPost(
     && originLongitude != null
     && Math.abs(originLongitude) <= 180
 
+  const syntheticCohort = row.syntheticJourney === 'five-actor-live' || row.syntheticBeta === true
   return {
+    ...(syntheticCohort ? { syntheticCohort: true as const } : {}),
     id,
     ownerId,
     mediaURL,

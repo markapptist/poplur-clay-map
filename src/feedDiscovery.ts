@@ -1,4 +1,5 @@
 import { isWorldRadiusMeters } from './worldRadius'
+import { isLiveSimulationEnabled } from './simulationControl'
 
 export type FeedDiscoveryMode = 'radius' | 'local' | 'trending'
 
@@ -36,6 +37,8 @@ export interface FeedDiscoveryPost {
   /** Hidden origins are deliberately ineligible for Feed discovery. Delivery
    *  cannot prove earned reach without disclosing the origin privacy hides. */
   locationVisibility?: 'approximate' | 'hidden'
+  /** A synthetic beta-cohort post: in test mode it reaches every viewer. */
+  syntheticCohort?: boolean
 }
 
 interface StoredFeedDiscovery {
@@ -251,9 +254,15 @@ function score(
  */
 export function feedPostReachesViewer(
   post: Pick<FeedDiscoveryPost,
-    'radiusMeters' | 'locationVisibility' | 'originLatitude' | 'originLongitude'>,
+    'radiusMeters' | 'locationVisibility' | 'originLatitude' | 'originLongitude' | 'syntheticCohort'>,
   viewerCoords: readonly [number, number] | null | undefined,
 ): boolean {
+  // Test mode: the synthetic beta cohort's pops reach every viewer, wherever
+  // they stand, while the simulation switch is on. The cohort's pops are a few
+  // kilometres wide and posted around the world, so by the earned-reach rule a
+  // reviewer anywhere would see nothing at all — a board with no content is
+  // not a test of anything. Real pops keep the earned rule unchanged.
+  if (post.syntheticCohort === true && isLiveSimulationEnabled()) return true
   if (post.locationVisibility !== 'approximate' || !viewerCoords) return false
   const radiusMeters = post.radiusMeters
   const originLatitude = post.originLatitude

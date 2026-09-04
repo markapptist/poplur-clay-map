@@ -205,6 +205,7 @@ import {
 } from './testActivity'
 import { EARTH_RADIUS_KM } from './worldRadius'
 import { publishViewerFix } from './viewerFix'
+import { loadTestSimulation } from './testActivity'
 
 
 /**
@@ -3447,6 +3448,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     try { return window.localStorage.getItem('poplur.profile.selfieVideo') } catch { return null }
   })
   const [ownUid, setOwnUid] = useState<string | null>(() => accountSnapshot().uid)
+  // The private desk owns the simulation switch; mirror it here once the
+  // account is known so a reviewer's fresh install sees test mode too.
+  useEffect(() => {
+    if (!ownUid) return
+    void loadTestSimulation().catch(() => { /* offline or not a tester: local state stands */ })
+  }, [ownUid])
   useEffect(() => onAccountChange(account => setOwnUid(account.uid)), [])
   useEffect(() => {
     const onPhoto = (event: Event) => {
