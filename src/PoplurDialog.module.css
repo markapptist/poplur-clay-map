@@ -12,6 +12,11 @@
      pills and three actions must squeeze (the media flexes) or scroll rather
      than push its buttons off-screen. */
   max-height: 100%;
+  /* A grid/flex item's automatic minimum size is its own definite width, which
+     is how this card used to force the popup wrapper's column wider than the
+     screen. The wrapper's tracks are bounded now, and this keeps the card
+     honest anywhere else it is centred. */
+  min-width: 0;
   display: flex;
   flex-direction: column;
   pointer-events: none;
@@ -20,9 +25,16 @@
 .dialog {
   position: relative;
   width: 100%;
+  display: flex;
+  flex-direction: column;
   margin-top: 26px; /* room for the tab above the frame */
+  min-height: 0;
   max-height: calc(100% - 26px);
-  overflow-y: auto;
+  /* Deliberately NO overflow here. `overflow-y: auto` turned this frame into a
+     scroll container, and a scroll container clips its own absolutely
+     positioned children above the padding box — which is exactly where the P
+     tab sits (top: -26px). The tab was never clipped by the screen edge; it
+     was clipped by this element. The panel below does the scrolling. */
   padding: 12px;
   border-radius: 34px;
   background:
@@ -93,7 +105,12 @@
 .panel {
   display: flex;
   flex-direction: column;
+  /* The PANEL is what squeezes and then scrolls when the card is taller than
+     the room the wrapper centred it in. The pink frame around it must not,
+     or it clips its own tab (see .dialog). */
+  flex: 1 1 auto;
   gap: 12px;
+  min-height: 0;
   max-height: min(70vh, 640px);
   overflow: auto;
   padding: 40px 16px 16px;

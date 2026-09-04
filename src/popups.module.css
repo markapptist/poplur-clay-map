@@ -66,6 +66,14 @@
   width: auto;
   padding: 10px var(--popup-safe-side);
   display: grid;
+  /* Same bound as .mapContentWrap, for the same reason: an implicit `auto`
+     track takes its size from the item's definite width, so the card grows
+     the column past this element's content box and every pixel of the
+     overflow lands on the right. The ad is min(286px, 100vw - 136px), and
+     136 is twice the FLOOR of --popup-safe-side rather than its computed
+     value, so at 393px wide it is 257px in a 251.5px box and sits ~5.5px
+     right of centre. */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   cursor: default;
 }
@@ -75,6 +83,22 @@
   inset: 0;
   display: grid;
   place-items: center;
+  /* BOTH tracks are bounded by this wrapper rather than by the card.
+     An implicit `auto` track takes its minimum size from the item, and a grid
+     item with a definite `width` contributes that width as its minimum — so
+     the 344px dialog grew the column to 344px inside a 251px content box. A
+     track that overflows starts at the padding edge, so every pixel of the
+     overflow went to the RIGHT: the card sat hard against the right edge with
+     its close button clipped and a rail-width gap on the left, while
+     `place-items: center` read as correct in this stylesheet. The block axis
+     did the same, which is why the `max-height: 100%` the dialog declares
+     never bound (the row simply grew to whatever the card wanted).
+     `minmax(0, 1fr)` pins each track to exactly the room the padding left, so
+     the dialog's own max-width/max-height resolve and the centring is real.
+     Measured at 393x852: card was 70.7..414.7 (21.7px past the right edge),
+     now 70.7..322.3 — dead centre. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   /* Centre within the room ABOVE the home chrome: the cube/counters band at
      the bottom is opaque UI, so a dialog centred on the raw viewport read as
      sitting low and clipped its own actions behind that band on device. */
