@@ -8,7 +8,7 @@
   256
  ],
  "style": "Glossy rounded 3D clay/plastic icons using Poplur hot pink, black, white, and selective weather accents.",
- "buttonCount": 41,
+ "buttonCount": 43,
  "weatherConditionCount": 14,
  "buttons": [
   {
@@ -506,6 +506,30 @@
     "1024": "assets/1024/news/top_latest.png",
     "512": "assets/512/news/top_latest.png",
     "256": "assets/256/news/top_latest.png"
+   }
+  },
+  {
+   "id": "camera.grid",
+   "asset": "camera/grid",
+   "screen": "Camera",
+   "purpose": "Toggle a rule-of-thirds composition grid over the live camera preview.",
+   "accessibilityLabel": "Composition grid",
+   "files": {
+    "256": "assets/256/camera/grid.png",
+    "512": "assets/512/camera/grid.png",
+    "1024": "assets/1024/camera/grid.png"
+   }
+  },
+  {
+   "id": "camera.timer",
+   "asset": "camera/timer",
+   "screen": "Camera",
+   "purpose": "Arm a ten-second countdown before the shutter fires, so the photographer can get into the shot.",
+   "accessibilityLabel": "Ten second timer",
+   "files": {
+    "256": "assets/256/camera/timer.png",
+    "512": "assets/512/camera/timer.png",
+    "1024": "assets/1024/camera/timer.png"
    }
   }
  ],

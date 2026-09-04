@@ -36,6 +36,8 @@ export const SIDE_CONTROL_ICON_IDS = [
   'camera.camera_roll',
   'camera.kodak',
   'camera.camcorder',
+  'camera.grid',
+  'camera.timer',
   'profile.alerts',
   'profile.settings',
   'profile.camera',

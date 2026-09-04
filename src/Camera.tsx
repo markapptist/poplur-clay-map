@@ -386,6 +386,12 @@ export default function Camera({
   }, [])
 
   const [arFilter, setArFilter] = useState('none')
+  /** Rule-of-thirds lines over the live preview. Purely a viewfinder aid:
+   *  never drawn into the capture. */
+  const [gridOn, setGridOn] = useState(false)
+  /** Seconds left on the self-timer, or null when it is not running. */
+  const [timerLeft, setTimerLeft] = useState<number | null>(null)
+  const timerRef = useRef(0)
   const arFilterRef = useRef(arFilter)
   arFilterRef.current = arFilter
   // On iOS the preview is a native layer behind a transparent WebView, so the
@@ -1342,6 +1348,35 @@ export default function Camera({
     setFlashEnabled(false)
   }, [arFilter, detections, facing, flash, filterCss, liveSurfaceVisible, onPhotoCapture, setFlashEnabled])
 
+  // The ten-second self-timer. Pressing the button arms it; pressing again
+  // while it runs cancels. The count is spoken by the overlay and ticked by
+  // the house pop, and the shutter that fires at zero is the ordinary one —
+  // flash, review, roll, all as if the button had been pressed then.
+  const cancelTimer = useCallback(() => {
+    if (timerRef.current) window.clearInterval(timerRef.current)
+    timerRef.current = 0
+    setTimerLeft(null)
+  }, [])
+  const armTimer = useCallback(() => {
+    playPop()
+    if (timerRef.current) { cancelTimer(); return }
+    let left = 10
+    setTimerLeft(left)
+    timerRef.current = window.setInterval(() => {
+      left -= 1
+      if (left > 0) {
+        setTimerLeft(left)
+        playPop(0.2)
+        return
+      }
+      window.clearInterval(timerRef.current)
+      timerRef.current = 0
+      setTimerLeft(null)
+      capturePhoto()
+    }, 1000)
+  }, [cancelTimer, capturePhoto])
+  useEffect(() => () => { if (timerRef.current) window.clearInterval(timerRef.current) }, [])
+
   // ── record ───────────────────────────────────────────────────────────────
   const stopVideo = useCallback(() => {
     const rec = recorderRef.current
@@ -1801,6 +1836,19 @@ export default function Camera({
       {flash && facing === 'user' && <div className={styles.camFlashEdge} aria-hidden="true" />}
       {/* …and the bloom at the instant of capture — the front camera's flash */}
       {bloom && <div className={styles.camBloom} aria-hidden="true" />}
+      {/* Composition grid and the self-timer's count, over the preview and
+          under the controls. Neither is part of the capture. */}
+      {real && gridOn && <div className={styles.camGrid} aria-hidden="true" />}
+      {real && timerLeft != null && (
+        <div
+          className={styles.camCountdown}
+          role="timer"
+          aria-live="assertive"
+          aria-label={`Taking the photo in ${timerLeft} seconds`}
+        >
+          {timerLeft}
+        </div>
+      )}
 
       {/* Fill, as the feed's rail does: this column now carries the stepper
           under it (CameraStepControls — the feed's inner arrows doing the
@@ -1969,6 +2017,29 @@ export default function Camera({
           side={controlSide === 'left' ? 'right' : 'left'}
           active={arFilter}
           onPick={setArFilter}
+          head={(
+            <>
+              <SideControlIconButton
+                icon="camera.grid"
+                aria-label={gridOn ? 'Hide the composition grid' : 'Show the composition grid'}
+                aria-pressed={gridOn}
+                activation="pointerdown"
+                onActivate={() => { playPop(); setGridOn(on => !on) }}
+              />
+              {/* Photo only: the video camera has no single instant to wait
+                  for, so the timer stays dark while the camcorder is up. */}
+              <SideControlIconButton
+                icon="camera.timer"
+                aria-label={timerLeft != null
+                  ? `Cancel the timer, ${timerLeft} seconds left`
+                  : 'Take the photo after a ten second countdown'}
+                aria-pressed={timerLeft != null}
+                disabled={captureMode !== 'photo'}
+                activation="pointerdown"
+                onActivate={armTimer}
+              />
+            </>
+          )}
         />
       )}
       {/* ONE persistent AI line. Keep the latest real reading between the

@@ -1260,3 +1260,35 @@
   background: #4dff69;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
 }
+
+/* ── camera: composition grid + self-timer ───────────────────────────────── */
+.camGrid {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.55) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.55) 1px, transparent 1px);
+  background-size: 33.3334% 33.3334%;
+  background-position: -1px -1px;
+  mix-blend-mode: screen;
+}
+
+.camCountdown {
+  position: absolute;
+  left: 50%;
+  top: 38%;
+  z-index: 41;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  color: #fff;
+  font: 950 96px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  text-shadow: 0 4px 0 #b3145f, 0 10px 30px rgba(0, 0, 0, 0.55);
+  animation: camCountBeat 1s ease-out infinite;
+}
+
+@keyframes camCountBeat {
+  from { transform: translate(-50%, -50%) scale(1.18); opacity: 1; }
+  to { transform: translate(-50%, -50%) scale(1); opacity: 0.92; }
+}

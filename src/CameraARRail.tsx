@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import ClayWheel from './ClayWheel'
 import type { ControlSide } from './controlPlacement'
 import { AR_FILTERS } from './ARFilters'
@@ -32,10 +32,16 @@ export default function CameraARRail({
   side,
   active,
   onPick,
+  head,
 }: {
   side: ControlSide
   active: string
   onPick: (id: string) => void
+  /** Controls that stand at the TOP of this column, above the wheel — the
+   *  camera's grid and timer. They are this column's because they are about
+   *  the shot's composition, the way the filters are, and the other rail is
+   *  already full. */
+  head?: ReactNode
 }) {
   const [, setCatalogRevision] = useState(0)
 
@@ -80,6 +86,15 @@ export default function CameraARRail({
       {/* The camera owns pinch and tap-to-focus on the surface beneath. The
           wheel handles its own pointer first (bubbling), then this stops the
           gesture reaching the viewfinder so a scrub never refocuses the shot. */}
+      {head && (
+        <div
+          className={styles.head}
+          onPointerDown={event => event.stopPropagation()}
+          onClick={event => event.stopPropagation()}
+        >
+          {head}
+        </div>
+      )}
       <div
         className={styles.wheelBox}
         onPointerDown={event => event.stopPropagation()}
