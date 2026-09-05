@@ -1162,6 +1162,18 @@
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
 }
 
+/* The growth line sits between the pop's title and the browse hint, on the
+   viewer's dark ground: the curve reads in the pink the takeover pulse uses
+   when a pop is growing, and in the map's blue when it has shrunk. */
+.viewerGrowth {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 142px;
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+
 .viewerHint {
   position: absolute;
   left: 0;

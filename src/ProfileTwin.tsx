@@ -90,6 +90,8 @@ import { getLibraryNewest, onCameraStore } from './cameraStore'
 import { readVerification } from './profileVerification'
 import { VERIFIED_CHECK_LABEL, VERIFIED_CHECK_SRC, verifiedCheckKind, type VerifiedCheckKind } from './verifiedCheck'
 import { businessDirectorySnapshot, subscribeBusinessDirectory } from './businessDirectory'
+import PostGrowthLine from './PostGrowthLine'
+import { shouldUseMiles } from './units'
 import PoplurDialog from './PoplurDialog'
 import { blockUser, reportUser } from './blockedUsers'
 
@@ -2877,6 +2879,14 @@ export default function ProfileTwin({
             <span className={styles.viewerCh}>{viewerPost.ch}</span>
           </div>
           <p className={styles.viewerTitle}>{viewerPost.title}</p>
+          {/* How this pop grew: its own server-written history, from the reach
+              it was posted with to the reach it holds now. A pop with no
+              history yet shows nothing rather than a guess. */}
+          <PostGrowthLine
+            postId={viewerPost.id ?? null}
+            useMiles={shouldUseMiles()}
+            className={styles.viewerGrowth}
+          />
           {viewerCaptionsOn && (
             <p className={styles.viewerCaptions} aria-live="polite">{viewerPost.title}</p>
           )}
