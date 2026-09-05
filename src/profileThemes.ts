@@ -78,9 +78,8 @@ const DEFAULT_GROUND =
  * boot and on every selection; the profile keeps its own local application
  * for its flip-side picker preview.
  */
-export function applyProfileThemeToDocument(theme: ProfileTheme): void {
-  if (typeof document === 'undefined') return
-  const root = document.documentElement
+/** Writes a theme's variables onto the document root. */
+function writeThemeVars(root: HTMLElement, theme: ProfileTheme): void {
   root.style.setProperty('--poplur-theme-accent', theme.primaryAccent)
   root.style.setProperty('--poplur-theme-accent-2', theme.secondaryAccent)
   // Ink follows the theme's authored foreground on a themed image; on the
@@ -97,6 +96,35 @@ export function applyProfileThemeToDocument(theme: ProfileTheme): void {
   )
   root.dataset.poplurTheme = theme.id
   root.dataset.poplurThemeActive = theme.backgroundSrc ? 'true' : 'false'
+}
+
+/** The theme whose background is currently being awaited, so a later
+ *  selection cannot be overwritten by an earlier image finishing late. */
+let awaitedThemeID: ProfileThemeID | null = null
+
+export function applyProfileThemeToDocument(theme: ProfileTheme): void {
+  if (typeof document === 'undefined') return
+  const root = document.documentElement
+  // A themed ground is a REMOTE image — the theme packs ship from Cloud
+  // Storage — and each theme's ink is authored FOR that image: Toy's is
+  // near-black, Icy Crystal's is dark slate. Applying the ink before the
+  // image has painted, or when it never paints at all (offline, a cold start,
+  // a bucket hiccup), leaves authored ink standing on the app's own near-black
+  // ground. Every themed account then opened Profile to an unreadable black
+  // screen — the text was there the whole time, drawn in a colour that had
+  // lost the background it was written for (5 Sep 2026).
+  //
+  // So the ink never outruns its ground: paint the safe default, and upgrade
+  // to the theme only once its image has actually decoded. The stored choice
+  // is untouched, so the theme returns by itself when the network does.
+  awaitedThemeID = theme.backgroundSrc ? theme.id : null
+  if (!theme.backgroundSrc) { writeThemeVars(root, theme); return }
+  if (typeof Image === 'undefined') { writeThemeVars(root, theme); return }
+  writeThemeVars(root, DEFAULT_PROFILE_THEME)
+  const probe = new Image()
+  probe.onload = () => { if (awaitedThemeID === theme.id) writeThemeVars(root, theme) }
+  // onerror needs no branch: the default ground is already what is painted.
+  probe.src = theme.backgroundSrc
 }
 
 export function profileThemeForID(value: unknown): ProfileTheme {
