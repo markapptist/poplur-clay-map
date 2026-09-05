@@ -135,7 +135,10 @@ export async function blockUser(who: { uid?: string | null; username?: string | 
 export interface BlockedUserEntry { uid?: string; handle?: string }
 export function blockedUserEntries(): readonly BlockedUserEntry[] {
   load()
-  return entries.map(e => ({ ...e }))
+  // React compares external-store snapshots by identity. The entries array
+  // is replaced by writes; copying it here makes every read look like a
+  // change and crashes Settings (including Profile last-page resume).
+  return entries
 }
 
 /**

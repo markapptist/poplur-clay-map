@@ -5,6 +5,18 @@ import { visitedProfilePhoto } from '../profileRealtimePosts'
 describe('blocking someone from their profile', () => {
   beforeEach(() => resetBlockedUsersForTests())
 
+  it('keeps the Settings snapshot stable between writes', async () => {
+    const empty = blockedUserEntries()
+    expect(blockedUserEntries()).toBe(empty)
+    await blockUser({ username: '@snapshot-test' })
+    const blocked = blockedUserEntries()
+    expect(blocked).not.toBe(empty)
+    expect(blockedUserEntries()).toBe(blocked)
+    await unblockUser({ username: '@snapshot-test' })
+    expect(blockedUserEntries()).not.toBe(blocked)
+    expect(blockedUserEntries()).toBe(blockedUserEntries())
+  })
+
   it('blocks by uid at once, remembers the handle, and tells subscribers', async () => {
     let told = 0
     const stop = onBlockedUsersChange(() => { told += 1 })
