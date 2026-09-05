@@ -2,12 +2,15 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
-const composeStart = source.indexOf('const COMPOSE_RADIUS_SOURCE')
-// End at the first declaration AFTER the compose-radius block rather than at a
-// far-away comment. The old '// Clay flyers:' marker left every feature added
-// in between inside the slice, so an unrelated reach ring — which is entitled
-// to draw a line layer — failed a rule that only ever governed the composer's
-// own takeover paint.
+// Anchor on the composer's own install function, not on the
+// COMPOSE_RADIUS_SOURCE constant far above it. Anchoring on the constant let
+// the slice swallow every feature later declared between it and the compose
+// code — the pin spotlight and the owner route, each of which is entitled to
+// draw a line — so they failed a rule that only ever governed the composer's
+// takeover paint. That is the same defect this slice was narrowed for once
+// before, and it returns whenever someone adds a feature in between; keying
+// on the function makes the slice describe what the rule is actually about.
+const composeStart = source.indexOf('export function installComposeRadiusPreview')
 const composeEnd = source.indexOf('function readBridgeLocation', composeStart)
 const composeSource = source.slice(composeStart, composeEnd)
 
@@ -18,7 +21,10 @@ describe('map composer ownership paint', () => {
     expect(composeSource).toContain('ownershipTerrainPolygon(')
     expect(composeSource).toMatch(/type:\s*'fill'/)
     expect(composeSource).not.toMatch(/type:\s*'(?:line|circle|symbol)'/)
-    expect(composeSource).not.toMatch(/COMPOSE_RADIUS_(?:EDGE|LABEL|TEXTURE)/)
+    // A ring, label or texture pass for the composer must not exist anywhere,
+    // so this reads the whole file: a slice can drift, and the constant being
+    // declared at all is the thing worth failing on.
+    expect(source).not.toMatch(/const COMPOSE_RADIUS_(?:EDGE|LABEL|TEXTURE)/)
   })
 
   it('recolours the terrain, roads and ordinary buildings inside the selected parcel', () => {

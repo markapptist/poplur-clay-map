@@ -104,9 +104,20 @@ describe('production ownership terrain', () => {
     expect(layers.map(layer => layer.id)).toEqual([
       'poplur-claims-fill',
       'poplur-claims-reveal',
+      'poplur-claims-edge',
       'poplur-claims-texture',
+      'poplur-claims-overview',
     ])
-    expect(new Set(layers.map(layer => layer.type))).toEqual(new Set(['fill']))
+    // Surface fills, plus the hairline that keeps two adjacent owners from
+    // reading as one blob (6b5f87b). That edge strokes the SAME polygon the
+    // fill already draws, which is what separates it from the legacy radius
+    // circle this rule exists to keep out: no rings, no rims, no circle
+    // cores, and no second source to hang them on. Asserting "every layer is
+    // a fill" was a proxy for that, and it outlawed the border too.
+    expect(layers.filter(layer => layer.type !== 'fill').map(layer => layer.id))
+      .toEqual(['poplur-claims-edge'])
+    expect(layers.every(layer => layer.source === 'poplur-claims')).toBe(true)
+    expect(layers.some(layer => layer.type === 'circle')).toBe(false)
     expect(layers.some(layer => /ring|rim|core/i.test(layer.id))).toBe(false)
     expect(layers.some(layer => /landmark/i.test(`${layer.id}:${layer.source ?? ''}`))).toBe(false)
     expect([...sources.keys()]).toEqual(['poplur-claims'])
