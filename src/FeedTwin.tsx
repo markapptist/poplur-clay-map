@@ -1114,7 +1114,7 @@ export default function FeedTwin({
         photoClock.current.completed = true
         advanceCompletedContent()
       }
-    }, 100)
+    }, 1000)
     return () => {
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', resetClock)
