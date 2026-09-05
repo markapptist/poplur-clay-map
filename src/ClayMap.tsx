@@ -204,7 +204,7 @@ export interface ClayMapProps {
   onWorldCountryChange?: (country: WorldCountryUpdate) => void
   /** A pin was tapped: go to that poster's profile, with this pop's post lit. */
   onPinOpen?: (pin: PopPin) => void
-  /** The owner key (ownerId ?? handle ?? 'self') whose label is currently
+  /** The displayed poster key (pinOwnerKey) whose label is currently
    *  armed, so every pin of that poster lights its handle. Null lights none. */
   focusedLabelUserKey?: string | null
   /** One data-backed focus that remains visible even when the underlying pin
@@ -6146,7 +6146,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // restarted five CSS transitions on every map frame.
       const markerRoot = document.createElement('div')
       markerRoot.className = `${styles.popPinMarker} ${styles.popPinMarkerReveal}`
-      markerRoot.dataset.dominationOwner = pin.ownerId ?? pin.user ?? 'self'
+      markerRoot.dataset.dominationOwner = pinOwnerKey(pin)
       markerRoot.dataset.mapPointId = `pin:${pin.id}`
       markerRoot.dataset.mapPointKind = 'pin'
       markerRoot.dataset.mapPointMine = pin.mine ? 'true' : 'false'

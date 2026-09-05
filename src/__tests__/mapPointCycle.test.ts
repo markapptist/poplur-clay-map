@@ -163,8 +163,8 @@ describe('unified Map point cycle', () => {
 })
 
 describe('traverse a poster’s pops from their map handle', () => {
-  it('groups a poster by account id, else handle, else self for your own pins', () => {
-    expect(pinOwnerKey({ ownerId: 'uid-9', user: '@runwayraw' })).toBe('uid-9')
+  it('groups by account and displayed handle, with identity fallbacks', () => {
+    expect(pinOwnerKey({ ownerId: 'uid-9', user: '@runwayraw' })).toBe(JSON.stringify(['uid-9', 'runwayraw']))
     expect(pinOwnerKey({ user: '@runwayraw' })).toBe('@runwayraw')
     expect(pinOwnerKey({ ownerId: null, user: null })).toBe('self')
   })
@@ -177,7 +177,7 @@ describe('traverse a poster’s pops from their map handle', () => {
       { id: 'b1', name: 'B one', coords: [-79.37, 43.65] as [number, number], mine: false, radiusKm: 9, ownerId: 'uid-b', user: '@bee' },
       { id: 'a2', name: 'A two', coords: [-79.36, 43.64] as [number, number], mine: false, radiusKm: 5, ownerId: 'uid-a', user: '@ay' },
     ]
-    const armed = 'uid-a'
+    const armed = pinOwnerKey(all[0])
     const route = buildMapPointCycle({
       currentLocation: null,
       pins: all.filter(pin => pinOwnerKey(pin) === armed),
@@ -191,15 +191,32 @@ describe('traverse a poster’s pops from their map handle', () => {
     expect(wrapped).toMatchObject({ point: { key: 'pin:a1' }, index: 0, total: 2 })
   })
 
-  it('wires the handle tap end to end: label control, toggle filter, highlight', () => {
-    // ClayMap: the handle takes the pointer and reports the tap up.
-    expect(clayMapSource).toContain('dominationTerritoryLabelTappable')
-    expect(clayMapSource).toContain('onPinLabelTapRef.current?.(pin)')
+  it('separates posters sharing a publishing account and wraps only their posts', () => {
+    const pins = ['@hauls', '@pitchside', '@hauls', '@sauceboss'].map((user, i) => ({
+      id: String(i), user, ownerId: 'shared-publisher', name: user,
+      coords: [0, 0] as [number, number], mine: false, radiusKm: 1,
+    }))
+    const selected = pinOwnerKey(pins[0])
+    const matching = pins.filter(pin => pinOwnerKey(pin) === selected)
+    expect(matching.map(pin => pin.id)).toEqual(['0', '2'])
+    const route = buildMapPointCycle({ currentLocation: null, pins: matching, landmarks: [] })
+    for (const direction of [-1, 1] as const) {
+      let key = 'pin:0'
+      for (let i = 0; i < 6; i++) {
+        const step = stepMapPointCycle(route, key, direction)!
+        expect(step.total).toBe(2)
+        expect(step.point.name).toBe('@hauls')
+        key = step.point.key
+      }
+    }
+    expect(pinOwnerKey({ ownerId: 'another-account', user: '@hauls' })).not.toBe(selected)
+    expect(pinOwnerKey({ ownerId: 'shared-publisher', user: ' HAULS ' })).toBe(selected)
+  })
+
+  it('uses the same identity for marker highlights and the arrow route', () => {
+    expect(clayMapSource).toContain('markerRoot.dataset.dominationOwner = pinOwnerKey(pin)')
     expect(clayMapSource).toContain('dominationTerritoryLabelActive')
-    // MapApp: the tap toggles the poster filter and the route honours it.
-    expect(mapAppSource).toContain('const handlePinLabelTap = useCallback((pin: PopPin)')
     expect(mapAppSource).toContain('pinOwnerKey(pin) === focusedUserKey')
-    expect(mapAppSource).toContain('onPinLabelTap={handlePinLabelTap}')
     expect(mapAppSource).toContain('focusedLabelUserKey={tourOn ? null : focusedUserKey}')
   })
 })
