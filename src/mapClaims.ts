@@ -7,6 +7,7 @@ import {
 import {
   DOMINANCE_DETAIL_MIN_ZOOM,
   DOMINANCE_GROUND_SLOT,
+  DOMINANCE_OVERVIEW_MAX_ZOOM,
   dominanceFillOpacityExpression,
   dominanceInsertBefore,
   dominancePower,
@@ -51,6 +52,7 @@ const CLAIMS_FILL = 'poplur-claims-fill'
 const CLAIMS_REVEAL = 'poplur-claims-reveal'
 const CLAIMS_TEXTURE = 'poplur-claims-texture'
 const CLAIMS_EDGE = 'poplur-claims-edge'
+const CLAIMS_OVERVIEW = 'poplur-claims-overview'
 const CLAIMS_TEXTURE_IMAGE = 'poplur-claims-hatch'
 // Removed ownership-circle renderer ids are retained only as a one-way cleanup
 // list. This matters during Vite/HMR: the Mapbox document outlives the module,
@@ -206,6 +208,7 @@ export function applyClaimsPalette(map: mapboxgl.Map): void {
     try { map.setPaintProperty(layer, prop as never, value as never) } catch { /* torn down */ }
   }
   set(CLAIMS_FILL, 'fill-color', claimColor('#D93D89'))
+  set(CLAIMS_OVERVIEW, 'fill-color', claimColor('#D93D89'))
   set(CLAIMS_REVEAL, 'fill-color', claimColor('#FF8AC6'))
 }
 
@@ -332,6 +335,40 @@ export function installClaimsLayer(map: mapboxgl.Map) {
         'fill-opacity': 0.66,
       },
     }, claimsInsertBefore(map))
+
+  // ── The same ground, ABOVE the streets, while the map is a scoreboard ─────
+  //
+  // Held ground is drawn in the `bottom` slot so that close in, the city sits
+  // on top of it: roads, buildings and parks take their claimed tint and the
+  // territory reads as material under a real place. Pulled out, that same
+  // ordering hides it completely. Mapbox draws `bottom` under `middle`, and at
+  // continental zoom the clay road network IS the map — a dense pink web over
+  // every populated area. A 30px claim under that web is invisible, which is
+  // why the board looked uncoloured from the air with 46 territories painting.
+  //
+  // So the overview draws the identical polygons a second time in `middle`,
+  // above the streets, and hands back to the ground treatment at the zoom
+  // where the streets stop being a web and become streets again. No new
+  // geometry, no new source: the same features, one more fill.
+  map.addLayer({
+    id: CLAIMS_OVERVIEW,
+    slot: 'middle',
+    type: 'fill',
+    source: CLAIMS_SOURCE,
+    // Off entirely by the time the detail treatment owns the look, so close in
+    // there is exactly one claim wash on screen, the established one.
+    maxzoom: DOMINANCE_DETAIL_MIN_ZOOM,
+    paint: {
+      'fill-color': claimColor('#D93D89') as never,
+      // A wash, not a lid: the road web and coastline still read through it,
+      // so the map stays a map and the colour says who holds it.
+      'fill-opacity': [
+        'interpolate', ['linear'], ['zoom'],
+        DOMINANCE_OVERVIEW_MAX_ZOOM, 0.82,
+        DOMINANCE_DETAIL_MIN_ZOOM, 0,
+      ] as never,
+    },
+  })
 
   // Re-cut the ownership cells when the camera crosses a zoom half-step, so
   // their world-view readability floor keeps up without any per-frame rebuild.
