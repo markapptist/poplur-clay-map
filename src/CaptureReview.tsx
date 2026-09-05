@@ -33,6 +33,22 @@ export default function CaptureReview({
     void el.play().catch(() => {})
   }, [media.src])
 
+  // Tell the shell a full-screen capture modal is up.
+  //
+  // This screen sets z-index 2147483000 and still lost: it lives inside
+  // .contentLayer (z-index 4), a clamped stacking context, so no value here
+  // can climb above the home chrome at 260. The radius card drew straight
+  // over "Use this" and the chrome's column rules ran down the photo. The
+  // composer hit this exact wall and solved it the only way that works from
+  // in here — the chrome stands down — so this asks for the same.
+  useEffect(() => {
+    const announce = (open: boolean) => {
+      window.dispatchEvent(new CustomEvent('poplur-capture-review', { detail: open }))
+    }
+    announce(true)
+    return () => { announce(false) }
+  }, [])
+
   return (
     <section className={styles.review} role="dialog" aria-modal="true" aria-label="Review your capture">
       <div className={styles.stage}>

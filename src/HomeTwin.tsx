@@ -1756,6 +1756,16 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // sitting on top of the Continue button. Raising the composer cannot work
   // from inside a clamped stacking context, so the chrome stands down instead.
   const [composerOpen, setComposerOpen] = useState(false)
+  /** The capture review (Retake / Use this) is the same kind of trapped
+   *  full-screen modal the composer is, and needs the same stand-down. Kept
+   *  separate from composerOpen because that flag also routes cube-back to
+   *  the composer, which this screen does not want. */
+  const [captureReviewOpen, setCaptureReviewOpen] = useState(false)
+  useEffect(() => {
+    const onReview = (e: Event) => setCaptureReviewOpen(Boolean((e as CustomEvent<boolean>).detail))
+    window.addEventListener('poplur-capture-review', onReview)
+    return () => window.removeEventListener('poplur-capture-review', onReview)
+  }, [])
   // No timer any more: the state is now driven purely by whether the PHONE
   // screen is open, so it clears when you leave rather than after 1.55s.
 
@@ -3646,7 +3656,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   /** Chrome fully away — the feed's player mode, a subscreen, an ad slot,
    *  or the post composer (trapped inside contentLayer z-index 4, so the
    *  chrome at 260 must stand down for the composer to be tappable). */
-  const chromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen || composerOpen
+  const chromeGone = feedChromeGone || subscreenFullscreen || feedAdSlotOpen || composerOpen || captureReviewOpen
   /** The cube's own version of chromeGone, composerOpen excluded: the capture
    *  preview and post composer are a home surface, not a takeover, and
    *  PostComposer/VFXStudio already reserve --composer-home-clearance so the

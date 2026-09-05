@@ -4,7 +4,14 @@
 .review {
   position: absolute;
   inset: 0;
+  /* Kept, but it is not what saves this screen: inside .contentLayer's
+     clamped stacking context no z-index here can beat the home chrome. The
+     chrome stands down instead (poplur-capture-review). */
   z-index: 2147483000;
+  /* Room for the persistent cube, the same reservation PostComposer makes,
+     so the cube stays the way back without sitting on Use this. */
+  --composer-home-clearance:
+    calc(18px + var(--cube-size, clamp(124px, 37vw, 176px)) + 14px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   background: #050407;
@@ -47,7 +54,7 @@
   display: grid;
   grid-template-columns: 1fr 1.6fr;
   gap: 12px;
-  padding: 16px 20px calc(env(safe-area-inset-bottom, 0px) + 20px);
+  padding: 16px 20px var(--composer-home-clearance, calc(env(safe-area-inset-bottom, 0px) + 20px));
 }
 
 .retake,
