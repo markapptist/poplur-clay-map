@@ -2960,9 +2960,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         if (event.data.kind === 'pin' || event.data.kind === 'landmark' || event.data.kind === 'current') {
           setMapFocusedPoint({
             key: typeof event.data.key === 'string' && event.data.key ? event.data.key : String(event.data.id ?? ''),
+            id: String(event.data.id ?? ''),
             kind: event.data.kind,
             name: typeof event.data.name === 'string' ? event.data.name : '',
             mine: event.data.mine === true,
+            ownerKey: typeof event.data.ownerKey === 'string' && event.data.ownerKey
+              ? event.data.ownerKey
+              : null,
             radiusKm: typeof event.data.radiusKm === 'number' && Number.isFinite(event.data.radiusKm)
               ? event.data.radiusKm
               : null,
@@ -2993,6 +2997,11 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             ? { ...previous, scope: 'area' }
             : previous)
         }
+      }
+      if (event.data.type === 'poplur-map-owner-filter') {
+        setMapOwnerFilterKey(typeof event.data.ownerKey === 'string' && event.data.ownerKey
+          ? event.data.ownerKey
+          : null)
       }
       if (event.data.type === 'poplur-account-radius') {
         const totalRadiusKm = Number(event.data.radiusKm)
@@ -3704,11 +3713,20 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
    *  as the same card the place name wears, directly under the wordmark. */
   const [mapFocusedPoint, setMapFocusedPoint] = useState<{
     key: string
+    /** The post id, so the card can name the pin back to the map. */
+    id: string
     kind: 'pin' | 'landmark' | 'current'
     name: string
     mine: boolean
     radiusKm: number | null
+    /** Whose pop it is, when it is a pop. The handle on this card is the
+     *  control that arms "traverse this poster's pops", and the map cannot be
+     *  asked who owns a point from over here. */
+    ownerKey: string | null
   } | null>(null)
+  /** The owner the map is currently traversing, echoed back by the map so the
+   *  handle lights in the one card the person is actually looking at. */
+  const [mapOwnerFilterKey, setMapOwnerFilterKey] = useState<string | null>(null)
   const [mapHudContext, setMapHudContext] = useState<MapHudContext | null>(null)
   // "N pops in this area" under the title — the map counts on every pop
   // arrival (it owns the pop list); a tap opens the profile with these pops
@@ -5936,7 +5954,24 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                     ? 'CURRENT LOCATION'
                     : mapFocusedPoint.mine ? 'YOUR PIN' : 'PIN'}
               </em>
-              <strong className={styles.mapTitleName}>{mapFocusedPoint.name}</strong>
+              {/* The handle is the traverse control. The card itself refuses
+                  the pointer (.mapTitle), so this button takes it back — which
+                  is why a tap here did nothing before it existed. */}
+              {mapFocusedPoint.kind === 'pin' && mapFocusedPoint.ownerKey && mapFocusedPoint.id ? (
+                <button
+                  type="button"
+                  className={`${styles.mapTitleName} ${styles.mapTitleNameOwner}${
+                    mapOwnerFilterKey === mapFocusedPoint.ownerKey ? ` ${styles.mapTitleNameOwnerArmed}` : ''}`}
+                  data-map-point-owner={mapFocusedPoint.ownerKey}
+                  data-map-point-owner-armed={mapOwnerFilterKey === mapFocusedPoint.ownerKey ? 'true' : 'false'}
+                  aria-pressed={mapOwnerFilterKey === mapFocusedPoint.ownerKey}
+                  onClick={() => postWebMapAction('traverseOwner', { id: mapFocusedPoint.id })}
+                >
+                  {mapFocusedPoint.name}
+                </button>
+              ) : (
+                <strong className={styles.mapTitleName}>{mapFocusedPoint.name}</strong>
+              )}
               {mapFocusedPoint.radiusKm != null && (
                 <span
                   className={styles.mapTitleRadius}

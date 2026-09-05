@@ -62,7 +62,7 @@ import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { PinColorId } from './pinColors'
 import type { POI, MapTheme } from './data'
 import { mapPinRenderKey } from './mapPinRenderKey'
-import type { MapCyclePoint } from './mapPointCycle'
+import { pinOwnerKey, type MapCyclePoint } from './mapPointCycle'
 import { modelSprite } from './modelSprite'
 import {
   MAP_COLOR_CONTROL_GAP,
@@ -204,6 +204,13 @@ export interface ClayMapProps {
   onWorldCountryChange?: (country: WorldCountryUpdate) => void
   /** A pin was tapped: go to that poster's profile, with this pop's post lit. */
   onPinOpen?: (pin: PopPin) => void
+  /** A tap on a pin's username label. Arms "traverse this poster's pops" for
+   *  the tapped owner, or clears it when the same owner's label is tapped
+   *  again — the shell owns that toggle and the point route it filters. */
+  onPinLabelTap?: (pin: PopPin) => void
+  /** The owner key (ownerId ?? handle ?? 'self') whose label is currently
+   *  armed, so every pin of that poster lights its handle. Null lights none. */
+  focusedLabelUserKey?: string | null
   /** One data-backed focus that remains visible even when the underlying pin
    * is outside the DOM marker budget or a landmark changes representation. */
   focusedMapPoint?: MapCyclePoint | null
@@ -1523,7 +1530,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIconId, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, focusedMapPoint = null, onCurrentLocationChange, ownProfilePhoto = null, ownProfileSelfieVideo = null, accountRadiusKm }: ClayMapProps) {
+function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIconId, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, onPinLabelTap, focusedLabelUserKey = null, focusedMapPoint = null, onCurrentLocationChange, ownProfilePhoto = null, ownProfileSelfieVideo = null, accountRadiusKm }: ClayMapProps) {
   const launchParams = typeof window === 'undefined'
     ? new URLSearchParams()
     : new URLSearchParams(window.location.search)
@@ -1588,6 +1595,13 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   // freeze whatever callback identity existed at that moment.
   const onPinOpenRef = useRef(onPinOpen)
   onPinOpenRef.current = onPinOpen
+  const onPinLabelTapRef = useRef(onPinLabelTap)
+  onPinLabelTapRef.current = onPinLabelTap
+  // The board rebuilds asynchronously (sprite compose), so a marker can be born
+  // while a poster filter is already armed. buildMarker reads this to light the
+  // new label on creation; the effect below covers the tap-with-no-rebuild case.
+  const focusedLabelUserKeyRef = useRef(focusedLabelUserKey)
+  focusedLabelUserKeyRef.current = focusedLabelUserKey
   const onCurrentLocationChangeRef = useRef(onCurrentLocationChange)
   onCurrentLocationChangeRef.current = onCurrentLocationChange
   const skyRef = useRef(sky)
@@ -6177,6 +6191,33 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // label on a stranger's pop — the shape of bug that makes a map look
       // like it has two of you on it.
       ownerLabel.textContent = pin.mine ? 'YOU' : (pin.user ?? '')
+      // The handle is itself a control: tap it to walk only this poster's pops
+      // with the point arrows, tap it again to release the board. The rest of
+      // the marker's chrome refuses the pointer so a stray tap flies the
+      // camera or opens the pin; the label deliberately takes it. A ghost is
+      // out of reach and can never be traversed to, so its label stays inert.
+      if (!pin.ghost) {
+        ownerLabel.classList.add(styles.dominationTerritoryLabelTappable)
+        ownerLabel.setAttribute('role', 'button')
+        ownerLabel.tabIndex = 0
+        const armTraverse = (event: Event) => {
+          event.stopPropagation()
+          event.preventDefault()
+          playPop()
+          onPinLabelTapRef.current?.(pin)
+        }
+        ownerLabel.addEventListener('click', armTraverse)
+        ownerLabel.addEventListener('keydown', event => {
+          const key = (event as KeyboardEvent).key
+          if (key === 'Enter' || key === ' ') armTraverse(event)
+        })
+        // Born under an armed filter (async rebuild): light it immediately so a
+        // board refresh mid-traversal never drops the active poster's handle.
+        if (focusedLabelUserKeyRef.current != null
+          && pinOwnerKey(pin) === focusedLabelUserKeyRef.current) {
+          ownerLabel.classList.add(styles.dominationTerritoryLabelActive)
+        }
+      }
       markerRoot.appendChild(ownerLabel)
       // Every one of your pins wears the same static profile face. A still is
       // both clearer ownership and dramatically cheaper than cloning the
@@ -6328,6 +6369,22 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       pinMarkersRef.current = []
     }
   }, [pinKey, mapEpoch, radiusPreviewLaunch])
+
+  // Light the handle of whichever poster the point arrows are currently walking
+  // (armed by a label tap, cleared by tapping it again). Kept off the marker
+  // rebuild above — that rebuild reruns the sprite composite — so arming the
+  // filter only paints one class on the labels already mounted. `pinKey` in the
+  // deps re-applies the highlight after a genuine rebuild replaces the nodes.
+  useEffect(() => {
+    for (const marker of pinMarkersRef.current) {
+      const rootEl = marker.getElement()
+      const label = rootEl.querySelector<HTMLElement>(`.${styles.dominationTerritoryLabel}`)
+      if (!label) continue
+      const active = focusedLabelUserKey != null
+        && rootEl.dataset.dominationOwner === focusedLabelUserKey
+      label.classList.toggle(styles.dominationTerritoryLabelActive, active)
+    }
+  }, [focusedLabelUserKey, pinKey])
 
   const nightMode = (sky ?? skyShadeAt()).lightPreset === 'night'
 

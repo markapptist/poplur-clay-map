@@ -127,6 +127,7 @@ import { countryFlagSprite } from './countryFlag3d'
 import {
   buildMapPointCycle,
   stepMapPointCycle,
+  pinOwnerKey,
   type MapCyclePoint,
 } from './mapPointCycle'
 
@@ -3419,6 +3420,9 @@ export default function MapApp() {
         id: point.id,
         kind: point.kind,
         name: point.name,
+        // Whose pop this is. The shell's card turns the handle into the
+        // traverse control, and it cannot ask the map who owns a point.
+        ownerKey: point.kind === 'pin' ? pointOwnerRef.current(point.id)?.key ?? null : null,
         index,
         total: route.length,
         radiusKm: point.radiusKm,
@@ -3490,6 +3494,9 @@ export default function MapApp() {
         id: point.id,
         kind: point.kind,
         name: point.name,
+        // Whose pop this is. The shell's card turns the handle into the
+        // traverse control, and it cannot ask the map who owns a point.
+        ownerKey: point.kind === 'pin' ? pointOwnerRef.current(point.id)?.key ?? null : null,
         index,
         total,
         radiusKm: point.radiusKm,
@@ -3497,6 +3504,79 @@ export default function MapApp() {
       }, '*')
     } catch { /* standalone route has no separate shell consumer */ }
   }, [closeSearchImmediately, flyToCenter, liveMapPosts, mapPins, stopTour, theme])
+
+  // A tap on a pin's username label (ClayMap) arms "traverse this poster's
+  // pops". Same label again releases it. The camera is left where the tap
+  // happened — the pin is already on screen — so this only re-scopes the arrow
+  // route and lights the handle; the arrows do the flying from there.
+  const toggleOwnerFilter = useCallback((ownerKey: string, pinId: string) => {
+    if (focusedUserKeyRef.current === ownerKey) {
+      focusedUserKeyRef.current = null
+      setFocusedUserKey(null)
+      focusedMapPointKeyRef.current = null
+      setFocusedMapPoint(null)
+      setMapPointPosition(null)
+      return
+    }
+    focusedUserKeyRef.current = ownerKey
+    setFocusedUserKey(ownerKey)
+    // Enter the filtered route AT the tapped pin so the counter reads this
+    // poster's pops ("k of N"); the route-sync effect below resolves the index.
+    focusedMapPointKeyRef.current = `pin:${pinId}`
+  }, [])
+  const handlePinLabelTap = useCallback((pin: PopPin) => {
+    toggleOwnerFilter(pinOwnerKey(pin), pin.id)
+  }, [toggleOwnerFilter])
+
+  /** Whose pin the framed point belongs to, for the card's tappable handle.
+   *  Read from the live post list rather than carried on MapCyclePoint: the
+   *  route is rebuilt from those posts anyway, so a second copy of ownership
+   *  could only drift from it. */
+  const pointOwner = useCallback((pointId: string): { key: string; handle: string | null } | null => {
+    const post = liveMapPostsRef.current.find(candidate => candidate.id === pointId)
+    if (!post) return null
+    return { key: pinOwnerKey(post), handle: post.user ?? null }
+  }, [])
+  const pointOwnerRef = useRef(pointOwner)
+  pointOwnerRef.current = pointOwner
+  const toggleOwnerFilterRef = useRef(toggleOwnerFilter)
+  toggleOwnerFilterRef.current = toggleOwnerFilter
+  const focusedPointOwner = focusedMapPoint?.kind === 'pin'
+    ? pointOwner(focusedMapPoint.id)
+    : null
+
+  // The shell draws the point card when embedded, so the armed state has to
+  // travel: without it the handle in the shell's card could not light, and a
+  // second tap would look like it had done nothing.
+  useEffect(() => {
+    try {
+      window.parent?.postMessage({ type: 'poplur-map-owner-filter', ownerKey: focusedUserKey }, '*')
+    } catch { /* standalone route has no separate shell consumer */ }
+  }, [focusedUserKey])
+
+  // A running tour owns the arrows, and the poster filter would fight it for
+  // the same route — so starting a tour releases the filter.
+  useEffect(() => {
+    if (tourOn && focusedUserKeyRef.current) {
+      focusedUserKeyRef.current = null
+      setFocusedUserKey(null)
+    }
+  }, [tourOn])
+
+  // The armed poster's last pop can vanish (deletion, privacy, dropping out of
+  // reach). With nothing left to traverse, release the filter so the arrows
+  // return to the whole board rather than a dead one-of-zero loop.
+  useEffect(() => {
+    if (!focusedUserKey) return
+    const stillThere = mapPins.some(pin => !pin.ghost && pinOwnerKey(pin) === focusedUserKey)
+    if (!stillThere) {
+      focusedUserKeyRef.current = null
+      setFocusedUserKey(null)
+      focusedMapPointKeyRef.current = null
+      setFocusedMapPoint(null)
+      setMapPointPosition(null)
+    }
+  }, [focusedUserKey, mapPins])
 
   // A delete or privacy change removes a post from the snapshot. Its marker
   // and claim disappear through mapPins/setClaimGroup; dismiss any open card
@@ -3979,6 +4059,14 @@ export default function MapApp() {
     const onAction = (event: MessageEvent) => {
       if (event.data?.type !== 'poplur-map-action') return
       switch (event.data.action) {
+        // The handle in the shell's point card, tapped: same toggle the pin's
+        // own label runs, arriving from the other document.
+        case 'traverseOwner': {
+          const id = typeof event.data.id === 'string' ? event.data.id : ''
+          const owner = id ? pointOwnerRef.current(id) : null
+          if (owner) toggleOwnerFilterRef.current(owner.key, id)
+          break
+        }
         case 'locate': handleGoToCurrentLocation(); break
         case 'streetview': handleToggleStreetView(); break
         case 'directions': setDirectionsSignal(n => n + 1); break
@@ -4268,6 +4356,8 @@ export default function MapApp() {
         onConquerSnapshot={isEmbedded ? undefined : setMapConquerSnapshot}
         onWorldCountryChange={handleWorldCountryChange}
         onPinOpen={openClickedMapPinContent}
+        onPinLabelTap={handlePinLabelTap}
+        focusedLabelUserKey={tourOn ? null : focusedUserKey}
         focusedMapPoint={tourOn ? null : focusedMapPoint}
         onCurrentLocationChange={acceptCurrentLocation}
         selectedId={selectedId}
@@ -4747,7 +4837,21 @@ export default function MapApp() {
                 ? 'CURRENT LOCATION'
                 : focusedMapPoint.mine ? 'YOUR PIN' : 'PIN'}
           </span>
-          <strong data-map-point-name="">{focusedMapPoint.name}</strong>
+          {focusedPointOwner ? (
+            <button
+              type="button"
+              className={`${styles.mapPointCardOwner}${focusedUserKey === focusedPointOwner.key ? ` ${styles.mapPointCardOwnerArmed}` : ''}`}
+              data-map-point-name=""
+              data-map-point-owner={focusedPointOwner.key}
+              data-map-point-owner-armed={focusedUserKey === focusedPointOwner.key ? 'true' : 'false'}
+              aria-pressed={focusedUserKey === focusedPointOwner.key}
+              onClick={() => toggleOwnerFilter(focusedPointOwner.key, focusedMapPoint.id)}
+            >
+              {focusedMapPoint.name}
+            </button>
+          ) : (
+            <strong data-map-point-name="">{focusedMapPoint.name}</strong>
+          )}
           {focusedMapPoint.radiusKm != null && (
             <span
               className={styles.mapPointCardRadius}

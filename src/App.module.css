@@ -1126,6 +1126,36 @@
   white-space: nowrap;
 }
 
+/* The standalone card's handle, same control as the shell's. .mapPointCard
+   refuses the pointer, so the button takes it back for its own line only. */
+.mapPointCardOwner {
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  background: none;
+  color: inherit;
+  font: 950 15px/1.18 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 138, 198, .5);
+  text-underline-offset: 3px;
+}
+
+.mapPointCardOwnerArmed {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #ff4ba7;
+  color: #fff;
+  text-decoration: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .45), 0 0 0 2px rgba(255, 255, 255, .9);
+}
+
 .mapPointCardRadius {
   margin-top: 3px;
   color: #7fe3ff;

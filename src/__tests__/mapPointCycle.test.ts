@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { buildMapPointCycle, stepMapPointCycle } from '../mapPointCycle'
+import { buildMapPointCycle, stepMapPointCycle, pinOwnerKey } from '../mapPointCycle'
 import { WORLD_LANDMARK_PRESENTATIONS } from '../mapLandmarkCatalog'
 
 const mapAppSource = readFileSync(resolve(process.cwd(), 'src', 'MapApp.tsx'), 'utf8')
@@ -159,5 +159,47 @@ describe('unified Map point cycle', () => {
     )
     expect(loading).toContain('setMapPointLabelActive(false)')
     expect(failed).toContain('setMapPointLabelActive(false)')
+  })
+})
+
+describe('traverse a poster’s pops from their map handle', () => {
+  it('groups a poster by account id, else handle, else self for your own pins', () => {
+    expect(pinOwnerKey({ ownerId: 'uid-9', user: '@runwayraw' })).toBe('uid-9')
+    expect(pinOwnerKey({ user: '@runwayraw' })).toBe('@runwayraw')
+    expect(pinOwnerKey({ ownerId: null, user: null })).toBe('self')
+  })
+
+  it('a route filtered to one poster walks only that poster’s pins', () => {
+    // The shell builds this filtered cycle when a handle is armed: only the
+    // owner’s pins, and no current-location or landmark stops in the loop.
+    const all = [
+      { id: 'a1', name: 'A one', coords: [-79.4, 43.66] as [number, number], mine: false, radiusKm: 2, ownerId: 'uid-a', user: '@ay' },
+      { id: 'b1', name: 'B one', coords: [-79.37, 43.65] as [number, number], mine: false, radiusKm: 9, ownerId: 'uid-b', user: '@bee' },
+      { id: 'a2', name: 'A two', coords: [-79.36, 43.64] as [number, number], mine: false, radiusKm: 5, ownerId: 'uid-a', user: '@ay' },
+    ]
+    const armed = 'uid-a'
+    const route = buildMapPointCycle({
+      currentLocation: null,
+      pins: all.filter(pin => pinOwnerKey(pin) === armed),
+      landmarks: [],
+    })
+    expect(route.map(point => point.key)).toEqual(['pin:a1', 'pin:a2'])
+    // The arrows loop within the two, never escaping to the other poster.
+    const first = stepMapPointCycle(route, null, 1)
+    expect(first).toMatchObject({ index: 0, total: 2 })
+    const wrapped = stepMapPointCycle(route, 'pin:a2', 1)
+    expect(wrapped).toMatchObject({ point: { key: 'pin:a1' }, index: 0, total: 2 })
+  })
+
+  it('wires the handle tap end to end: label control, toggle filter, highlight', () => {
+    // ClayMap: the handle takes the pointer and reports the tap up.
+    expect(clayMapSource).toContain('dominationTerritoryLabelTappable')
+    expect(clayMapSource).toContain('onPinLabelTapRef.current?.(pin)')
+    expect(clayMapSource).toContain('dominationTerritoryLabelActive')
+    // MapApp: the tap toggles the poster filter and the route honours it.
+    expect(mapAppSource).toContain('const handlePinLabelTap = useCallback((pin: PopPin)')
+    expect(mapAppSource).toContain('pinOwnerKey(pin) === focusedUserKey')
+    expect(mapAppSource).toContain('onPinLabelTap={handlePinLabelTap}')
+    expect(mapAppSource).toContain('focusedLabelUserKey={tourOn ? null : focusedUserKey}')
   })
 })

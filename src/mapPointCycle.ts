@@ -116,6 +116,16 @@ export function buildMapPointCycle({
   return points
 }
 
+/**
+ * Stable identity for grouping one poster's pops, matching the map marker's
+ * `data-domination-owner`: the account id, else the handle, else 'self' for
+ * your own pins (whose handle is intentionally nulled upstream). Used to arm
+ * the "traverse this poster's pops" label filter from either document.
+ */
+export function pinOwnerKey(pin: { ownerId?: string | null; user: string | null }): string {
+  return pin.ownerId ?? pin.user ?? 'self'
+}
+
 /** Right from no selection starts at one; left starts at the route's end. */
 export function stepMapPointCycle(
   points: readonly MapCyclePoint[],

@@ -2672,6 +2672,28 @@ header.weatherTitleBar {
   pointer-events: none;
 }
 
+/* A poster's handle is a control, not just a byline: it takes the pointer the
+   rest of the marker chrome refuses, so a tap on it arms the traverse filter
+   rather than opening the pin or flying the camera. */
+.dominationTerritoryLabelTappable {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* Armed: this poster's pops are the ones the arrows now walk. The handle lifts
+   onto a filled pill in its own takeover colour — a selected state that reads
+   as "this is the filter", distinct from every other byline on the board. */
+.dominationTerritoryLabelActive {
+  bottom: -23px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--dominationColor, #f63b9a);
+  -webkit-text-stroke: 0;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5), 0 0 0 2px rgba(255, 255, 255, 0.92);
+}
+
 .popPinMarkerReveal .popPin > img,
 .popPinMarkerReveal .dominationTerritoryLabel {
   animation: dominanceMarkerPop .48s cubic-bezier(.16, .82, .24, 1);

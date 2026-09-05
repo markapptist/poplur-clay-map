@@ -862,6 +862,42 @@
   white-space: nowrap;
 }
 
+/* The poster's handle, as a control. The card and everything in it refuses the
+   pointer so a drag across the title still flies the map; this one line takes
+   it back, which is the whole reason tapping the handle did nothing. Styled to
+   stay the same line of type it replaced — a button that looks like a button
+   here would read as a second, unrelated widget in the middle of the card. */
+.mapTitleNameOwner {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 138, 198, .5);
+  text-underline-offset: 3px;
+  transition: transform .12s ease;
+}
+
+.mapTitleNameOwner:active { transform: scale(.96); }
+
+/* Armed: the arrows now walk only this poster's pops. The handle lifts onto a
+   filled pill — the same selected state the pin's own label wears, so the two
+   places you can arm the filter from cannot read as different features. */
+.mapTitleNameOwnerArmed {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #ff4ba7;
+  color: #fff;
+  text-decoration: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .45), 0 0 0 2px rgba(255, 255, 255, .9);
+}
+
 
 .mapRadioLabel {
   max-width: 100%;
