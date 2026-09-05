@@ -15,6 +15,7 @@
 // point of doing call media in the page rather than per-native-SDK.
 
 import { postNativeEvent, isNativeShell } from './nativeBridge'
+import { recordCallAnswered, recordCallEnd, recordCallStart } from './callLog'
 import {
   DEFAULT_CALL_CONTEXT,
   normalizeCallContext,
@@ -59,6 +60,8 @@ export interface CallOptions {
   video?: boolean
   /** Keep media global, but let one screen own its primary call controls. */
   context?: CallContext
+  /** The far side's uid, for the call log's callback row (incoming calls). */
+  peerId?: string
 }
 
 // Public STUN only. A production deployment adds TURN for the ~10% of networks
@@ -102,6 +105,8 @@ let callId = ''
 let isCaller = false
 let outgoing = false
 let peerName = ''
+/** The far side's uid — the call log's callback target. */
+let peerUid = ''
 let phase: CallPhase = 'idle'
 let muted = false
 let connectedAt: number | null = null
@@ -230,6 +235,7 @@ function buildPeer(): RTCPeerConnection {
     switch (peer.connectionState) {
       case 'connected':
         if (connectedAt == null) connectedAt = Date.now()
+        recordCallAnswered(callId)
         outgoing = false
         setPhase('connected')
         break
@@ -258,6 +264,7 @@ export async function placeCall(peerId: string, name: string, callerName?: strin
   localStream?.getTracks().forEach(track => track.stop())
   localStream = null
   peerName = name
+  peerUid = peerId
   isCaller = true
   outgoing = true
   videoRequested = Boolean(options.video)
@@ -306,6 +313,7 @@ async function onCallStarted(id: string, ok: boolean, requestId: string): Promis
   }
   if (!ok || !id) { cleanup('ended'); return }
   callId = id
+  recordCallStart({ callId: id, peerId: peerUid, peerName, direction: 'outgoing', video: videoRequested })
   armOutgoingNoAnswerTimer(id)
   pc = buildPeer()
   const offer = await pc.createOffer({
@@ -327,8 +335,10 @@ export async function acceptCall(id: string, name: string, options: CallOptions 
   localStream = null
   callId = id
   peerName = name
+  peerUid = options.peerId ?? peerUid
   isCaller = false
   outgoing = false
+  recordCallAnswered(id)
   videoRequested = Boolean(options.video)
   callContext = normalizeCallContext(options.context)
   emitMedia()
@@ -402,6 +412,7 @@ export function declineCall(id: string): void {
   const resolved = id.trim()
   if (!resolved) return
   sendSignal({ type: 'callDecline', callId: resolved })
+  recordCallEnd(resolved, null, 'declined')
   if (callId === resolved && phase !== 'idle') cleanup('ended')
 }
 
@@ -418,8 +429,12 @@ function cleanup(finalPhase: CallPhase): void {
   remoteDescriptionSet = false
   pendingCandidates = []
   isCaller = false
+  // The log's last word on this call: talk time from the engine's own clock,
+  // or missed/no-answer when it never connected.
+  if (callId) recordCallEnd(callId, connectedAt)
   connectedAt = null
   callId = ''
+  peerUid = ''
   videoRequested = false
   emitMedia()
 

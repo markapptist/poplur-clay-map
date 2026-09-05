@@ -1249,7 +1249,11 @@
   border-radius: 14px;
   background: #241324dd;
   color: #ff91c5;
-  font: 800 15px/1.2 ui-monospace, monospace;
+  /* The title's own type (.feedTitleTrack): same family, weight and size, so
+     the countdown reads as part of the headline card rather than a readout
+     in a second voice. Tabular figures keep the digits from jittering. */
+  font: 900 clamp(15px, 4.4vw, 19px)/1.2 system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
+  letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
   text-align: center;
   box-shadow: 0 3px 8px #0008;

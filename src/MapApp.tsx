@@ -50,7 +50,7 @@ function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; ra
 }
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaimGroup, onClaimsSettled } from './mapClaims'
-import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin, installPinSpotlight, updatePinSpotlight } from './ClayMap'
+import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin, installPinSpotlight, updatePinSpotlight, installOwnerRoute, updateOwnerRoute } from './ClayMap'
 import WeatherMark from './WeatherMark'
 import { weatherIconIdForCode, weatherIconIdForMode } from './sideControlIcons'
 import { windyFromSpeed } from './weatherCode'
@@ -3326,12 +3326,16 @@ export default function MapApp() {
   useEffect(() => {
     const reread = () => setPreferMiles(shouldUseMiles())
     window.addEventListener('storage', reread)
+    // The unit follows where the phone IS (units.ts); the fix lands after
+    // first paint, so re-read when it does.
+    window.addEventListener('poplur-location', reread)
     // A tap handled while this document was hidden lands with no storage
     // event here; re-read on the way back rather than showing a stale unit.
     window.addEventListener('pageshow', reread)
     document.addEventListener('visibilitychange', reread)
     return () => {
       window.removeEventListener('storage', reread)
+      window.removeEventListener('poplur-location', reread)
       window.removeEventListener('pageshow', reread)
       document.removeEventListener('visibilitychange', reread)
     }
@@ -3461,6 +3465,15 @@ export default function MapApp() {
     // The selected takeover is visible only for the signed-in person's own
     // pin. Every other stop explicitly clears stale radius paint.
     const map = mapRef.current
+    // SELECT MODE shows each pin's reach as the camera lands on it: the
+    // poster's ground in their colour, the same paint a tapped pin gets, so
+    // walking the dotted line is walking their territory pin by pin.
+    if (map && focusedUserKeyRef.current) {
+      try {
+        installPinSpotlight(map)
+        updatePinSpotlight(map, pin ?? null)
+      } catch { /* style can reload between an arrow press and this update */ }
+    }
     if (map) {
       try {
         installComposeRadiusPreview(map)
@@ -3551,6 +3564,27 @@ export default function MapApp() {
       window.parent?.postMessage({ type: 'poplur-map-owner-filter', ownerKey: focusedUserKey }, '*')
     } catch { /* standalone route has no separate shell consumer */ }
   }, [focusedUserKey])
+
+  // SELECT MODE: with a poster armed, their pins are threaded by a dotted line
+  // in arrow order (the same order the camera will fly them), and the ground
+  // paint of the pin the arrows last landed on stays up. Releasing the filter
+  // takes both down. Rebuilt with the route so a pin arriving or leaving
+  // re-threads the line rather than leaving a dead segment.
+  useEffect(() => {
+    const live = mapRef.current
+    if (!live) return
+    const pins = focusedUserKey
+      ? mapPointRoute.filter(point => point.kind === 'pin')
+      : []
+    const first = pins.length
+      ? mapPins.find(candidate => candidate.id === pins[0].id)
+      : undefined
+    try {
+      installOwnerRoute(live)
+      updateOwnerRoute(live, pins.map(point => point.coords), first?.color ?? null)
+      if (!focusedUserKey) updatePinSpotlight(live, null)
+    } catch { /* style reloading; the next route change redraws */ }
+  }, [focusedUserKey, mapPointRoute, mapPins, mapLive])
 
   // A running tour owns the arrows, and the poster filter would fight it for
   // the same route — so starting a tour releases the filter.

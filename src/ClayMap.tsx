@@ -1131,6 +1131,80 @@ export function updatePinSpotlight(map: mapboxgl.Map, pin: PopPin | null) {
   } catch { /* style changed while the spotlight was repainting */ }
 }
 
+const OWNER_ROUTE_SOURCE = 'poplur-owner-route'
+const OWNER_ROUTE_HALO = 'poplur-owner-route-halo'
+const OWNER_ROUTE_DOTS = 'poplur-owner-route-dots'
+
+/**
+ * SELECT MODE's thread: a dotted line through every pin of the armed poster,
+ * in the order the point arrows walk them, so the whole trail of one person's
+ * pops reads as one route across the board. The arrows fly the camera pin to
+ * pin, and Mapbox interpolates that flight along the straight (Mercator) line
+ * between them — which is exactly the segment drawn here, so the camera is
+ * seen to travel the dotted line. Two layers: a soft white halo under pink
+ * dots, both round-capped with a near-zero dash so the pattern is beads, not
+ * dashes. Top of the stack, so the trail rides over roads and water alike.
+ */
+export function installOwnerRoute(map: mapboxgl.Map) {
+  if (!map.getSource(OWNER_ROUTE_SOURCE)) {
+    map.addSource(OWNER_ROUTE_SOURCE, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    })
+  }
+  if (!map.getLayer(OWNER_ROUTE_HALO)) {
+    map.addLayer({
+      id: OWNER_ROUTE_HALO,
+      type: 'line',
+      source: OWNER_ROUTE_SOURCE,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-color': '#ffffff',
+        'line-opacity': 0.55,
+        'line-width': 9,
+        'line-dasharray': [0.05, 2.1],
+      },
+    })
+  }
+  if (!map.getLayer(OWNER_ROUTE_DOTS)) {
+    map.addLayer({
+      id: OWNER_ROUTE_DOTS,
+      type: 'line',
+      source: OWNER_ROUTE_SOURCE,
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-color': '#ff5fb3',
+        'line-opacity': 0.95,
+        'line-width': 5,
+        'line-dasharray': [0.05, 3.8],
+      },
+    })
+  }
+}
+
+/** Draw the thread through `coords` in that order (fewer than two clears it). */
+export function updateOwnerRoute(map: mapboxgl.Map, coords: ReadonlyArray<[number, number]>, color?: string | null) {
+  const source = map.getSource(OWNER_ROUTE_SOURCE) as mapboxgl.GeoJSONSource | undefined
+  if (!source) return
+  if (coords.length < 2) {
+    source.setData({ type: 'FeatureCollection', features: [] })
+    return
+  }
+  source.setData({
+    type: 'FeatureCollection',
+    features: [{
+      type: 'Feature',
+      properties: { kind: 'owner-route' },
+      geometry: { type: 'LineString', coordinates: coords.map(c => [c[0], c[1]]) },
+    }],
+  })
+  if (color) {
+    try {
+      if (map.getLayer(OWNER_ROUTE_DOTS)) map.setPaintProperty(OWNER_ROUTE_DOTS, 'line-color', takeoverTint(color))
+    } catch { /* style changed while the thread was repainting */ }
+  }
+}
+
 export function installComposeRadiusPreview(map: mapboxgl.Map) {
   if (!map.getSource(COMPOSE_RADIUS_SOURCE)) {
     map.addSource(COMPOSE_RADIUS_SOURCE, {

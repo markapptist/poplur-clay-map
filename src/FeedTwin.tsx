@@ -2310,10 +2310,16 @@ export default function FeedTwin({
                   <SideControlIconImage icon="global.block" displaySize={44} />
                 </button>
               )}
-              <output className={styles.mediaTimer} aria-label={post.mediaType === 'photo' && remainingSeconds === null
-                ? 'Unlimited photo view' : 'Media time remaining'} data-feed-timer="">
-                {post.live ? 'LIVE' : remainingSeconds === null && post.mediaType !== 'photo' ? '–:––' : mediaTimeLabel(remainingSeconds)}
-              </output>
+              {/* The timer only exists while something is counting down. An
+                  unlimited photo used to wear an "∞" chip here and a video
+                  showed "–:––" until its duration was known; neither is a
+                  time, so neither is drawn (user-ordered 5 Sep). LIVE keeps
+                  its chip: it is the one non-number that IS a state of time. */}
+              {(post.live || remainingSeconds !== null) && (
+                <output className={styles.mediaTimer} aria-label="Media time remaining" data-feed-timer="">
+                  {post.live ? 'LIVE' : mediaTimeLabel(remainingSeconds)}
+                </output>
+              )}
               {canDeletePost && (
                 <SideControlIconButton
                   icon="profile.delete"

@@ -19,6 +19,7 @@ import { accountSnapshot, onAccountChange } from './accountStore'
 import { useNearbyLocation } from './nearbyLocation'
 import { nativeFeedPostsSnapshot, onNativeFeedPosts } from './nativeFeedPosts'
 import { contactsFromRealtimePosts } from './webContacts'
+import { callLogDurationLabel, callLogSnapshot, callLogTimeLabel, onCallLogChange } from './callLog'
 
 // The Poplur phone.
 //
@@ -71,6 +72,10 @@ interface Contact {
   favourite: boolean
   callable: boolean
   distanceKm: number | null
+  /** Row identity when one person appears more than once (the call log). */
+  key?: string
+  /** The row's own mark; contacts derive theirs from favourite/callable. */
+  glyph?: string
 }
 
 type PhoneMenuPage = 'main' | 'contacts' | 'calls' | 'messages' | 'camera' | 'gallery' | 'radio' | 'games' | 'settings' | 'about'
@@ -134,6 +139,28 @@ export default function PhoneScreen({
       favourite: false,
     }))
   }, [livePosts, location, ownUid, reachKm])
+  // CALL LOG: who has called you and whom you called, newest first, from the
+  // device's own log (callLog.ts — the server keeps no record of a finished
+  // call). Every row is a callable contact, so 5 on a row calls that person
+  // back through the same placeCall the Contacts page uses.
+  const callLog = useSyncExternalStore(onCallLogChange, callLogSnapshot, callLogSnapshot)
+  const callRows = useMemo<Contact[]>(() => callLog.map(entry => {
+    const missed = entry.outcome === 'missed'
+    const label = missed ? 'MISSED'
+      : entry.outcome === 'declined' ? 'DECLINED'
+        : entry.direction === 'incoming' ? 'INCOMING' : 'OUTGOING'
+    const talk = entry.durationMs > 0 ? ` · ${callLogDurationLabel(entry.durationMs)}` : ''
+    return {
+      id: entry.peerId,
+      key: entry.callId,
+      handle: entry.peerName.startsWith('@') ? entry.peerName : `@${entry.peerName}`,
+      detail: `${label}${entry.video ? ' VIDEO' : ''} · ${callLogTimeLabel(entry.at)}${talk}`,
+      favourite: false,
+      callable: Boolean(entry.peerId) && entry.peerId !== ownUid,
+      distanceKm: null,
+      glyph: missed ? '✕' : entry.direction === 'incoming' ? '↙' : '↗',
+    }
+  }), [callLog, ownUid])
   const [index, setIndex] = useState(0)
   const [phoneThemeId, setPhoneThemeId] = useState(() => readSelectedPhoneTheme().id)
   const phoneThemeIdRef = useRef(phoneThemeId)
@@ -144,6 +171,8 @@ export default function PhoneScreen({
   const [themeChangeLabel, setThemeChangeLabel] = useState('CHANGED')
   const [menuPage, setMenuPage] = useState<PhoneMenuPage>('main')
   const [menuIndex, setMenuIndex] = useState(0)
+  /** What the list pages scroll: the call log on CALL LOG, contacts elsewhere. */
+  const rows = menuPage === 'calls' ? callRows : contacts
   const [liveCall, setLiveCall] = useState<CallSnapshot | null>(null)
   const [callNow, setCallNow] = useState(() => Date.now())
   const [selectedRingtone, setSelectedRingtone] = useState<RingtoneId>(() => getRingtone())
@@ -295,7 +324,7 @@ export default function PhoneScreen({
     return () => window.clearInterval(id)
   }, [liveCall?.phase])
 
-  const current = contacts[Math.min(index, contacts.length - 1)]
+  const current = rows[Math.min(index, rows.length - 1)]
 
   const autoCallDone = useRef(false)
   useEffect(() => {
@@ -332,9 +361,9 @@ export default function PhoneScreen({
 
   const step = useCallback((delta: 1 | -1) => {
     playPop()
-    if (!contacts.length) return
-    setIndex(i => (i + delta + contacts.length) % contacts.length)
-  }, [contacts.length])
+    if (!rows.length) return
+    setIndex(i => (i + delta + rows.length) % rows.length)
+  }, [rows.length])
 
   const select = useCallback(() => {
     if (!current) return
@@ -399,6 +428,9 @@ export default function PhoneScreen({
     playPop()
     setMenuPage(item.id)
     setMenuIndex(0)
+    // Each list page starts at its own top; a cursor carried over from
+    // Contacts would point past the end of a short call log.
+    setIndex(0)
   }, [menuIndex, onClose])
 
   const press = useCallback((key: string) => {
@@ -500,8 +532,8 @@ export default function PhoneScreen({
   }, [press])
 
   // Three rows, windowed on the cursor — the twin's own menu behaviour.
-  const start = Math.max(0, Math.min(index, Math.max(0, contacts.length - 2)))
-  const visible = contacts.slice(start, start + 2)
+  const start = Math.max(0, Math.min(index, Math.max(0, rows.length - 2)))
+  const visible = rows.slice(start, start + 2)
   const phoneTheme = phoneThemeForId(phoneThemeId)
   const mainStart = Math.max(0, Math.min(menuIndex - 1, Math.max(0, PHONE_MENU_ITEMS.length - 3)))
   const visibleMain = PHONE_MENU_ITEMS.slice(mainStart, mainStart + 3)
@@ -642,20 +674,27 @@ export default function PhoneScreen({
             <>
               <div className={styles.titleRow}>
                 <strong>{menuPage === 'calls' ? 'CALL LOG' : `CONTACTS ${km(reachKm)}`}</strong>
-                <em>{contacts.length ? index + 1 : 0}/{contacts.length}</em>
+                <em>{rows.length ? index + 1 : 0}/{rows.length}</em>
               </div>
               <div className={styles.list}>
+                {menuPage === 'calls' && rows.length === 0 && (
+                  <div className={styles.callStatus} data-phone-call-log-empty="">
+                    <strong>NO CALLS YET</strong>
+                    <span>CALLS YOU MAKE AND TAKE LAND HERE</span>
+                  </div>
+                )}
                 {visible.map((contact, offset) => {
                   const at = start + offset
                   return (
                     <button
-                      key={contact.id}
+                      key={contact.key ?? contact.id}
+                      data-phone-call-log-row={menuPage === 'calls' ? contact.key : undefined}
                       type="button"
                       className={at === index ? `${styles.row} ${styles.rowOn}` : styles.row}
                       onClick={() => { setIndex(at); if (at === index) select() }}
                       aria-label={`${contact.handle}, ${contact.detail}`}
                     >
-                      <b className={styles.rowGlyph}>{contact.favourite ? '★' : contact.callable ? '→' : '·'}</b>
+                      <b className={styles.rowGlyph}>{contact.glyph ?? (contact.favourite ? '★' : contact.callable ? '→' : '·')}</b>
                       <span className={styles.rowText}>
                         <strong className={styles.rowTitle}>{contact.handle.replace(/^@/, '').toUpperCase()}</strong>
                         <em className={styles.rowDetail}>
@@ -667,7 +706,7 @@ export default function PhoneScreen({
                 })}
               </div>
               <div className={styles.softkeys}>
-                {current?.callable ? '2/8 SCROLL  5 CALL  # MENU  * BACK' : '2/8 SCROLL  # MENU  * BACK'}
+                {current?.callable ? (menuPage === 'calls' ? '2/8 SCROLL  5 CALL BACK  # MENU  * BACK' : '2/8 SCROLL  5 CALL  # MENU  * BACK') : '2/8 SCROLL  # MENU  * BACK'}
               </div>
             </>
           ) : infoPage ? (

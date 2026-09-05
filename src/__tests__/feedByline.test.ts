@@ -99,13 +99,21 @@ describe('feed popup and profile radius', () => {
     expect(win).toMatch(/const pills: PoplurDialogPill\[\] = \[[\s\S]*?card\.sponsor \?\? card\.title/)
   })
 
-  it('a cube tap on the profile reveals TOTAL RADIUS and holds it', () => {
+  it('the RADIUS card never rotates; a tap (or the profile cube) opens the stats popup', () => {
     const home = read('HomeTwin.tsx')
-    // The tap asks for the radius metric outright…
-    expect(home).toMatch(/playPop\(\)\s+setPopping\(true\)\s+setProfileMetricRequest\(current => \(\{ metric: 'radius', nonce: current\.nonce \+ 1 \}\)\)/)
-    // …and the rotation restarts on it with the radius hold before the
-    // ordinary cadence resumes.
-    expect(home).toMatch(/const firstHold = profileMetricRequest\.nonce > 0 \? RADIUS_STAT_HOLD_MS : 3_200/)
-    expect(home).toMatch(/metrics\.indexOf\(profileMetricRequest\.metric\)/)
+    // The cube tap on the profile opens the stats outright…
+    expect(home).toMatch(/playPop\(\)\s+setPopping\(true\)\s+setStatsOpen\(true\)/)
+    // …the card itself is the other way in…
+    expect(home).toMatch(/data-home-radius-card=""/)
+    expect(home).toMatch(/onClick=\{\(\) => \{ playPop\(\); setStatsOpen\(true\) \}\}/)
+    // …and no clock swaps the corner's number any more (user-ordered 5 Sep).
+    expect(home).not.toMatch(/profileMetricRequest|setShowOnlineAudience|RADIUS_STAT_HOLD_MS\)/)
+    // The popup carries what the corner used to rotate through, in the same
+    // shader type, plus the unit choice the tap used to be.
+    expect(home).toMatch(/data-home-stats-popup=""/)
+    expect(home).toMatch(/<AnimatedOnlineCount value=\{onlineAudience\} active \/>/)
+    expect(home).toMatch(/<AnimatedPostCount value=\{profilePostCount\} active \/>/)
+    expect(home).toMatch(/styles\.radiusValueAccum\}`\} data-counter-value=\{statsTotalText\}/)
+    expect(home).toMatch(/aria-label="Distance unit"/)
   })
 })

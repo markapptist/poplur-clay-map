@@ -90,6 +90,7 @@ import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
 import { playPop, popHaptic } from './pop'
 import { startRingtone, stopRingtone } from './phoneRingtones'
 import IncomingCallPopup from './IncomingCallPopup'
+import { recordCallEnd, recordCallStart } from './callLog'
 import { clearPendingMapPost, onCameraStore, selectedCount } from './cameraStore'
 import {
   clearPodcastMapPick,
@@ -166,7 +167,7 @@ import { noteNewsMessage } from './newsMessages'
 import { contentPostId, dropAt } from './postedContent'
 import { onProfileGenderChange, profileHeadModel } from './profileGender'
 import { POIS, type PopLevel } from './data'
-import { KM_TO_MI, setUseMiles, shouldUseMiles } from './units'
+import { KM_TO_MI, hasStoredUnitChoice, setUseMiles, shouldUseMiles } from './units'
 import { skyShadeAt } from './skyCycle'
 import { moonPhase } from './celestial'
 import { packBase } from './assetPacks'
@@ -2064,6 +2065,16 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // Start in the measurement system implied by the device locale. Tapping the
   // Radius card remains a deliberate local override for this session.
   const [unitMi, setUnitMi] = useState(shouldUseMiles)
+  // The unit follows where the phone IS (units.ts: km everywhere but the
+  // three miles countries). The fix lands after first paint, relayed from
+  // CoreLocation or found by the map, so re-read on every fix until the
+  // person picks a unit themselves in the stats popup.
+  useEffect(() => {
+    const follow = () => { if (!hasStoredUnitChoice()) setUnitMi(shouldUseMiles()) }
+    window.addEventListener('poplur-location', follow)
+    follow()
+    return () => window.removeEventListener('poplur-location', follow)
+  }, [])
   const [earnedRadiusKm, setEarnedRadiusKm] = useState(radiusKm)
   useEffect(() => {
     let timer = 0
@@ -2132,8 +2143,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   }, [])
   // Right slot alternates between local radius and the potential audience it
   // reaches. The spoofed audience stays stable until live presence arrives.
-  const [showOnlineAudience, setShowOnlineAudience] = useState(false)
-  const [profileMetric, setProfileMetric] = useState<'online' | 'radius' | 'posts'>('online')
+  // The corner's other numbers (online, total radius, pops posted) live in a
+  // popup the RADIUS card opens; the card itself never rotates on a clock.
+  const [statsOpen, setStatsOpen] = useState(false)
   const [profilePostCount, setProfilePostCount] = useState(0)
   // Left slot: channel up/down changer — drives the feed's channel directly.
   const [chanIndex, setChanIndex] = useState(0)
@@ -2523,61 +2535,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     }
   }, [])
 
-  useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    // The beat sleeps with the chrome. Every swap replays the money-counter —
-    // an 880ms rAF count, per-frame text restyle, tick sounds, and a wake of
-    // the motion-effects AudioContext — which on an untouched phone repeated
-    // on every cycle forever: the device census showed that context still running
-    // at idle (ctx=[sr]) purely from this drumbeat. Chrome-idle (30s without
-    // a touch) already fades this HUD; the swap pauses with it and the first
-    // touch brings both back.
-    if (chromeIdle) return
-    if (activeTab === 'profile') { setShowOnlineAudience(false); return }
-    let timer = 0
-    const radiusHold = activeTab === 'map' ? 7_000 : RADIUS_STAT_HOLD_MS
-    const onlineHold = activeTab === 'map' ? 5_000 : ONLINE_STAT_HOLD_MS
-    const showRadius = () => {
-      setShowOnlineAudience(false)
-      timer = window.setTimeout(showOnline, radiusHold)
-    }
-    const showOnline = () => {
-      setShowOnlineAudience(true)
-      timer = window.setTimeout(showRadius, onlineHold)
-    }
-    showRadius()
-    return () => window.clearTimeout(timer)
-  }, [chromeIdle, activeTab])
 
-  // The profile's stat card rotates online → radius → posts on its own. A cube
-  // tap asks for RADIUS outright — your total reach, the number that card
-  // owns — and holds it a full radius beat before the rotation resumes from
-  // there. `nonce` lets a repeat tap re-arm the hold on a metric already up.
-  const [profileMetricRequest, setProfileMetricRequest] = useState<{
-    metric: 'online' | 'radius' | 'posts'
-    nonce: number
-  }>({ metric: 'online', nonce: 0 })
-  useEffect(() => {
-    if (activeTab !== 'profile' || chromeIdle) return
-    const metrics: Array<'online' | 'radius' | 'posts'> = ['online', 'radius', 'posts']
-    let index = Math.max(0, metrics.indexOf(profileMetricRequest.metric))
-    setProfileMetric(metrics[index])
-    const firstHold = profileMetricRequest.nonce > 0 ? RADIUS_STAT_HOLD_MS : 3_200
-    let timer = 0
-    const advance = () => {
-      index = (index + 1) % metrics.length
-      setProfileMetric(metrics[index])
-      timer = window.setTimeout(advance, 3_200)
-    }
-    timer = window.setTimeout(advance, firstHold)
-    return () => window.clearTimeout(timer)
-  }, [activeTab, chromeIdle, profileMetricRequest])
-  // Leaving the profile forgets the request, so the next visit starts on the
-  // ordinary rotation rather than a held radius from last time.
-  useEffect(() => {
-    if (activeTab === 'profile') return
-    setProfileMetricRequest(current => current.nonce === 0 ? current : { metric: 'online', nonce: 0 })
-  }, [activeTab])
 
   useEffect(() => {
     const onPhoneMessage = (event: MessageEvent) => {
@@ -2607,6 +2565,14 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         // Keep one honest call surface. A second caller while another call is
         // ringing/negotiating/connected receives a busy decline instead of
         // replacing the first popup or leaving an unanswerable ringing doc.
+        // Every ring is a row in the phone's call log, busy-declined or not.
+        recordCallStart({
+          callId: timedCallId,
+          peerId: String(event.data.callerId ?? ''),
+          peerName: String(event.data.callerName ?? 'Unknown'),
+          direction: 'incoming',
+          video: event.data.video === true,
+        })
         if (incomingCallIdRef.current || callState().phase !== 'idle') {
           declineCall(timedCallId)
           return
@@ -2638,6 +2604,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       }
       if (event.data.type === 'poplurCallIncomingUnavailable') {
         const unavailableId = String(event.data.callId ?? '')
+        // A ring that went away unanswered is a MISSED call; one we accepted
+        // is already marked answered and this leaves it alone.
+        recordCallEnd(unavailableId, null)
         // A ringing-query removal also happens when we accept and advance the
         // document to connected. Accept clears this ref first, so only a call
         // that is still visibly pending is dismissed here.
@@ -2684,6 +2653,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       setIncomingFaceTime({ callerId: call.callerId, callerName: call.callerName })
     }
     void acceptCall(call.callId, call.callerName, {
+      peerId: call.callerId,
       video: call.video === true,
       context: normalizeCallContext(call.context),
     })
@@ -4546,6 +4516,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       traversedPinRadiusKm, mapWorldTotalKm, mapPopRadiusKm, profileReachKm, newsReachKm,
     }
   }
+  // The popup's TOTAL: every pop combined — the map's world tally when the
+  // map has reported one, else the ledger's earned total.
+  const statsTotalShown = (mapWorldTotalKm ?? earnedRadiusKm) * (unitMi ? KM_TO_MI : 1)
+  const statsTotalText = statsTotalShown >= 1_000
+    ? Math.round(statsTotalShown).toLocaleString()
+    : statsTotalShown.toFixed(1)
+  const statsCeilingText = Math.round(EARTH_RADIUS_KM * (unitMi ? KM_TO_MI : 1)).toLocaleString()
   const mapHasPopSubject = activeTab === 'map'
     && (traversedPinRadiusKm != null || mapHudContext?.scope === 'pop')
   const mapHasAccumulatedRadius = activeTab === 'map' && mapHudContext != null && !mapHasPopSubject
@@ -5363,13 +5340,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // …and the profile's own layers (viewer, share sheet, photo capture, a
     // visited profile) answer the cube rather than carrying their own ✕.
     if (activeTab === 'profile' && profileBackRef.current?.()) { playPop(); return }
-    // On the unobstructed profile the cube reveals your TOTAL RADIUS: the stat
-    // card jumps to the radius metric and holds it, instead of waiting for the
-    // rotation to come round to it.
+    // On the unobstructed profile the cube opens your stats: TOTAL RADIUS,
+    // who is online and how many pops you have posted — the popup the RADIUS
+    // card opens, reached from the cube as well.
     if (activeTab === 'profile') {
       playPop()
       setPopping(true)
-      setProfileMetricRequest(current => ({ metric: 'radius', nonce: current.nonce + 1 }))
+      setStatsOpen(true)
       return
     }
     if (activeTab === 'post') {
@@ -5888,13 +5865,18 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               </span>
             </div>
           )}
-          {/* Radius keeps the user’s local-unit toggle; the audience card takes
-              this exact slot on the next beat. */}
+          {/* The RADIUS card is the corner's one number. It reads whatever the
+              screen is showing — the playing post, the pin the arrows landed
+              on, a recognised person — and your TOTAL when there is no such
+              subject. It never rotates on a clock any more (user-ordered
+              5 Sep): the audience and pop counts it used to swap with live in
+              the stats popup a tap opens. */}
           <div
-            className={recordMs != null || (activeTab === 'profile' ? profileMetric !== 'radius' : showOnlineAudience) ? styles.statCardOut : styles.statCard}
-            onClick={() => { playPop(); setUnitMi(v => { setUseMiles(!v); return !v }) }}
+            className={recordMs != null ? styles.statCardOut : styles.statCard}
+            onClick={() => { playPop(); setStatsOpen(true) }}
             role="button"
-            aria-label={`Radius ${(shownRadiusKm * (unitMi ? KM_TO_MI : 1)).toFixed(1)} ${unitMi ? 'miles' : 'kilometres'} — tap to change units`}
+            data-home-radius-card=""
+            aria-label={`Radius ${(shownRadiusKm * (unitMi ? KM_TO_MI : 1)).toFixed(1)} ${unitMi ? 'miles' : 'kilometres'} — tap for your stats`}
           >
             <span className={styles.statLabel}>{seenUser
               ? `${seenUser.handle} ◆`
@@ -5907,20 +5889,17 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                 : mapHasAccumulatedRadius || activeTab === 'profile'
                   ? 'TOTAL RADIUS ◆'
                   : 'RADIUS ◆'}</span>
-            {/* `&& !chromeIdle` on all three counters: the swap beat already
-                pauses with chrome idle, but the counters ALSO re-count on every
-                DATA change — and the feed changes `radius` on every clip
-                advance (~10s), so an untouched feed ran an 880ms rAF volley,
-                per-frame restyle, ~23 tick oscillators and an AudioContext
-                wake every ten seconds forever. Measured before: +2 oscillators
-                per second at idle=true. Idle snaps the number instead; the
-                first touch un-idles the chrome and the very next change beats
-                again. */}
+            {/* `&& !chromeIdle`: the counter re-counts on every DATA change —
+                and the feed changes `radius` on every clip advance (~10s), so
+                an untouched feed ran an 880ms rAF volley, per-frame restyle,
+                ~23 tick oscillators and an AudioContext wake every ten seconds
+                forever. Idle snaps the number instead; the first touch
+                un-idles the chrome and the very next change beats again. */}
             <AnimatedRadiusMetrics
               radius={shownRadiusKm * (unitMi ? KM_TO_MI : 1)}
               ceiling={unitMi ? EARTH_RADIUS_KM * KM_TO_MI : EARTH_RADIUS_KM}
               unit={unitMi ? 'mi' : 'km'}
-              active={recordMs == null && !chromeIdle && (activeTab === 'profile' ? profileMetric === 'radius' : !showOnlineAudience)}
+              active={recordMs == null && !chromeIdle}
               accumulated={!seenUser && (mapHasAccumulatedRadius || (activeTab === 'profile' && !profileHasPopSubject))}
               recountKey={activeTab === 'map'
                 ? traversedPinKey
@@ -5934,32 +5913,69 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             />
             <span className={styles.statTrend}>{activeTab === 'map' ? mapRadiusTrend : activeTab === 'profile' ? (profileHasPopSubject ? 'this pop' : `${profilePostCount} posts`) : cubeScreen === 'feed-news' ? 'current story' : `${POST_COUNT} nearby`}</span>
           </div>
-          <div
-            className={recordMs == null && (activeTab === 'profile' ? profileMetric === 'online' : showOnlineAudience) ? styles.statCard : styles.statCardOut}
-            aria-label={`${compactAudience(onlineAudience)} users online ${onlineIsGlobal ? 'in the app' : 'in this area'}`}
-          >
-            <span className={styles.statLabel}>{onlineIsGlobal ? 'ONLINE NOW' : 'ONLINE HERE'}</span>
-            <AnimatedOnlineCount
-              value={onlineAudience}
-              active={recordMs == null && !chromeIdle && (activeTab === 'profile' ? profileMetric === 'online' : showOnlineAudience)}
-            />
-            <span className={styles.statSub}>{onlineIsGlobal ? 'users in app' : 'users in this area'}</span>
-            <span className={styles.statTrend}>{onlineIsGlobal ? 'LIVE APP' : 'LIVE AREA'}</span>
-          </div>
-          <div
-            className={recordMs == null && activeTab === 'profile' && profileMetric === 'posts' ? styles.statCard : styles.statCardOut}
-            aria-label={`${profilePostCount} posts published`}
-          >
-            <span className={styles.statLabel}>YOUR POSTS ◆</span>
-            <AnimatedPostCount
-              value={profilePostCount}
-              active={recordMs == null && !chromeIdle && activeTab === 'profile' && profileMetric === 'posts'}
-            />
-            <span className={styles.statSub}>posts published</span>
-            <span className={styles.statTrend}>YOUR POPS</span>
-          </div>
         </div>
       </div>
+
+      {/* The stats popup: the map's own card style (popups.module.css
+          .mapContent — clay panel, traffic lights, one action) carrying the
+          three numbers the corner used to rotate through, in the same shader
+          type. The KM/MI row is the unit choice that used to be a tap on the
+          card; a choice made here sticks, otherwise the unit follows the fix. */}
+      {statsOpen && (
+        <div
+          className={styles.statsScrim}
+          data-home-stats-popup=""
+          onClick={() => { playPop(); setStatsOpen(false) }}
+        >
+          <section
+            className={styles.statsCard}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Your Poplur stats"
+            onClick={event => event.stopPropagation()}
+          >
+            <header className={styles.statsTitleBar}>
+              <span className={styles.statsLights} aria-hidden="true"><i /><i /><i /></span>
+              <strong>POPLUR STATS</strong>
+              <span>LIVE</span>
+            </header>
+            <div className={styles.statsRows}>
+              <div className={styles.statsRow} aria-label={`${compactAudience(onlineAudience)} users online ${onlineIsGlobal ? 'in the app' : 'in this area'}`}>
+                <span className={styles.statLabel}>{onlineIsGlobal ? 'ONLINE NOW' : 'ONLINE HERE'}</span>
+                <AnimatedOnlineCount value={onlineAudience} active />
+                <span className={styles.statSub}>{onlineIsGlobal ? 'users in app' : 'users in this area'}</span>
+              </div>
+              <div className={styles.statsRow} aria-label={`Total radius ${statsTotalText} ${unitMi ? 'miles' : 'kilometres'}`}>
+                <span className={styles.statLabel}>TOTAL RADIUS ◆</span>
+                <span className={`${styles.statValue} ${styles.radiusValueAccum}`} data-counter-value={statsTotalText}>
+                  {statsTotalText}<span className={styles.statUnit}> {unitMi ? 'mi' : 'km'}</span>
+                </span>
+                <span className={styles.statSub}>of <span className={styles.statMax}>{statsCeilingText}</span> {unitMi ? 'mi' : 'km'}</span>
+              </div>
+              <div className={styles.statsRow} aria-label={`${profilePostCount} posts published`}>
+                <span className={styles.statLabel}>YOUR POPS ◆</span>
+                <AnimatedPostCount value={profilePostCount} active />
+                <span className={styles.statSub}>posts published</span>
+              </div>
+            </div>
+            <div className={styles.statsUnits} role="group" aria-label="Distance unit">
+              <button
+                type="button"
+                className={unitMi ? styles.statsUnit : styles.statsUnitOn}
+                aria-pressed={!unitMi}
+                onClick={() => { playPop(); setUseMiles(false); setUnitMi(false) }}
+              >KM</button>
+              <button
+                type="button"
+                className={unitMi ? styles.statsUnitOn : styles.statsUnit}
+                aria-pressed={unitMi}
+                onClick={() => { playPop(); setUseMiles(true); setUnitMi(true) }}
+              >MI</button>
+            </div>
+            <button type="button" className={styles.statsClose} onClick={() => { playPop(); setStatsOpen(false) }}>CLOSE</button>
+          </section>
+        </div>
+      )}
 
       {/* The map's status title, owned by the shell. It lives in the same
           chrome layer as the cube and the bottom row, so it idles and hides

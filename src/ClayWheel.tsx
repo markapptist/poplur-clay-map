@@ -33,6 +33,8 @@ const DEFAULT_ARC_DEPTH = 14
 const POINTS_PER_ITEM = 44
 const FRICTION = 0.955
 const MAX_VELOCITY = 16
+/** How long a stepper-driven glide may take before the wheel is landed by hand. */
+const GLIDE_LANDING_MS = 700
 const SNAP_VELOCITY = 0.9
 const CENTER_Y_FRAC = 0.5
 const DEFAULT_VISIBLE_RADIUS = 2.4
@@ -196,6 +198,27 @@ export default function ClayWheel({
     glideRef.current = true
     snapIndexRef.current = index
     ensureLoop()
+    // The travel runs on the governed clock, and that clock can be shut: the
+    // ambient gate sleeps after 30s untouched, the thermal park closes it on a
+    // hot phone (the camera is the hottest screen there is), and a hidden or
+    // backgrounded surface stops it outright. Every one of those left the
+    // wheel standing while the stepper kept changing the filter — the
+    // readout and the picture moved, the dial did not (the "stuck dial"
+    // report). A glide that has not arrived within a beat is landed by hand:
+    // the wheel jumps to the selection, which is the reduced-motion path and
+    // always correct, rather than waiting on a clock that may never tick.
+    const landing = window.setTimeout(() => {
+      if (!glideRef.current || snapIndexRef.current !== index) return
+      snapIndexRef.current = null
+      glideRef.current = false
+      velocityRef.current = 0
+      offsetRef.current = index
+      lastNotchRef.current = index
+      setOffset(index)
+      setSelected(index)
+      stopLoop()
+    }, GLIDE_LANDING_MS)
+    return () => window.clearTimeout(landing)
   }, [items, selectedId])
 
   // Momentum + snap, on the governed clock — but only WHILE the wheel moves.

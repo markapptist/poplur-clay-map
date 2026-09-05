@@ -368,6 +368,13 @@
 .statStackInert {
   pointer-events: none;
 }
+/* The card itself still answers a tap while the stack is inert: it opens the
+   stats popup, on the map as anywhere. Only the stack's empty area lets the
+   map's own controls beneath show through (the navigation End button sits
+   bottom-centre, clear of the card). */
+.statStackInert .statCard {
+  pointer-events: auto;
+}
 
 .statCard,
 .statCardOut {
@@ -1555,3 +1562,121 @@
      just does not travel. */
   .pushUp, .pushDown, .pushLeft, .pushRight, .screenFade { animation-duration: 1ms; }
 }
+
+/* ── The stats popup ─────────────────────────────────────────────────────────
+   The map's own card (popups.module.css .mapContent) re-cut for the shell: a
+   dimmed scrim, a clay panel with the traffic-light title bar, the three
+   numbers in the HUD's shader type, the KM/MI choice and one action. Dark
+   body on purpose — the HUD's value shaders were drawn for dark ground. */
+.statsScrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  padding: max(18px, env(safe-area-inset-top)) 18px
+    max(18px, env(safe-area-inset-bottom), var(--poplur-home-clearance, 18px));
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  pointer-events: auto;
+}
+
+.statsCard {
+  width: min(286px, calc(100vw - 36px));
+  max-height: min(72vh, 660px);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 14px;
+  background: rgba(24, 12, 26, 0.94);
+  box-shadow: 0 26px 76px rgba(0, 0, 0, 0.68), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  animation: statsCardIn 360ms cubic-bezier(0.2, 1.35, 0.35, 1) both;
+}
+
+@keyframes statsCardIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.9); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.statsTitleBar {
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.24);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(218, 214, 216, 0.94));
+  color: #282329;
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+}
+.statsTitleBar strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 900;
+}
+.statsTitleBar > span:last-child {
+  justify-self: end;
+  font: 900 9px/1 ui-monospace, 'SF Mono', monospace;
+  color: #756d73;
+}
+.statsLights { display: flex; gap: 6px; }
+.statsLights i { width: 11px; height: 11px; border-radius: 50%; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58); }
+.statsLights i:nth-child(1) { background: #ff5f57; }
+.statsLights i:nth-child(2) { background: #ffbd2e; }
+.statsLights i:nth-child(3) { background: #28c840; }
+
+.statsRows {
+  display: grid;
+  gap: 14px;
+  padding: 16px 16px 6px;
+}
+.statsRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
+}
+
+.statsUnits {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px 0;
+}
+.statsUnit,
+.statsUnitOn {
+  flex: 1;
+  min-height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 242, 248, 0.8);
+  font: 900 12px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.06em;
+}
+.statsUnitOn {
+  border-color: rgba(255, 95, 179, 0.9);
+  background: rgba(246, 59, 154, 0.32);
+  color: #fff;
+  box-shadow: 0 0 10px rgba(246, 59, 154, 0.45);
+}
+
+.statsClose {
+  width: calc(100% - 20px);
+  min-height: 46px;
+  margin: 10px;
+  border: 1px solid rgba(117, 7, 65, 0.5);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #ff4ba1, #d41470);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.46), 0 3px 0 #8f0b4f;
+  color: #fff;
+  font: 900 13px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+}
+.statsClose:active { transform: translateY(2px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32), 0 1px 0 #8f0b4f; }

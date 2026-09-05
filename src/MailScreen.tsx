@@ -1642,7 +1642,11 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
                     <i>SHARED</i>
                   </article>
                 ) : (
-                  <div className={m.from === 'me' ? `${styles.bubble} ${styles.mine}` : styles.bubble}>
+                  <div
+                    className={m.from === 'me' ? `${styles.bubble} ${styles.mine}` : styles.bubble}
+                    data-dm-message-from={m.from}
+                    data-dm-message-id={m.id}
+                  >
                     {m.text}
                   </div>
                 )}
