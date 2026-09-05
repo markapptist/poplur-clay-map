@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeLiveMapDocuments, normalizeLiveMapPost } from '../mapLivePosts'
-import { mapPinRenderKey } from '../mapPinRenderKey'
+import { mapPinRenderKey, pinMarkerNeedsRebuild } from '../mapPinRenderKey'
 import { readFileSync } from 'node:fs'
 
 describe('live Firestore Map posts', () => {
@@ -85,18 +85,78 @@ describe('live Firestore Map posts', () => {
     expect(normalizeLiveMapDocuments([])).toEqual([])
   })
 
-  it('changes marker identity whenever its position or popup payload changes', () => {
+  it('changes marker identity when what the marker DRAWS changes', () => {
     const base = normalizeLiveMapPost('post-1', publicPost)
     expect(base).not.toBeNull()
     if (!base) return
     const key = mapPinRenderKey(base)
     expect(mapPinRenderKey({ ...base, coords: [-79.4, 43.7] })).not.toBe(key)
     expect(mapPinRenderKey({ ...base, name: 'New place' })).not.toBe(key)
-    expect(mapPinRenderKey({ ...base, channel: 'news' })).not.toBe(key)
+    expect(mapPinRenderKey({ ...base, color: '#123456' })).not.toBe(key)
+    expect(mapPinRenderKey({ ...base, avatar: 'https://cdn.example/face.png' })).not.toBe(key)
+    expect(mapPinRenderKey({ ...base, radiusKm: base.radiusKm + 1 })).not.toBe(key)
+    expect(mapPinRenderKey({ ...base, radiusDeltaKm: 2 })).not.toBe(key)
+    expect(mapPinRenderKey({ ...base, ghost: true })).not.toBe(key)
+  })
+
+  it('holds a marker through a change it does not draw', () => {
+    // The card payload is NOT marker identity. Counters tick on every view and
+    // like inside the cohort's radius; when they were in this key, one tick
+    // removed and recreated every mounted marker for a board that looked
+    // exactly the same (measured 5 Sep: ten remove+create per counter tick).
+    // ClayMap resolves the live pin by id when the pin is clicked, so the card
+    // still opens on current numbers — see `pinsListRef` in the click handler.
+    const base = normalizeLiveMapPost('post-1', publicPost)
+    expect(base).not.toBeNull()
+    if (!base) return
+    const key = mapPinRenderKey(base)
+    expect(mapPinRenderKey({ ...base, channel: 'news' })).toBe(key)
     expect(mapPinRenderKey({
       ...base,
       media: { kind: 'video', src: 'https://cdn.example/changed.mp4', alt: 'Changed' },
-    })).not.toBe(key)
+    })).toBe(key)
+    expect(mapPinRenderKey({
+      ...base,
+      engagement: { ...(base.engagement ?? {}), views: (base.engagement?.views ?? 0) + 12 },
+    })).toBe(key)
+
+    const clayMap = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+    // The click reads the board as it stands, not the pin captured at build.
+    expect(clayMap).toContain('onPinOpenRef.current?.(pinsListRef.current.find(candidate => candidate.id === pin.id) ?? pin)')
+    // And the effect reconciles against mounted markers instead of opening
+    // with a full teardown.
+    expect(clayMap).toContain('const livePins = pinRegistryRef.current')
+    expect(clayMap).not.toMatch(/pinMarkersRef\.current\.forEach\(m => m\.remove\(\)\)\s*\n\s*pinMarkersRef\.current = \[\]\s*\n\s*if \(radiusPreviewLaunch\) return/)
+  })
+
+  it('retires a mounted marker only when what it draws has changed', () => {
+    // The reconcile the pin effect runs: a marker is a DOM subtree with a
+    // composited sprite, so it is torn down for a change the eye can see and
+    // kept for one it cannot. Before this, ANY change to ANY pop rebuilt every
+    // mounted marker on the board.
+    const base = normalizeLiveMapPost('post-1', publicPost)
+    expect(base).not.toBeNull()
+    if (!base) return
+    const held = mapPinRenderKey(base)
+
+    // Drawn — rebuild.
+    expect(pinMarkerNeedsRebuild(held, { ...base, radiusKm: base.radiusKm + 1 })).toBe(true)
+    expect(pinMarkerNeedsRebuild(held, { ...base, coords: [-79.4, 43.7] })).toBe(true)
+    expect(pinMarkerNeedsRebuild(held, { ...base, color: '#0f0f0f' })).toBe(true)
+    expect(pinMarkerNeedsRebuild(held, { ...base, ghost: true })).toBe(true)
+    expect(pinMarkerNeedsRebuild(held, { ...base, radiusDeltaKm: -3 })).toBe(true)
+
+    // Not drawn — keep the marker that is already standing there.
+    expect(pinMarkerNeedsRebuild(held, { ...base, channel: 'news' })).toBe(false)
+    expect(pinMarkerNeedsRebuild(held, {
+      ...base,
+      engagement: { ...(base.engagement ?? {}), views: (base.engagement?.views ?? 0) + 40 },
+    })).toBe(false)
+    expect(pinMarkerNeedsRebuild(held, base)).toBe(false)
+
+    // And the effect asks this question per pop rather than rebuilding the board.
+    const clayMap = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+    expect(clayMap).toContain('if (held && pinMarkerNeedsRebuild(held.key, pin)) {')
   })
 
   it('keeps production Map rendering on the realtime database boundary', () => {

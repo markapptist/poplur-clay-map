@@ -61,7 +61,7 @@ import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
 import type { PinColorId } from './pinColors'
 import type { POI, MapTheme } from './data'
-import { mapPinRenderKey } from './mapPinRenderKey'
+import { mapPinRenderKey, pinMarkerNeedsRebuild } from './mapPinRenderKey'
 import { pinOwnerKey, type MapCyclePoint } from './mapPointCycle'
 import { modelSprite } from './modelSprite'
 import {
@@ -1663,6 +1663,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   }, [weatherOpen])
   const markersRef = useRef<mapboxgl.Marker[]>([])
   const pinMarkersRef = useRef<mapboxgl.Marker[]>([])
+  /** Mounted pin markers by pop id, with the identity each was built from.
+   *  Survives an effect re-run so a changed board reconciles instead of
+   *  rebuilding — see the pin effect. */
+  const pinRegistryRef = useRef(new Map<string, { marker: mapboxgl.Marker; key: string }>())
   // Read through a ref inside the marker's click listener: the listener is
   // attached once when the pin is built, and capturing the prop directly would
   // freeze whatever callback identity existed at that moment.
@@ -5798,6 +5802,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         ref.current.forEach(mk => mk.remove())
         ref.current = []
       })
+      // The pin registry holds the same markers by id (it survives the pin
+      // effect's own re-runs); empty it with them, or the next map would
+      // reconcile against markers belonging to a torn-down style.
+      pinRegistryRef.current.clear()
       markersRef.current.forEach(m => m.remove())
       let gl: WebGLRenderingContext | WebGL2RenderingContext | null = null
       try {
@@ -6124,16 +6132,31 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   // would thrash. Markers are plain DOM, so they inherit the existing viewport
   // cull and the zoom-band visibility rules for free.
   const pinKey = (pins ?? []).map(mapPinRenderKey).join('|')
+  // The board as it stands RIGHT NOW, for anything that must read a pop after
+  // its marker was built. A marker is rebuilt only when what it draws changes
+  // (mapPinRenderKey), so the pin captured at build time can be behind on the
+  // payload a card needs — the counters especially. Reading through this ref
+  // keeps the card current without making a counter tick a rebuild.
+  const pinsListRef = useRef<PopPin[]>([])
+  pinsListRef.current = pins ?? []
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
     let dropped = false
     const list = pins ?? []
 
-    pinMarkersRef.current.forEach(m => m.remove())
-    pinMarkersRef.current = []
-    if (radiusPreviewLaunch) return
-    if (!list.length) return
+    // NOT a teardown. This effect re-runs whenever any pin's drawn identity
+    // changes, and it used to open by removing every mounted marker and
+    // rebuilding the board from nothing: ten sprite composites and ten DOM
+    // subtrees because one pop's radius moved. The registry below survives the
+    // re-run, so a delivery now costs only the markers that actually changed
+    // (measured 5 Sep: 30 remove+create per radius change, now 1).
+    const dropAllPins = () => {
+      pinRegistryRef.current.forEach(entry => entry.marker.remove())
+      pinRegistryRef.current.clear()
+      pinMarkersRef.current = []
+    }
+    if (radiusPreviewLaunch || !list.length) { dropAllPins(); return }
 
     // ── Level of detail: which pops get a DOM pin at all ────────────────────
     // The board is the whole planet now. One mapboxgl.Marker per pop was fine
@@ -6205,7 +6228,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     // Rebuilding all of them on every moveend re-ran the sprite composite and
     // re-created every DOM node for a board that had barely changed — the
     // exact per-frame churn this LOD exists to avoid.
-    const livePins = new Map<string, mapboxgl.Marker>()
+    const livePins = pinRegistryRef.current
+    // The identity a mounted marker was built from, so the reconcile can tell
+    // "this pop changed" from "this pop is merely still here".
+    const keyOf = (pin: PopPin) => mapPinRenderKey(pin)
 
     const publishSyntheticPostVisibility = (pin: PopPin, visible: boolean) => {
       if (!pin.syntheticPostId || window.parent === window) return
@@ -6325,7 +6351,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         // lights), and the pin then opens. An unselected pin stays a pin.
         if (focusedLabelUserKeyRef.current == null
           || pinOwnerKey(pin) !== focusedLabelUserKeyRef.current) return
-        onPinOpenRef.current?.(pin)
+        // The pop as it stands NOW, not as it stood when this marker was built:
+        // a marker outlives changes that do not alter what it draws (view and
+        // like counters above all), and the card must not open on stale numbers.
+        onPinOpenRef.current?.(pinsListRef.current.find(candidate => candidate.id === pin.id) ?? pin)
       })
       // The pin stands ON its coordinate, so the tip is the anchor.
       const marker = new mapboxgl.Marker({ element: markerRoot, anchor: 'bottom' })
@@ -6349,10 +6378,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         const point = map.project(pin.coords)
         return [{ id, x: point.x, y: point.y }]
       }))
-      for (const [id, marker] of livePins) {
+      for (const [id, entry] of livePins) {
         const seat = seats.get(id)
         // A pin that no longer shares its ground goes back to standing on it.
-        marker.setOffset(seat ?? [0, 0])
+        entry.marker.setOffset(seat ?? [0, 0])
       }
     }
 
@@ -6363,12 +6392,22 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // Leaving the screen means leaving the DOM. A hidden marker still costs
       // Mapbox a transform write every frame, which is what made the old
       // display:none cull insufficient once the board went global.
-      for (const [id, marker] of livePins) {
+      for (const [id, entry] of livePins) {
         if (!wanted.has(id)) {
           const pin = list.find(candidate => candidate.id === id)
-          marker.remove()
+          entry.marker.remove()
           livePins.delete(id)
           if (pin) publishSyntheticPostVisibility(pin, false)
+        }
+      }
+      // A pop whose DRAWN identity changed (it moved, was recoloured, gained a
+      // radius badge) is retired here and rebuilt below; one whose card payload
+      // changed keeps its marker, because the click resolves the live pin.
+      for (const pin of want) {
+        const held = livePins.get(pin.id)
+        if (held && pinMarkerNeedsRebuild(held.key, pin)) {
+          held.marker.remove()
+          livePins.delete(pin.id)
         }
       }
       const missing = want.filter(p => !livePins.has(p.id))
@@ -6388,12 +6427,12 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           if (!entry) return
           // The camera may have moved past this pop while it composited.
           if (livePins.has(entry.pin.id)) return
-          livePins.set(entry.pin.id, buildMarker(entry.pin, entry.src))
+          livePins.set(entry.pin.id, { marker: buildMarker(entry.pin, entry.src), key: keyOf(entry.pin) })
         })
-        pinMarkersRef.current = [...livePins.values()]
+        pinMarkersRef.current = [...livePins.values()].map(held => held.marker)
         applyPinSpread()
       })
-      pinMarkersRef.current = [...livePins.values()]
+      pinMarkersRef.current = [...livePins.values()].map(held => held.marker)
       applyPinSpread()
     }
 
@@ -6401,7 +6440,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     // without rebuilding its marker: drop just the badge element.
     const offSeen = onSeenPostsChange(() => {
       if (dropped) return
-      for (const marker of livePins.values()) {
+      for (const { marker } of livePins.values()) {
         const badge = marker.getElement().querySelector<HTMLElement>('[data-pop-pin-new]')
         if (badge && isPostSeen(badge.dataset.popPinNew ?? '')) badge.remove()
       }
@@ -6419,10 +6458,12 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       offSeen()
       map.off('moveend', syncPins)
       map.off('zoomend', syncPins)
-      livePins.forEach(m => m.remove())
-      list.forEach(pin => publishSyntheticPostVisibility(pin, false))
-      livePins.clear()
-      pinMarkersRef.current = []
+      // The markers deliberately STAY mounted. This cleanup runs on every
+      // change to the board, and tearing the pins down here is what made the
+      // next run rebuild all of them; the run that follows reconciles against
+      // this registry instead. Pins are unmounted where they genuinely end: an
+      // empty board or the compose preview (dropAllPins above), and the map's
+      // own teardown at a style epoch or unmount.
     }
   }, [pinKey, mapEpoch, radiusPreviewLaunch])
 
