@@ -873,6 +873,9 @@ export default function FeedTwin({
   // toggles playback, left/right step ±10s — what fingers do on the buttons.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // The channel wheel, cube and text fields own their focused keys. A
+      // bubbled arrow must not also tune Feed or advance its current post.
+      if (e.target instanceof Element && e.target.closest('button, input, textarea, select, [contenteditable], [role="listbox"]')) return
       if (playerModeRef.current) {
         if (e.key === ' ' || e.key === 'k') { e.preventDefault(); togglePlayback() }
         if (e.key === 'ArrowLeft') { e.preventDefault(); seekBy(-10) }
