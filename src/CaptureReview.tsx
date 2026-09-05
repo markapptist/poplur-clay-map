@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import composer from './PostComposer.module.css'
 import styles from './CaptureReview.module.css'
+import dialog from './PoplurDialog.module.css'
 import type { ComposerMedia } from './PostComposer'
 
 /**
@@ -10,8 +11,8 @@ import type { ComposerMedia } from './PostComposer'
  *
  * It is the FIRST screen of the upload pipeline, so it is built from the
  * composer's own parts — the same fixed full-bleed stage, the same
- * edge-to-edge preview, the same step chip top-left and the same clay panel
- * and buttons at the base — rather than a look of its own. Accepting hands
+ * edge-to-edge preview. The controls float over the shot and use the same
+ * bubbly buttons as the map dialogs. Accepting hands
  * the exact same media to the composer, and because the geometry is shared
  * the capture does not jump when the next step arrives over it.
  *
@@ -78,22 +79,21 @@ export default function CaptureReview({
 
       {/* Same chip the edit and VFX steps wear, so the review reads as step
           one of the pipeline it opens, not a screen of its own. */}
-      <div className={composer.composerChrome} aria-hidden="true">
-        <img src="logo_icon.png" alt="" />
+      <div className={styles.caption} aria-hidden="true">
         <span>{isVideo ? 'REVIEW VIDEO' : 'REVIEW PHOTO'}</span>
       </div>
 
-      <div className={composer.panel}>
+      <div className={styles.panel}>
         <p className={styles.copy}>
           {isVideo
             ? <>Your recording{media.length ? <> · <strong>{media.length}</strong></> : null}. Keep it, or record another.</>
             : <>Your photo. Keep it, or take another.</>}
         </p>
         <div className={styles.actions}>
-          <button type="button" className={composer.secondary} onClick={onRetake}>
+          <button type="button" className={`${dialog.primary} ${styles.retake}`} onClick={onRetake}>
             Retake
           </button>
-          <button type="button" className={composer.primary} onClick={onAccept} autoFocus>
+          <button type="button" className={dialog.primary} onClick={onAccept} autoFocus>
             Use this <span aria-hidden="true">→</span>
           </button>
         </div>

@@ -3524,9 +3524,7 @@ export default function MapApp() {
     // poster's pops ("k of N"); the route-sync effect below resolves the index.
     focusedMapPointKeyRef.current = `pin:${pinId}`
   }, [])
-  const handlePinLabelTap = useCallback((pin: PopPin) => {
-    toggleOwnerFilter(pinOwnerKey(pin), pin.id)
-  }, [toggleOwnerFilter])
+
 
   /** Whose pin the framed point belongs to, for the card's tappable handle.
    *  Read from the live post list rather than carried on MapCyclePoint: the
@@ -4059,8 +4057,7 @@ export default function MapApp() {
     const onAction = (event: MessageEvent) => {
       if (event.data?.type !== 'poplur-map-action') return
       switch (event.data.action) {
-        // The handle in the shell's point card, tapped: same toggle the pin's
-        // own label runs, arriving from the other document.
+        // The handle in the top point card owns poster traversal.
         case 'traverseOwner': {
           const id = typeof event.data.id === 'string' ? event.data.id : ''
           const owner = id ? pointOwnerRef.current(id) : null
@@ -4356,7 +4353,6 @@ export default function MapApp() {
         onConquerSnapshot={isEmbedded ? undefined : setMapConquerSnapshot}
         onWorldCountryChange={handleWorldCountryChange}
         onPinOpen={openClickedMapPinContent}
-        onPinLabelTap={handlePinLabelTap}
         focusedLabelUserKey={tourOn ? null : focusedUserKey}
         focusedMapPoint={tourOn ? null : focusedMapPoint}
         onCurrentLocationChange={acceptCurrentLocation}

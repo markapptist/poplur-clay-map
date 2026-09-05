@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest'
  */
 const review = readFileSync('src/CaptureReview.tsx', 'utf8')
 const composerCss = readFileSync('src/PostComposer.module.css', 'utf8')
+const reviewCss = readFileSync('src/CaptureReview.module.css', 'utf8')
 const home = readFileSync('src/HomeTwin.tsx', 'utf8')
 
 describe('the capture review is not covered by the home chrome', () => {
@@ -46,7 +47,8 @@ describe('the capture review is not covered by the home chrome', () => {
     expect(review).toContain("import composer from './PostComposer.module.css'")
     expect(review).toContain('className={composer.stage}')
     expect(review).toContain('className={composer.preview}')
-    expect(review).toContain('className={composer.panel}')
+    expect(review).toContain('className={styles.panel}')
+    expect(review).not.toContain('className={composer.panel}')
     expect(review).not.toContain('2147483000')
     const stage = composerCss.slice(composerCss.indexOf('.stage {'))
     expect(stage.slice(0, stage.indexOf('}'))).toContain('position: fixed')
@@ -62,7 +64,10 @@ describe('the capture review is not covered by the home chrome', () => {
     // clearance as bottom padding.
     const panelBlocks = [...composerCss.matchAll(/^\.panel \{[\s\S]*?\n\}/gm)].map(m => m[0])
     expect(panelBlocks.some(block => block.includes('var(--composer-home-clearance)'))).toBe(true)
-    expect(review).toContain('className={composer.secondary}')
-    expect(review).toContain('className={composer.primary}')
+    expect(reviewCss).toContain('bottom: var(--composer-home-clearance)')
+    expect(reviewCss).toContain('background: transparent')
+    expect(review).toContain("import dialog from './PoplurDialog.module.css'")
+    expect(review).toContain('className={dialog.primary}')
+    expect(review).toContain('${dialog.primary} ${styles.retake}')
   })
 })

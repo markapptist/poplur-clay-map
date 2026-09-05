@@ -1,27 +1,43 @@
-/* The capture review borrows the composer's stage, preview, chip, panel and
-   buttons wholesale (PostComposer.module.css) so it is the same screen the
-   pipeline continues on. Only the two-button row and its one line of copy
-   are its own. */
-
+/* Review keeps the capture visible behind the controls. */
+.panel {
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  right: 0;
+  bottom: var(--composer-home-clearance);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  background: transparent;
+}
+.caption {
+  position: absolute;
+  z-index: 1;
+  top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 12px);
+  left: 72px;
+  right: 72px;
+  text-align: center;
+  color: #8de9ff;
+  font: 900 11px/1.3 ui-monospace, monospace;
+  letter-spacing: 1.6px;
+  text-shadow: 0 2px 4px #24121f;
+}
 .copy {
   margin: 0;
-  color: rgba(255, 242, 248, 0.84);
-  font: 700 13px/1.35 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
-  letter-spacing: 0.2px;
+  color: #fff5fa;
+  font: 800 13px/1.35 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  text-shadow: 0 1px 3px #24121f, 0 2px 8px #24121f;
 }
 .copy strong { color: #ff8ac6; font-weight: 900; }
-
-/* Retake and Use this side by side, the decision weighted toward keeping the
-   shot. Both buttons are the composer's own clay controls. */
 .actions {
   display: grid;
   grid-template-columns: 1fr 1.6fr;
-  gap: 10px;
+  gap: 12px;
 }
-.actions button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+.actions button { width: 100%; min-width: 0; margin: 0; }
+.actions .retake {
+  color: #771842;
+  text-shadow: 0 1px 0 #fff5fa;
+  background: linear-gradient(180deg, #fff1f8 0%, #ffcae3 48%, #ee94bf 100%);
 }
-.actions button span { font-size: 20px; line-height: 0; }

@@ -21,10 +21,10 @@ describe('the point card handle arms the poster filter', () => {
   const homeCss = read('HomeTwin.module.css')
   const appCss = read('App.module.css')
 
-  it('routes the pin label and both cards through one toggle', () => {
+  it('routes the top card through the owner toggle and leaves pin labels inert', () => {
     expect(mapApp).toContain('const toggleOwnerFilter = useCallback((ownerKey: string, pinId: string)')
-    // The pin's own label keeps working through the same function.
-    expect(mapApp).toContain('toggleOwnerFilter(pinOwnerKey(pin), pin.id)')
+    expect(mapApp).not.toContain('onPinLabelTap=')
+    expect(read('ClayMap.tsx')).not.toContain('onPinLabelTap')
     // The shell's card reaches it as an action.
     expect(mapApp).toContain("case 'traverseOwner':")
     expect(mapApp).toContain('toggleOwnerFilterRef.current(owner.key, id)')
@@ -43,6 +43,7 @@ describe('the point card handle arms the poster filter', () => {
   it('makes the shell handle a real control that posts the action', () => {
     expect(home).toContain("postWebMapAction('traverseOwner', { id: mapFocusedPoint.id })")
     expect(home).toContain('data-map-point-owner-armed')
+    expect(home).toMatch(/data-poplur-native-hit-region\s+data-map-point-owner=/)
     // The card refuses the pointer; the handle must take it back or the tap
     // never lands.
     expect(homeCss).toMatch(/\.mapTitleNameOwner \{[^}]*pointer-events: auto/)

@@ -19,6 +19,8 @@
    dial used to be the whole column. */
 .rail { display: flex; flex-direction: column; }
 .head {
+  position: relative;
+  top: calc(var(--poplur-feed-action-top) - var(--poplur-rail-top));
   display: flex;
   flex-direction: column;
   align-items: center;

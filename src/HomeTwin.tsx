@@ -5997,6 +5997,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                   type="button"
                   className={`${styles.mapTitleName} ${styles.mapTitleNameOwner}${
                     mapOwnerFilterKey === mapFocusedPoint.ownerKey ? ` ${styles.mapTitleNameOwnerArmed}` : ''}`}
+                  data-poplur-native-hit-region
                   data-map-point-owner={mapFocusedPoint.ownerKey}
                   data-map-point-owner-armed={mapOwnerFilterKey === mapFocusedPoint.ownerKey ? 'true' : 'false'}
                   aria-pressed={mapOwnerFilterKey === mapFocusedPoint.ownerKey}
