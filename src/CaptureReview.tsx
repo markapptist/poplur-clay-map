@@ -1,13 +1,19 @@
 import { useEffect, useRef } from 'react'
+import composer from './PostComposer.module.css'
 import styles from './CaptureReview.module.css'
 import type { ComposerMedia } from './PostComposer'
 
 /**
- * The beat between capturing and composing: a full-screen preview of exactly
- * what the shutter or the recorder just produced, with one decision — keep it
- * and move on to "Create your pop", or retake and go straight back to the
- * live camera. It sits ABOVE the camera HUD and the home chrome, so the raw
- * shot is the only thing on screen while you decide.
+ * The beat between capturing and composing: the shot the shutter or the
+ * recorder just produced, with one decision — keep it and move on to the
+ * composer, or retake and go straight back to the live camera.
+ *
+ * It is the FIRST screen of the upload pipeline, so it is built from the
+ * composer's own parts — the same fixed full-bleed stage, the same
+ * edge-to-edge preview, the same step chip top-left and the same clay panel
+ * and buttons at the base — rather than a look of its own. Accepting hands
+ * the exact same media to the composer, and because the geometry is shared
+ * the capture does not jump when the next step arrives over it.
  *
  * Roll picks skip this (choosing a saved photo is already a decision); only a
  * fresh capture is reviewed.
@@ -33,14 +39,10 @@ export default function CaptureReview({
     void el.play().catch(() => {})
   }, [media.src])
 
-  // Tell the shell a full-screen capture modal is up.
-  //
-  // This screen sets z-index 2147483000 and still lost: it lives inside
-  // .contentLayer (z-index 4), a clamped stacking context, so no value here
-  // can climb above the home chrome at 260. The radius card drew straight
-  // over "Use this" and the chrome's column rules ran down the photo. The
-  // composer hit this exact wall and solved it the only way that works from
-  // in here — the chrome stands down — so this asks for the same.
+  // Tell the shell a full-screen capture modal is up, so the home chrome
+  // stands down the way it does for the composer. Nothing inside
+  // .contentLayer can stack above that chrome on its own; asking is the only
+  // route that works from in here.
   useEffect(() => {
     const announce = (open: boolean) => {
       window.dispatchEvent(new CustomEvent('poplur-capture-review', { detail: open }))
@@ -49,13 +51,20 @@ export default function CaptureReview({
     return () => { announce(false) }
   }, [])
 
+  const isVideo = media.kind === 'video'
+
   return (
-    <section className={styles.review} role="dialog" aria-modal="true" aria-label="Review your capture">
-      <div className={styles.stage}>
-        {media.kind === 'video' ? (
+    // The composer's stage: position fixed, one modest z-index above the
+    // camera HUD. The first version of this screen was an absolute child of
+    // the paged camera track with a z-index near the 32-bit limit, and on the
+    // phone the rails, the AR dial and the zoom presets drew straight over the
+    // photo — the same trap the composer already escaped by standing here.
+    <div className={composer.stage} role="dialog" aria-modal="true" aria-label="Review your capture">
+      <div className={composer.preview}>
+        {isVideo ? (
           <video
             ref={videoRef}
-            className={styles.media}
+            className={composer.media}
             src={media.src}
             playsInline
             loop
@@ -63,21 +72,32 @@ export default function CaptureReview({
             autoPlay
           />
         ) : (
-          <img className={styles.media} src={media.src} alt="Your capture" draggable={false} />
+          <img className={composer.media} src={media.src} alt="Your capture" draggable={false} />
         )}
-        <span className={styles.eyebrow}>
-          {media.kind === 'video' ? 'Your recording' : 'Your photo'}
-          {media.length ? ` · ${media.length}` : ''}
-        </span>
       </div>
-      <div className={styles.actions}>
-        <button type="button" className={styles.retake} onClick={onRetake}>
-          Retake
-        </button>
-        <button type="button" className={styles.accept} onClick={onAccept} autoFocus>
-          Use this <span aria-hidden="true">→</span>
-        </button>
+
+      {/* Same chip the edit and VFX steps wear, so the review reads as step
+          one of the pipeline it opens, not a screen of its own. */}
+      <div className={composer.composerChrome} aria-hidden="true">
+        <img src="logo_icon.png" alt="" />
+        <span>{isVideo ? 'REVIEW VIDEO' : 'REVIEW PHOTO'}</span>
       </div>
-    </section>
+
+      <div className={composer.panel}>
+        <p className={styles.copy}>
+          {isVideo
+            ? <>Your recording{media.length ? <> · <strong>{media.length}</strong></> : null}. Keep it, or record another.</>
+            : <>Your photo. Keep it, or take another.</>}
+        </p>
+        <div className={styles.actions}>
+          <button type="button" className={composer.secondary} onClick={onRetake}>
+            Retake
+          </button>
+          <button type="button" className={composer.primary} onClick={onAccept} autoFocus>
+            Use this <span aria-hidden="true">→</span>
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

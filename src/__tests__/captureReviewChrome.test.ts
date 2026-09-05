@@ -4,15 +4,19 @@ import { describe, expect, it } from 'vitest'
 /**
  * The capture review is a full-screen modal trapped inside .contentLayer
  * (z-index 4), so the home chrome at 260 draws over it however high its own
- * z-index climbs — and it climbs to 2147483000. On 4 Sep the radius card sat
- * on top of "Use this" and the chrome's column rules ran down the photo.
+ * z-index climbs. On 4 Sep the radius card sat on top of "Use this" and the
+ * chrome's column rules ran down the photo; on 2 Sep the camera's own rails,
+ * AR dial and zoom presets drew over it on the phone, because it stood as an
+ * absolute child of the paged camera track with a z-index near the 32-bit
+ * limit.
  *
- * PostComposer hit this exact wall and the only fix that works from inside a
- * clamped stacking context is for the chrome to stand down. These assertions
- * keep both halves of that arrangement wired together.
+ * PostComposer hit both walls first. The fix that works is twofold: the
+ * chrome stands down when asked, and the modal stands on the composer's own
+ * fixed stage instead of a stage of its own. These assertions keep every
+ * half of that arrangement wired together.
  */
 const review = readFileSync('src/CaptureReview.tsx', 'utf8')
-const reviewCss = readFileSync('src/CaptureReview.module.css', 'utf8')
+const composerCss = readFileSync('src/PostComposer.module.css', 'utf8')
 const home = readFileSync('src/HomeTwin.tsx', 'utf8')
 
 describe('the capture review is not covered by the home chrome', () => {
@@ -36,9 +40,29 @@ describe('the capture review is not covered by the home chrome', () => {
     expect(home).not.toContain('setComposerOpen(true)')
   })
 
+  it('stands on the composer stage, so it clears the camera HUD the same way', () => {
+    // position: fixed at the composer's z-index, not an absolute child of the
+    // paged camera track with a z-index near the 32-bit limit.
+    expect(review).toContain("import composer from './PostComposer.module.css'")
+    expect(review).toContain('className={composer.stage}')
+    expect(review).toContain('className={composer.preview}')
+    expect(review).toContain('className={composer.panel}')
+    expect(review).not.toContain('2147483000')
+    const stage = composerCss.slice(composerCss.indexOf('.stage {'))
+    expect(stage.slice(0, stage.indexOf('}'))).toContain('position: fixed')
+  })
+
   it('reserves room for the cube instead of drawing under it', () => {
-    expect(reviewCss).toContain('--composer-home-clearance:')
-    const actions = reviewCss.slice(reviewCss.indexOf('.actions {'))
-    expect(actions.slice(0, actions.indexOf('}'))).toContain('var(--composer-home-clearance')
+    // The clearance is the composer's: defined on its stage, spent by its
+    // panel's bottom padding, which is where Retake / Use this now sit.
+    const stage = composerCss.slice(composerCss.indexOf('.stage {'))
+    expect(stage.slice(0, stage.indexOf('}'))).toContain('--composer-home-clearance:')
+    // The step panel's own block — several `.panel {` rules exist (the scrim
+    // one-liner, the paint block); the one that lays it out spends the
+    // clearance as bottom padding.
+    const panelBlocks = [...composerCss.matchAll(/^\.panel \{[\s\S]*?\n\}/gm)].map(m => m[0])
+    expect(panelBlocks.some(block => block.includes('var(--composer-home-clearance)'))).toBe(true)
+    expect(review).toContain('className={composer.secondary}')
+    expect(review).toContain('className={composer.primary}')
   })
 })
