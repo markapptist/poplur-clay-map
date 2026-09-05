@@ -9,6 +9,8 @@ import { normalizeMapFeedHandoff, type MapFeedHandoff } from '../mapFeedHandoff'
 // post and the feed must stand it up from that.
 
 const CHANNEL = 'modelling'
+// A viewer standing on the post's origin, so reach is not what is under test.
+const NEARBY: [number, number] = [-79.383, 43.653]
 
 function handoff(overrides: Partial<MapFeedHandoff> = {}): MapFeedHandoff {
   return {
@@ -41,7 +43,7 @@ function poolPost(overrides: Partial<ChannelPost> = {}): ChannelPost {
 
 describe('map → feed handoff injection', () => {
   it('stands the handed-off post up first when the pool does not hold it', () => {
-    const posts = withHandoffPost([], CHANNEL, handoff())
+    const posts = withHandoffPost([], CHANNEL, handoff(), { viewer: NEARBY })
     expect(posts).toHaveLength(1)
     expect(posts[0].id).toBe('pin-post-1')
     expect(posts[0].user).toBe('@handoff_user')
@@ -51,7 +53,7 @@ describe('map → feed handoff injection', () => {
   })
 
   it('puts it ahead of whatever the channel already had', () => {
-    const posts = withHandoffPost([poolPost({ id: 'other-1', user: '@other' })], CHANNEL, handoff())
+    const posts = withHandoffPost([poolPost({ id: 'other-1', user: '@other' })], CHANNEL, handoff(), { viewer: NEARBY })
     expect(posts.map(post => post.id)).toEqual(['pin-post-1', 'other-1'])
   })
 
@@ -75,7 +77,7 @@ describe('map → feed handoff injection', () => {
 
   it('uses the photo itself as the poster for a photo pin', () => {
     const photo = 'https://storage.googleapis.com/poplur2025-assets/posts/pin-post-1.jpg'
-    const posts = withHandoffPost([], CHANNEL, handoff({ mediaType: 'photo', mediaURL: photo, posterURL: undefined }))
+    const posts = withHandoffPost([], CHANNEL, handoff({ mediaType: 'photo', mediaURL: photo, posterURL: undefined }), { viewer: NEARBY })
     expect(posts[0].poster).toBe(photo)
   })
 
@@ -107,7 +109,7 @@ describe('the map pin payload survives normalization', () => {
     expect(target?.id).toBe('firestore:abc123')
     expect(target?.channelId).toBe('modelling')
     expect(target?.mediaURL).toContain('abc123.mp4')
-    expect(withHandoffPost([], 'modelling', target)[0]?.id).toBe('abc123')
+    expect(withHandoffPost([], 'modelling', target, { viewer: NEARBY })[0]?.id).toBe('abc123')
   })
 
   it('accepts a data-URI photo (a pin captured moments ago, not yet uploaded)', () => {
@@ -120,5 +122,52 @@ describe('the map pin payload survives normalization', () => {
       createdAtMillis: 0,
     })
     expect(target?.mediaType).toBe('photo')
+  })
+})
+
+// Recovering a post the pool has not delivered yet must not become a way to
+// put a post on the board that the viewer was never entitled to see. The
+// payload comes from the map document, so it faces the same gates a delivered
+// row faces.
+describe('a recovered post still has to be eligible', () => {
+  const FAR: [number, number] = [151.2, -33.87]        // Sydney
+
+  it('stands up a post whose radius reaches the viewer', () => {
+    const posts = withHandoffPost([], CHANNEL, handoff(), { viewer: NEARBY })
+    expect(posts.map(p => p.id)).toEqual(['pin-post-1'])
+  })
+
+  it('refuses one whose radius does not reach the viewer', () => {
+    const posts = withHandoffPost([], CHANNEL, handoff(), { viewer: FAR })
+    expect(posts).toEqual([])
+  })
+
+  it('refuses one the viewer has hidden', () => {
+    const posts = withHandoffPost([], CHANNEL, handoff(), {
+      viewer: NEARBY,
+      hiddenPostIds: ['pin-post-1'],
+    })
+    expect(posts).toEqual([])
+  })
+
+  it('refuses a payload with no origin to measure reach from', () => {
+    const posts = withHandoffPost([], CHANNEL, handoff({
+      originLatitude: undefined,
+      originLongitude: undefined,
+    }), { viewer: NEARBY })
+    expect(posts).toEqual([])
+  })
+
+  it('still reorders a post the pool already delivered, gates or not', () => {
+    // Already in the pool means it already passed delivery; the handoff only
+    // changes the order, so it must not be re-judged and dropped.
+    const posts = withHandoffPost([poolPost()], CHANNEL, handoff(), { viewer: FAR })
+    expect(posts.map(p => p.id)).toEqual(['pin-post-1'])
+  })
+
+  it('refuses when there is no viewer fix to measure against', () => {
+    // Fail closed, the same way the viewer fix itself does on a shell with no
+    // location yet: no fix means no way to know the post reaches you.
+    expect(withHandoffPost([], CHANNEL, handoff())).toEqual([])
   })
 })

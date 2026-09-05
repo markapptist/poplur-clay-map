@@ -22,9 +22,26 @@ describe('production Feed realtime policy', () => {
     expect(source).toContain('No posts in this channel')
   })
 
-  it('lets a Map handoff reorder only an eligible post still present in Firestore', () => {
-    expect(source).toContain('const focusedPost = ranked.find(post => post.id === focusedId)')
-    expect(source).not.toContain('const focusedPost = candidates.find(post => post.id === focusedId)')
+  // This asserted `ranked.find`, which the demo-media padding renamed to
+  // `withDemo` long before the logic moved out of FeedTwin at all, so it had
+  // been failing on a name while the rule it guards went unchecked. The rule
+  // is unchanged and now lives in feedHandoffInjection.ts, where it is also
+  // unit-tested in node (mapFeedHandoffInjection.test.ts): a handoff may
+  // reorder a delivered post, and may recover one the newest-N pool has not
+  // delivered yet, but it may never hand the viewer a post they were not
+  // entitled to see.
+  it('lets a Map handoff reorder or recover only a post the viewer may see', () => {
+    const injection = readFileSync(new URL('../feedHandoffInjection.ts', import.meta.url), 'utf8')
+    // Reordering is a lookup among the delivered rows — never an identity
+    // fabricated from the payload and spliced over them.
+    expect(injection).toContain('const focusedPost = posts.find(post => post.id === focusedId)')
+    // Recovery faces the same two gates a delivered row passes.
+    expect(injection).toContain('feedPostReachesViewer(focusedContent, eligibility.viewer ?? null)')
+    expect(injection).toContain('eligibility.hiddenPostIds?.includes(focusedId)')
+    // ...and the feed has to actually supply them, or the gates are decorative.
+    expect(source).toContain('hiddenPostIds: discovery.hiddenPostIds')
+    expect(source).toMatch(/withHandoffPost\(withDemo, channel\.id, focusedContent, \{/)
+    // FeedTwin itself still fabricates no post of its own.
     expect(source).not.toContain('const focusedPost: ChannelPost = {')
   })
 

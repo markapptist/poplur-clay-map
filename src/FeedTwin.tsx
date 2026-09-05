@@ -298,7 +298,10 @@ function rankedPostsFor(
   const withDemo = demoFeedEnabled()
     ? [...ranked, ...blendedDemoPostsForChannel(channel)]
     : ranked
-  return withHandoffPost(withDemo, channel.id, focusedContent)
+  return withHandoffPost(withDemo, channel.id, focusedContent, {
+    viewer,
+    hiddenPostIds: discovery.hiddenPostIds,
+  })
 }
 
 function radiusDiscoverySnapshot(
