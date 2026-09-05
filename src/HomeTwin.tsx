@@ -5738,13 +5738,16 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             onPostCountChange={setProfilePostCount}
             onPostReach={setProfileReachKm}
             onBackToOwn={() => {
-              // Closing someone else's profile puts you back on your own, on
-              // the tab you are already standing on. It used to jump to the
-              // tab the profile was opened from, but that is the cube tap
-              // changing tabs — the swipe's job, never the tap's.
+              // Closing someone else's profile — the cube, or leaving after a
+              // block — takes you back to where you came from: the feed or
+              // the map you opened it on. Decided 4 Sep 2026, reversing the
+              // earlier "stay on this tab" rule: a visited profile is a
+              // detour, and the cube is the way back out of it.
+              const origin = profileOrigin
               setProfileOrigin(null)
               setViewingUser(null)
               setViewingUserId(null)
+              if (origin && origin !== 'profile') setActiveTab(origin)
             }}
           />
         )}

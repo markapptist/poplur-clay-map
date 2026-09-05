@@ -82,6 +82,7 @@ import {
   profilePostShareUrl,
   profilePostsFromRealtime,
   profileRecipientUid,
+  visitedProfilePhoto,
 } from './profileRealtimePosts'
 import { recordPostEngagement, recordVisiblePostView } from './feedEngagements'
 import { createClientMessageId } from './dmContract'
@@ -89,6 +90,8 @@ import { getLibraryNewest, onCameraStore } from './cameraStore'
 import { readVerification } from './profileVerification'
 import { VERIFIED_CHECK_LABEL, VERIFIED_CHECK_SRC, verifiedCheckKind, type VerifiedCheckKind } from './verifiedCheck'
 import { businessDirectorySnapshot, subscribeBusinessDirectory } from './businessDirectory'
+import PoplurDialog from './PoplurDialog'
+import { blockUser, reportUser } from './blockedUsers'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -876,6 +879,9 @@ export default function ProfileTwin({
   // to the OS share sheet / clipboard for outside.
   const [shareOpen, setShareOpen] = useState(false)
   const [mailingUser, setMailingUser] = useState(false)
+  // The visited profile's Block / Report dialog (PoplurDialog) and its toast.
+  const [blockPrompt, setBlockPrompt] = useState(false)
+  const [safetyNote, setSafetyNote] = useState<string | null>(null)
   const [mailText, setMailText] = useState('')
   const [shareNote, setShareNote] = useState<string | null>(null)
   const [pendingProfileDM, setPendingProfileDM] = useState<{
@@ -2315,6 +2321,24 @@ export default function ProfileTwin({
     playPop()
     requestDirectMessage(visitingRecipientId, text, shownName, 'profile')
   }
+  // Block: local first so their pops leave the feed and map at once, the
+  // durable record next (blockedUsers.ts), then out of their profile — there
+  // is nothing left here to look at. Report: a note to Poplur, and you stay.
+  const blockVisitedUser = () => {
+    setBlockPrompt(false)
+    void blockUser({ uid: visitingRecipientId, username: viewUser ?? shownName })
+    setSafetyNote(`Blocked ${shownName}`)
+    window.setTimeout(() => {
+      setSafetyNote(null)
+      onBackToOwnRef.current?.()
+    }, 1_400)
+  }
+  const reportVisitedUser = () => {
+    setBlockPrompt(false)
+    void reportUser({ uid: visitingRecipientId, username: viewUser ?? shownName, reason: 'profile' })
+    setSafetyNote(`Reported ${shownName} to Poplur`)
+    window.setTimeout(() => setSafetyNote(null), 2_600)
+  }
   // "Where was this posted?" — hand the pop's public origin to the map. The
   // map is the shell's surface, so this is the same window handoff the
   // newspaper uses (poplur-news-focus-map): Home closes whatever is up, lands
@@ -2341,7 +2365,12 @@ export default function ProfileTwin({
     : viewUser
       ? (viewUser === '@poplur' ? null : 'personal')
       : verifiedCheckKind(readVerification().category)
-  const visitingAvatar = viewUser ? (AVATAR_BY_HANDLE[viewUser] ?? 'mark_talk0.png') : null
+  // Someone else's picture is THEIR picture: a demo handle's supplied
+  // portrait, or the one their own posts carry. No stand-in head — a profile
+  // with no photo says so, exactly as your own does below.
+  const visitingAvatar = viewUser
+    ? (AVATAR_BY_HANDLE[viewUser] ?? visitedProfilePhoto(realtimePosts, visitingRecipientId, viewUser))
+    : null
 
   // Tell the shell the taking screen is up, so the cube navigator can wear the
   // kodak camera while it lasts. A window event because ProfileTwin has no prop
@@ -2436,15 +2465,28 @@ export default function ProfileTwin({
             <SideControlIconImage icon="profile.map" displaySize={44} />
           </button>
         )}
-        {visiting ? (
+        {/* Somebody else's profile: Block (or report) above Message, the way
+            the ask put it — safety first, then the conversation. The message
+            control wears the rail's own mail icon (feed.dm, the one the feed
+            rail uses on somebody else's post) instead of a moulded stand-in. */}
+        {visiting && (
           <ClayCornerButton
-            kind="mail"
-            tone="cream"
-            label={`Message ${shownName}`}
+            kind="block"
+            label={`Block or report ${shownName}`}
             size={44}
             activateOnClick
-            onPress={() => { playPop(); setMailingUser(true) }}
+            onPress={() => { playPop(); setBlockPrompt(true) }}
           />
+        )}
+        {visiting ? (
+          <button
+            className={styles.mapBtn}
+            onClick={() => { playPop(); setMailingUser(true) }}
+            aria-label={`Message ${shownName}`}
+            data-profile-message=""
+          >
+            <SideControlIconImage icon="feed.dm" displaySize={44} />
+          </button>
         ) : (
           <button ref={camBtnRef} className={styles.camBtn} onClick={openCapture} aria-label="Record profile selfie video">
             <SideControlIconImage icon="profile.camera" displaySize={44} />
@@ -2457,7 +2499,13 @@ export default function ProfileTwin({
           <div className={styles.avatarFrame} />
 
           {visiting ? (
-            <img className={styles.photo} src={visitingAvatar!} alt="" draggable="false" />
+            visitingAvatar ? (
+              <img className={styles.photo} src={visitingAvatar} alt="" draggable="false" />
+            ) : (
+              <div className={styles.noPhoto} aria-label={`${shownName} has no profile photo set`} data-profile-no-photo="">
+                <span className={styles.noPhotoText}>NO PROFILE<br />PHOTO SET</span>
+              </div>
+            )
           ) : (
             // A profile is intentionally empty until its owner records or
             // selects a ten-second selfie. Static heads/buildings must never
@@ -2993,6 +3041,31 @@ export default function ProfileTwin({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Block or report the person whose profile you are on — the Poplur
+          dialog, one question, two answers. Same placement rule as the
+          message dialog above: outside the fullscreen viewer, because the
+          control that opens it lives on the rail. */}
+      {blockPrompt && visiting && (
+        <div
+          className={`${styles.shareScrim} ${surfaceStyles.scrim}`}
+          onClick={() => setBlockPrompt(false)}
+          data-profile-safety-dialog=""
+        >
+          <PoplurDialog
+            eyebrow="Poplur"
+            title={`Block ${shownName}?`}
+            subtitle="Their pops leave your map and feed, and messages close both ways. You can also report them to Poplur."
+            primaryAction={{ label: `Block ${shownName}`, onActivate: () => { playPop(); blockVisitedUser() } }}
+            secondaryAction={{ label: `Report ${shownName}`, onActivate: () => { playPop(); reportVisitedUser() } }}
+            onClose={() => { playPop(); setBlockPrompt(false) }}
+            dataId={`safety:${visitingRecipientId ?? shownName}`}
+          />
+        </div>
+      )}
+      {safetyNote && (
+        <PoplurStatusToast title="Poplur" detail={safetyNote} />
       )}
 
       </section>

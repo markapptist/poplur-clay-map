@@ -176,6 +176,7 @@ import { playClaimDecay, playClaimGrowth } from './motionEffectsAudio'
 import styles from './App.module.css'
 import dropStyles from './ClayMap.module.css'
 import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
+import { blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } from './blockedUsers'
 
 
 const TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string
@@ -3219,6 +3220,8 @@ export default function MapApp() {
   const [myColor, setMyColor] = useState(() => takeoverTint(PALETTE.pinkHot))
   useEffect(() => onTakeoverColor(() => setMyColor(takeoverTint(PALETTE.pinkHot))), [])
   const liveSimulation = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
+  // Someone you blocked leaves the board at once (blockedUsers.ts).
+  const blockedUsers = useSyncExternalStore(onBlockedUsersChange, blockedUsersSnapshot, blockedUsersSnapshot)
   const mapPins = useMemo(() => {
     void liveSimulation // test mode changes what reaches the viewer
     // Every colour you are already using, so nobody else can be handed one.
@@ -3247,6 +3250,7 @@ export default function MapApp() {
       // Your own pops always stand, and with no location fix yet nothing of
       // anybody else's is drawn, because reach cannot be proven without one.
       .filter(pin => !liveMapPinGhost(pin, reachViewer))
+      .filter(pin => pin.mine || !isUserBlocked(pin.ownerId, pin.user))
       .map(pin => {
         // ONE colour decision per pin, used by all three things that show it:
         // the pin body, the ground it spreads, and the rim round the face.
@@ -3279,16 +3283,31 @@ export default function MapApp() {
         pinColor,
       })
       })
-  }, [currentLocation, liveMapPosts, liveSimulation, myColor, ownAvatar, ownSelfieVideo, pinRadiusPulse, popLevel])
+  }, [blockedUsers, currentLocation, liveMapPosts, liveSimulation, myColor, ownAvatar, ownSelfieVideo, pinRadiusPulse, popLevel])
 
   // One route powers the horizontal arrows at every zoom. It comes from the
   // authoritative data, not the handful of DOM markers ClayMap keeps mounted
   // near the viewport for thermal safety.
-  const mapPointRoute = useMemo(() => buildMapPointCycle({
-    currentLocation,
-    pins: mapPins,
-    landmarks: MAP_POINT_LANDMARKS,
-  }), [currentLocation, mapPins])
+  // "Traverse this poster's pops": a username-label tap on the map arms a
+  // filter, and while it is armed the point arrows walk ONLY that person's
+  // pins — no current-location or landmark stops in the loop. Null is the whole
+  // board. The key matches the marker's data-domination-owner (pinOwnerKey).
+  const [focusedUserKey, setFocusedUserKey] = useState<string | null>(null)
+  const focusedUserKeyRef = useRef<string | null>(null)
+  focusedUserKeyRef.current = focusedUserKey
+  const mapPointRoute = useMemo(() => {
+    if (focusedUserKey) {
+      // Ghosts are out of reach and can never be traversed to, so they never
+      // enter the filtered route even when they carry the armed poster's handle.
+      const userPins = mapPins.filter(pin => !pin.ghost && pinOwnerKey(pin) === focusedUserKey)
+      return buildMapPointCycle({ currentLocation: null, pins: userPins, landmarks: [] })
+    }
+    return buildMapPointCycle({
+      currentLocation,
+      pins: mapPins,
+      landmarks: MAP_POINT_LANDMARKS,
+    })
+  }, [currentLocation, mapPins, focusedUserKey])
   const mapPointRouteRef = useRef(mapPointRoute)
   mapPointRouteRef.current = mapPointRoute
   const focusedMapPointKeyRef = useRef<string | null>(null)

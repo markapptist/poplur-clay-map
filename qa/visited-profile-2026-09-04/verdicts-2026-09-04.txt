@@ -1,0 +1,14 @@
+# Visited profile probe — 2026-09-05T01:12:28Z — nested shell 5173 ?view=map → stranger's profile
+  opening pin:firestore:post-official-french-drive-ad (@paris.pov holds Paris, 6371 km)
+  tapped pin:firestore:post-official-french-drive-ad
+  asked the shell to open @paris.pov's profile (LiEG6SNtKEZN6eEGeybf0afZnHm1)
+✅ Block sits above Message on the visited rail — ["See where paris.pov posted on the map","Block or report paris.pov","Message paris.pov"]
+✅ Message wears the rail's mail icon (feed.dm) — icon feed.dm
+✅ the picture is real or honestly absent — never a stand-in head — noPhoto=false photo=https://storage.googleapis.com/poplur2025-assets/asset-packs/feed/posters/ad-french.jpg
+✅ the Poplur dialog offers Block and Report — {"title":"Block paris.pov?","buttons":["×","Block paris.pov →","Report paris.pov"]}
+✅ Report says so and leaves you on the profile — PoplurReported paris.pov to Poplur✓
+✅ Block says so, then takes you back to the map you came from — {"blocked":"PoplurBlocked paris.pov✓","profileUp":false,"mapFrame":true}
+✅ their pins are gone from the board — 0 pin(s) by LiEG6SNtKEZN6eEGeybf0afZnHm1 still mounted
+  tapped pin:firestore:post-radius-lab-cohort-2026-09-03-green-1-l1zo
+  asked the shell to open @greenline.6ix's profile (synthetic-conquer-green)
+✅ pressing the cube on a visited profile goes back to the previous page — left the profile

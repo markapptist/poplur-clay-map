@@ -134,7 +134,7 @@ export default function ClayCornerButton({
 }: {
   kind: 'flash' | 'flip' | 'close' | 'share' | 'link' | 'send' | 'capture' | 'mail' | 'search' | 'locate'
     | 'heart' | 'thumbUp' | 'thumbDown' | 'comment' | 'comments' | 'play' | 'seekBack' | 'seekFwd'
-    | 'roll' | 'live' | 'delete'
+    | 'roll' | 'live' | 'delete' | 'block'
   active?: boolean
   label: string
   onPress: () => void
@@ -335,6 +335,15 @@ export default function ClayCornerButton({
       handle.position.set(0.62, -0.5, 0)
       handle.rotation.z = -Math.PI / 4
       root.add(ring, handle)
+    } else if (kind === 'block') {
+      // No entry: a moulded ring with a bar struck through it, the visited
+      // profile's block-or-report control. Moulded here like every other
+      // corner glyph rather than drawn as artwork — there is no supplied
+      // block icon yet, and the house rule is never to invent one.
+      const ring = mesh(discRingShape(0.96, 0.66))
+      const bar = mesh(barShape(1.72, 0.28))
+      bar.rotation.z = Math.PI / 4
+      root.add(ring, bar)
     } else if (kind === 'mail') {
       // Envelope: a moulded body with the flap creased across its top half.
       const body = mesh(barShape(2.0, 1.35, 0.24))
@@ -474,7 +483,7 @@ export default function ClayCornerButton({
     close: '✕', flash: '⚡', flip: '⟳', share: '↑', link: '🔗',
     send: '➤', capture: '◉', mail: '✉', search: '⌕', locate: '◎',
     comment: '◌', comments: '•••', heart: '♥', thumbUp: '👍', thumbDown: '👎',
-    roll: '▤', live: '⦿', delete: '⌫',
+    roll: '▤', live: '⦿', delete: '⌫', block: '⊘',
   }
 
   if (prism) {
