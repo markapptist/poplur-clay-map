@@ -44,6 +44,8 @@ export interface NativeFeedPost {
   /** The poster's chosen clay pin model, carried so a native-delivered post
    *  stands up the same pin the web does. */
   pinColor?: PinColorId
+  /** The poster's profile picture, when their post carries one. */
+  ownerAvatarURL?: string
   syntheticJourney?: 'first-user-v1'
   /** A synthetic beta-cohort post (the five-actor testers). Provenance only —
    *  it relaxes nothing about URLs; the reach rule reads it in test mode. */
@@ -198,6 +200,12 @@ function normalizeFeedPost(
     originLatitude: hasSafeOrigin ? originLatitude : undefined,
     originLongitude: hasSafeOrigin ? originLongitude : undefined,
     pinColor: pinColorId(row.pinColor) ?? undefined,
+    // The poster's picture, in the same field order the map's normaliser
+    // reads, so a visited profile can show a real face — or say honestly that
+    // none is set — instead of a stand-in head.
+    ownerAvatarURL: safeRemoteURL(
+      row.profilePictureURL ?? row.avatarURL ?? row.avatarUrl ?? row.photoURL,
+    ) ?? undefined,
     syntheticJourney,
   }
 }

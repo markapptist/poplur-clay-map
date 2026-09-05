@@ -127,3 +127,22 @@ export function profilePostsFromRealtime(
       return [post]
     })
 }
+
+/**
+ * The picture a visited account's own posts carry, if any. By uid when the
+ * profile knows one, by handle otherwise. Null means "no picture" — and the
+ * profile says so rather than standing a demo head in for a real person.
+ */
+export function visitedProfilePhoto(
+  rows: readonly Pick<NativeFeedPost, 'ownerId' | 'username' | 'ownerAvatarURL'>[],
+  uid: string | null | undefined,
+  handle: string | null | undefined,
+): string | null {
+  const target = handle?.trim().replace(/^@/, '').toLowerCase() || null
+  for (const row of rows) {
+    if (!row.ownerAvatarURL) continue
+    if (uid && row.ownerId === uid) return row.ownerAvatarURL
+    if (!uid && target && row.username.trim().replace(/^@/, '').toLowerCase() === target) return row.ownerAvatarURL
+  }
+  return null
+}
