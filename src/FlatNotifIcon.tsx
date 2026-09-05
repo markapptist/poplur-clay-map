@@ -1,42 +1,38 @@
 import { useState } from 'react'
+import { runtimeSideIconSources, type SideControlIconId } from './sideControlIcons'
 
-// Flat 2D notification icons, one supplied PNG per kind, from public/notif-icons.
+// The flat 2D icon on a notification row, from the SUPPLIED Poplur UI art pack
+// (src/side-control-icons/manifest.json → public/poplur-side-buttons, 256/512).
 //
-// These replaced the extruded three.js clay icons (ClayNotifIcon). A row's
-// icon is a supplied asset, not a rendered shape: the same rule the hold menu
-// follows for its tiles (public/holdmenu/<Name>.png). When the file for a kind
-// is not on disk the slot stays EMPTY — the icon is the user's art, and a drawn
-// stand-in that looks about right is exactly the thing this project does not
-// ship (see the note on invented art in no_generated_assets).
+// These rows used to draw extruded three.js clay meshes (ClayNotifIcon), and
+// briefly drew nothing at all while pointing at a notif-icons folder that was
+// never supplied. Nothing here is drawn or invented: every kind resolves to an
+// icon the art pack already ships, which is also why the map below is short —
+// the pack has a heart, a bubble, a mailbox, chevrons, a shield and a
+// newspaper, so those are what the rows wear.
 //
-// Drop the files in and they take over with no code change:
-//   public/notif-icons/like.png         liked your post
-//   public/notif-icons/view.png         viewed your post
-//   public/notif-icons/comment.png      commented / mentioned you
-//   public/notif-icons/message.png      a DM
-//   public/notif-icons/radius-up.png    radius grew
-//   public/notif-icons/radius-down.png  radius shrank
-//   public/notif-icons/pop.png          a pop took ground / entered your radius
-//   public/notif-icons/trend.png        trending / daily insight
-// 256px square, alpha outside the shape, same family as settings_ic_bell.
+// The one kind with no dedicated mark in the pack is `view`. It takes the
+// pack's SELECT check, the same "seen" mark the app uses for a read
+// conversation — a view is a post that has been seen. Swap this one line the
+// day an eye is supplied; nothing else changes.
 
 export type NotifKind =
   | 'growth' | 'decrease' | 'pop' | 'trend' | 'message'
   | 'like' | 'view' | 'comment'
 
-export const NOTIF_ICON_FILE: Record<NotifKind, string> = {
-  growth: 'radius-up',
-  decrease: 'radius-down',
-  pop: 'pop',
-  trend: 'trend',
-  message: 'message',
-  like: 'like',
-  view: 'view',
-  comment: 'comment',
+export const NOTIF_ICON_ID: Record<NotifKind, SideControlIconId> = {
+  like: 'feed.like',
+  comment: 'feed.comment',
+  message: 'feed.dm',
+  view: 'profile.select',
+  growth: 'global.channel_up',
+  decrease: 'global.channel_down',
+  pop: 'map.conquer',
+  trend: 'map.news',
 }
 
-/** Any string a native row or banner may carry, narrowed to a kind we have a
- *  slot for. Unknown kinds share the trend icon, as the row model does. */
+/** Any string a native row or banner may carry, narrowed to a kind we have an
+ *  icon for. Unknown kinds share the daily-report mark, as the row model does. */
 export function notifIconKind(value: string): NotifKind {
   switch (value) {
     case 'like': case 'view': case 'comment': case 'growth': case 'decrease':
@@ -51,19 +47,22 @@ export function notifIconKind(value: string): NotifKind {
   }
 }
 
-export function notifIconSrc(kind: NotifKind): string {
-  return `notif-icons/${NOTIF_ICON_FILE[kind]}.png`
+export function notifIconSources(kind: NotifKind) {
+  return runtimeSideIconSources(NOTIF_ICON_ID[kind])
 }
 
 export default function FlatNotifIcon({ kind, size = 30 }: { kind: string; size?: number }) {
   const resolved = notifIconKind(kind)
   const [missing, setMissing] = useState(false)
-  // The file is absent: keep the slot's footprint (rows stay aligned) and
-  // draw nothing in it.
+  const sources = notifIconSources(resolved)
+  // A pack file that cannot load keeps the slot's footprint so rows stay
+  // aligned, and draws nothing in it. Never a stand-in shape.
   if (missing) return <span style={{ width: size, height: size, display: 'block' }} aria-hidden="true" />
   return (
     <img
-      src={notifIconSrc(resolved)}
+      src={sources.src}
+      srcSet={sources.srcSet}
+      sizes={`${size}px`}
       alt=""
       width={size}
       height={size}
