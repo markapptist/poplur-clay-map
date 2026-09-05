@@ -13,7 +13,7 @@
 // Nothing here generates or records anything. It reads the log and adds the
 // seeded notices the backend does not send yet.
 
-import type { NotifKind } from './ClayNotifIcon'
+import type { NotifKind } from './FlatNotifIcon'
 import {
   listEngagement,
   onEngagementLogged,

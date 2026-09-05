@@ -13,6 +13,7 @@ import CasinoScreen from './CasinoScreen'
 import { primeCasinoAudio } from './casinoAudio'
 import MapShowMe from './MapShowMe'
 import NotificationsScreen from './NotificationsScreen'
+import { followNotification } from './notificationBanner'
 import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
 import CharacterEditor from './CharacterEditor'
@@ -1215,13 +1216,13 @@ export default function HoldMenuTwin({
           <NotificationsScreen
             freshOnEntry={screenOriginRef.current !== 'bell'}
             onClose={() => { playSubscreenNavigationPop(); onClose() }}
-            // The profile owns the highlight a notification leads to (a lit
-            // grid tile, a lit message row), so the row is handed BACK to it
-            // rather than navigated from here. Same window-event route the
-            // bell uses to open this screen in the first place.
+            // A row goes where a banner for the same event goes — the map
+            // pin for anything about a post, the thread for a DM, and the
+            // profile (its lit tile or message row) for the rest. One
+            // decision, in notificationBanner.ts, so the two can't disagree.
             onOpenNotification={n => {
               playSubscreenNavigationPop()
-              window.dispatchEvent(new CustomEvent('poplur-open-notification', { detail: n }))
+              followNotification(n)
               onClose()
             }}
           />

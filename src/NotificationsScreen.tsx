@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './NotificationsScreen.module.css'
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
-import ClayNotifIcon from './ClayNotifIcon'
+import FlatNotifIcon from './FlatNotifIcon'
 import { markEngagementSeen } from './engagementLog'
 import { postNativeEvent } from './nativeBridge'
 import {
@@ -148,7 +148,7 @@ export default function NotificationsScreen({
                     onClick={() => onOpenNotification?.(n)}
                   >
                     <span className={styles.icon} role="img" aria-label={NOTIF_ICON_LABEL[n.kind]}>
-                      <ClayNotifIcon kind={n.kind} size={22} />
+                      <FlatNotifIcon kind={n.kind} size={30} />
                     </span>
                     <span className={styles.body}>
                       <span className={styles.top}>

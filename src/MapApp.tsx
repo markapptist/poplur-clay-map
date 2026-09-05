@@ -404,6 +404,35 @@ const RECOMMENDATIONS: ((destination: TourDestination) => string)[] = [
 // old comment here claimed 16.2 "matches ClayMap ZOOM_MAX cap"; ZOOM_MAX is
 // 19.5 and always was, so that note was describing a constant that had moved.)
 const BUILDING_REVEAL_ZOOM = 17.6
+// A notification lands ON its pin: as close as the street view takes the
+// camera, so the pin, its face and the badge fill the shot while the ground it
+// holds spreads out past the edges of the screen.
+const PIN_FOCUS_ZOOM = 18.8
+const PIN_FOCUS_FLIGHT_MS = 2_600
+/** How recently a gesture must have touched the map for an own-radius change
+ *  to fly the camera rather than only badge the pin. */
+const OWN_RADIUS_FOCUS_ATTENTION_MS = 3 * 60_000
+/** How long a focus request waits for the board to deliver its pin. */
+const PIN_FOCUS_WAIT_MS = 10_000
+
+/** A notification's ask, validated off the wire (see notificationBanner.ts). */
+interface PinFocusMapRequest {
+  postId?: string
+  own?: 'largest'
+  deltaKm?: number
+  pulse?: 'gain' | 'loss'
+}
+
+function pinFocusMapRequest(data: Record<string, unknown>): PinFocusMapRequest | null {
+  const postId = typeof data.postId === 'string' && data.postId.trim() ? data.postId.trim().slice(0, 180) : undefined
+  const own = data.own === 'largest' ? 'largest' as const : undefined
+  if (!postId && !own) return null
+  const deltaKm = typeof data.deltaKm === 'number' && Number.isFinite(data.deltaKm) && data.deltaKm !== 0
+    ? data.deltaKm
+    : undefined
+  const pulse = data.pulse === 'gain' || data.pulse === 'loss' ? data.pulse : undefined
+  return { ...(postId ? { postId } : {}), ...(own ? { own } : {}), ...(deltaKm != null ? { deltaKm } : {}), ...(pulse ? { pulse } : {}) }
+}
 const DEFAULT_NAV_ORIGIN: [number, number] = [-79.3811, 43.6487]
 // Cross-country movement on Mercator stays top-down. The shared map's zoom-3
 // floor still keeps the finite world sheet well outside a phone viewport for
@@ -3110,6 +3139,9 @@ export default function MapApp() {
    * their own pop first, then the largest change.
    */
   const knownRadiusRef = useRef(new Map<string, number>())
+  // Defined further down (it needs the point route); the watcher above it
+  // reaches it through a ref, which is fine because effects run after render.
+  const focusPinCameraRef = useRef<((pin: PopPin, request: PinFocusMapRequest) => void) | null>(null)
   useEffect(() => {
     const known = knownRadiusRef.current
     const relayed = announcedByRelayRef.current
@@ -3139,7 +3171,26 @@ export default function MapApp() {
       for (const id of [...known.keys()]) if (!live.has(id)) known.delete(id)
     }
     for (const [id, at] of [...relayed.entries()]) if (now - at > 10_000) relayed.delete(id)
-    if (best) showPinRadiusPulse(best.id, best.deltaKm)
+    if (!best) return
+    // YOUR ground moved: the camera goes to the pin and the change plays
+    // there, badge and all, rather than somewhere off in the corner of a
+    // board you happened to be looking at. Not while a tour or another flight
+    // owns the camera, and never for somebody else's pop — theirs only badge.
+    // Only while somebody is WATCHING: a gesture on this map within the last
+    // few minutes. A board face-up on a table, or the thermal gate's 60s idle
+    // dwell, must not wake its renderer for a flight nobody sees — the hourly
+    // decay would otherwise fly a parked map once an hour. It badges instead,
+    // as before. (The governor's 15s ambient lease is too short for this: a
+    // person can stare at the map for a minute without touching it.)
+    const map = mapRef.current
+    const ownPin = best.mine ? liveMapPosts.find(pin => pin.id === best.id) : undefined
+    const attended = typeof document !== 'undefined' && !document.hidden
+      && now - lastGestureRef.current < OWN_RADIUS_FOCUS_ATTENTION_MS
+    if (ownPin && map && attended && !tourOnRef.current && !map.isMoving() && focusPinCameraRef.current) {
+      focusPinCameraRef.current(ownPin, { postId: ownPin.id, deltaKm: best.deltaKm, pulse: best.deltaKm < 0 ? 'loss' : 'gain' })
+      return
+    }
+    showPinRadiusPulse(best.id, best.deltaKm)
   }, [liveMapPosts, showPinRadiusPulse])
 
   // Firestore is the one production source for user territory. onSnapshot
@@ -3632,6 +3683,77 @@ export default function MapApp() {
     if (!live) return
     try { updatePinSpotlight(live, null) } catch { /* map already torn down */ }
   }), [])
+
+  // ── A notification lands on its pin ─────────────────────────────────────
+  //
+  // Banner tap, Notifications row, or a system notification tapped outside the
+  // app: Home lands on Map and sends `focusPin`. The board is the only thing
+  // that knows where a post stands, so the post is resolved here — and if it
+  // has not arrived yet (the map is still mounting) the request waits for the
+  // next snapshot rather than flying nowhere.
+  const pendingPinFocusRef = useRef<{ request: PinFocusMapRequest; expiresAt: number } | null>(null)
+  const resolvePinForFocus = useCallback((request: PinFocusMapRequest): LiveMapPostPin | null => {
+    const posts = liveMapPostsRef.current
+    if (request.postId) {
+      const wanted = request.postId
+      return posts.find(pin => pin.id === wanted || pin.id === `firestore:${wanted}`) ?? null
+    }
+    if (request.own === 'largest') {
+      let best: LiveMapPostPin | null = null
+      for (const pin of posts) if (pin.mine && (!best || pin.radiusKm > best.radiusKm)) best = pin
+      return best
+    }
+    return null
+  }, [])
+  const focusPinCamera = useCallback((pin: PopPin, request: PinFocusMapRequest) => {
+    const map = mapRef.current
+    if (!map) return
+    stopTour()
+    closeSearchImmediately()
+    clearPopups('suggestion')
+    clearPopups('mapContent')
+    setCurrentPlace(displayPlaceName(pin.name))
+    const land = () => {
+      const live = mapRef.current
+      if (!live) return
+      // The pin's ground, in its colour, the same paint a tapped pin gets —
+      // and the top card on this pin, so the radius reads beside it.
+      try {
+        installPinSpotlight(live)
+        updatePinSpotlight(live, pin)
+      } catch { /* style not ready yet; the camera has still arrived */ }
+      focusMapPointForPin(pin.id)
+      // The badge with the real number, when the notification names one. The
+      // fuller pulse (ring, flash, bounce — see the Radius Pulse preview) hangs
+      // off this same landing once it is approved for the map; `request.pulse`
+      // carries the direction for it even when no number came.
+      if (typeof request.deltaKm === 'number' && request.deltaKm !== 0) {
+        announcedByRelayRef.current.set(pin.id, Date.now())
+        showPinRadiusPulse(pin.id, request.deltaKm)
+      }
+    }
+    const flown = flyToCenter(
+      pin.coords,
+      PIN_FOCUS_FLIGHT_MS,
+      { center: pin.coords, zoom: PIN_FOCUS_ZOOM, pitch: MAP_BROWSE_3D_PITCH, bearing: MAP_BROWSE_3D_BEARING },
+      'default',
+      land,
+    )
+    if (!flown) land()
+  }, [closeSearchImmediately, flyToCenter, focusMapPointForPin, showPinRadiusPulse, stopTour])
+  focusPinCameraRef.current = focusPinCamera
+  useEffect(() => {
+    const pending = pendingPinFocusRef.current
+    if (!pending) return
+    if (Date.now() > pending.expiresAt) {
+      pendingPinFocusRef.current = null
+      return
+    }
+    const pin = resolvePinForFocus(pending.request)
+    if (!pin) return
+    pendingPinFocusRef.current = null
+    focusPinCamera(pin, pending.request)
+  }, [liveMapPosts, focusPinCamera, resolvePinForFocus])
 
   const openClickedMapPinContent = useCallback((pin: PopPin) => {
     // A pin you can see and press must answer the press. This used to bail when
@@ -4163,6 +4285,22 @@ export default function MapApp() {
           flyToCenter([longitude, latitude], TOUR_FLIGHT_MS)
           break
         }
+        case 'focusPin': {
+          const request = pinFocusMapRequest(event.data as Record<string, unknown>)
+          if (!request) break
+          const pin = resolvePinForFocus(request)
+          if (pin) { focusPinCamera(pin, request); break }
+          // Not on the board yet. Hold the request for the next snapshot; if
+          // the post never shows (aged out of the pool, outside reach) tell
+          // Home so it can say so instead of leaving a silent tap.
+          pendingPinFocusRef.current = { request, expiresAt: Date.now() + PIN_FOCUS_WAIT_MS }
+          window.setTimeout(() => {
+            if (pendingPinFocusRef.current?.request !== request) return
+            pendingPinFocusRef.current = null
+            window.parent?.postMessage({ type: 'poplur-map-focus-miss' }, '*')
+          }, PIN_FOCUS_WAIT_MS)
+          break
+        }
         case 'weather': toggleWeather(); break
         // The visible map rail belongs to Home when this document is embedded.
         // Persist the user choice here too, so Map audio follows the same gate
@@ -4282,7 +4420,7 @@ export default function MapApp() {
     }
     window.addEventListener('message', onAction)
     return () => window.removeEventListener('message', onAction)
-  }, [applyRadiusDelta, closeSearchImmediately, cycleMapPoint, flyToCenter, flyToPop, handleGoToCurrentLocation, handleToggleStreetView, myColor, newsTourEvents, openSearch, ownAvatar, pauseLandmarkTour, resumeLandmarkTour, startNewsTour, startRandomLandmarkTour, stepNewsTour, stopTour, theme, toggleWeather, traverseToEngagement])
+  }, [applyRadiusDelta, closeSearchImmediately, cycleMapPoint, flyToCenter, flyToPop, focusPinCamera, resolvePinForFocus, handleGoToCurrentLocation, handleToggleStreetView, myColor, newsTourEvents, openSearch, ownAvatar, pauseLandmarkTour, resumeLandmarkTour, startNewsTour, startRandomLandmarkTour, stepNewsTour, stopTour, theme, toggleWeather, traverseToEngagement])
 
   const handleRouteIntent = useCallback(() => {
     stopTour()

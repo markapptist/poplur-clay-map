@@ -4,6 +4,7 @@ import styles from './popups.module.css'
 import type { SmartCard } from './tourSmarts'
 import CommerceSuggestionWindow, { type SuggestionPrimaryAction } from './CommerceSuggestionWindow'
 import PoplurDialog from './PoplurDialog'
+import FlatNotifIcon from './FlatNotifIcon'
 import { playPop, playPopAmbient } from './pop'
 import { KM_TO_MI, shouldUseMiles } from './units'
 
@@ -30,7 +31,19 @@ import { KM_TO_MI, shouldUseMiles } from './units'
 // animate transform/opacity only, one-shot, capped at MAX_LIVE. Nothing here
 // runs a per-frame loop — the whole layer is idle between popups.
 
-export type PopupKind = 'engagement' | 'suggestion' | 'mapContent'
+export type PopupKind = 'engagement' | 'suggestion' | 'mapContent' | 'banner'
+
+/** An in-app notification banner: the row a push would have drawn as a system
+ *  banner over the app, drawn by the app instead — at the top, tappable,
+ *  swipe-up to dismiss, gone on its own. `kind` picks the flat icon. */
+export interface NotificationBannerContent {
+  title: string
+  detail: string
+  kind: string
+  /** Renders in place of the icon slot when the flat icon for `kind` is
+   *  missing — never a drawn look-alike, only nothing. */
+  iconLabel?: string
+}
 
 export interface MapPopContent {
   id: string
@@ -67,6 +80,9 @@ export interface PopupItem {
   /** Message the pop's owner. Present only on ANOTHER account's pop — your
    *  own pop has nobody to DM. */
   dmAction?: SuggestionPrimaryAction
+  /** The in-app banner's row. Only one banner stands at a time: a newer one
+   *  replaces the older, the way a phone's own banners stack. */
+  banner?: NotificationBannerContent
   ttl: number
   /** Tapping the notice DOES something (an engagement opens its post in the
    *  feed). Runs on tap, then the notice leaves; without it a tap only
@@ -100,6 +116,10 @@ const TTL: Record<PopupKind, number> = {
   // pass enough time to read, while retaining the shared guarantee that every
   // transient window eventually leaves on its own.
   mapContent: 10_000,
+  // A banner is read, not acted on under pressure: long enough to read a name
+  // and a line, and to decide to tap it; short enough that it never squats
+  // over the surface the way a system banner did.
+  banner: 5_000,
 }
 
 // More than a few at once is a pile nobody reads. Oldest goes first.
@@ -196,6 +216,16 @@ export function showPopup(item: Omit<PopupItem, 'id' | 'ttl'> & { ttl?: number }
   // would be stale news, same rule as the MAX_LIVE overflow below.
   if (suppressedAll || suppressedKinds.has(item.kind)) return id
   const ttl = item.ttl ?? TTL[item.kind]
+  // One banner at a time. A second push while the first is still up replaces
+  // it rather than stacking a column of them down the screen.
+  if (item.kind === 'banner') {
+    items.filter(live => live.kind === 'banner').forEach(live => {
+      const timer = expiryTimers.get(live.id)
+      if (timer != null) window.clearTimeout(timer)
+      expiryTimers.delete(live.id)
+    })
+    items = items.filter(live => live.kind !== 'banner')
+  }
   items = [...items, { ...item, id, ttl }]
   // Never let the stack grow past MAX_LIVE: drop the oldest rather than queue,
   // because by the time a queued notice surfaced it would be stale news.
@@ -298,11 +328,13 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
           data-poplur-native-hit-region={item.kind === 'engagement' ? '' : undefined}
           className={item.kind === 'engagement'
             ? `${styles.engage} ${surfaceStyles.surface}`
+            : item.kind === 'banner'
+              ? styles.bannerWrap
             : item.kind === 'mapContent'
               ? styles.mapContentWrap
               : styles.suggestWrap}
           style={item.kind === 'engagement' ? { animationDuration: `${item.ttl}ms` } : undefined}
-          onClick={item.kind === 'engagement'
+          onClick={item.kind === 'engagement' || item.kind === 'banner'
             ? () => {
                 // A tap that ACTS pops (it is a real gesture, the full house
                 // sound); a tap that merely dismisses stays silent, as ever.
@@ -325,6 +357,11 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
               <b className={styles.engageIcon}>{item.icon ?? '♥'}</b>
               <span className={styles.engageText}>{item.text}</span>
             </>
+          ) : item.kind === 'banner' && item.banner ? (
+            <NotificationBanner
+              banner={item.banner}
+              onSwipeAway={() => dismissPopup(item.id)}
+            />
           ) : item.kind === 'mapContent' && item.content ? (
             // A tapped pop opens in the Poplur dialog: who, what they said,
             // the ground it holds, and one button to watch it in the feed.
@@ -375,6 +412,53 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
           ) : null}
         </div>
       ))}
+    </div>
+  )
+}
+
+/**
+ * The banner itself. A tap is handled by the wrapper (it activates, then
+ * dismisses); this component only adds the one gesture a phone banner has
+ * that a chip does not — flick it up and it goes.
+ */
+function NotificationBanner({
+  banner,
+  onSwipeAway,
+}: {
+  banner: NotificationBannerContent
+  onSwipeAway: () => void
+}) {
+  const startY = React.useRef<number | null>(null)
+  const swiped = React.useRef(false)
+  return (
+    <div
+      className={`${styles.banner} ${surfaceStyles.surface}`}
+      role="status"
+      data-poplur-native-hit-region=""
+      onPointerDown={event => { startY.current = event.clientY; swiped.current = false }}
+      onPointerMove={event => {
+        if (startY.current == null || swiped.current) return
+        if (startY.current - event.clientY > 24) {
+          swiped.current = true
+          onSwipeAway()
+        }
+      }}
+      onPointerUp={() => { startY.current = null }}
+      onPointerCancel={() => { startY.current = null }}
+      onClickCapture={event => {
+        // A flick that already dismissed the banner must not also fire the
+        // wrapper's tap-to-open on the way out.
+        if (swiped.current) { event.stopPropagation(); event.preventDefault() }
+      }}
+    >
+      <span className={styles.bannerIcon} aria-hidden="true">
+        <FlatNotifIcon kind={banner.kind} size={30} />
+      </span>
+      <span className={styles.bannerCopy}>
+        <strong>{banner.title}</strong>
+        <span>{banner.detail}</span>
+      </span>
+      <span className={styles.bannerGrip} aria-hidden="true" />
     </div>
   )
 }

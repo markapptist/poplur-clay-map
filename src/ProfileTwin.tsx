@@ -17,7 +17,7 @@ import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGat
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import ClayCornerButton from './ClayCornerButton'
 import PermissionAlert from './PermissionAlert'
-import ClayNotifIcon from './ClayNotifIcon'
+import FlatNotifIcon from './FlatNotifIcon'
 import PoplurStatusToast from './PoplurStatusToast'
 import { markEngagementSeen } from './engagementLog'
 // The notification list is shared with the NOTIFICATIONS subscreen — one list,
@@ -425,12 +425,13 @@ function NotificationDotMap() {
   return <canvas ref={canvasRef} className={styles.notifDotMap} aria-hidden="true" />
 }
 
-// Real 3D clay icon per notification kind (extruded clay meshes), floating in
-// the row's recessed clay well — no more flat 2D badges.
+// The supplied flat 2D icon per notification kind (public/notif-icons), in
+// the row's recessed well. The extruded clay meshes that sat here before are
+// gone: notification rows carry the flat icon set, not rendered 3D.
 function NotificationIcon({ kind }: { kind: NotificationKind }) {
   return (
     <span className={styles.notifIcon3d} role="img" aria-label={NOTIF_ICON_LABEL[kind]}>
-      <ClayNotifIcon kind={kind} size={22} />
+      <FlatNotifIcon kind={kind} size={22} />
     </span>
   )
 }

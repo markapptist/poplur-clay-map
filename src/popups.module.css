@@ -262,3 +262,84 @@
     100% { opacity: 0; }
   }
 }
+
+/* ── In-app notification banner ─────────────────────────────────────────── */
+/* The row a push would have drawn as a SYSTEM banner over the app, drawn by
+   the app instead. Top of the screen under the status bar, full width minus
+   the rail margins, one at a time. It drops in on a spring, holds, and
+   leaves upward — the direction a flick sends it. */
+.bannerWrap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+  padding: 0 14px;
+  cursor: pointer;
+  animation: bannerIn 420ms cubic-bezier(0.2, 1.3, 0.35, 1) both;
+}
+
+.banner {
+  width: min(430px, 100%);
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 6px;
+  align-items: center;
+  padding: 12px 16px 9px;
+  border-radius: 22px;
+  color: #fff8fb;
+  font: 700 13px/1.25 system-ui, -apple-system, "SF Pro Rounded", sans-serif;
+  touch-action: pan-x;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.bannerIcon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+}
+
+.bannerCopy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.bannerCopy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 900;
+  font-size: 14px;
+}
+.bannerCopy > span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: rgba(255, 240, 248, 0.86);
+}
+
+/* The phone's own banners carry a grip line; it says "this can be dragged". */
+.bannerGrip {
+  grid-column: 1 / -1;
+  justify-self: center;
+  width: 36px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 210, 232, 0.42);
+}
+
+@keyframes bannerIn {
+  0%   { opacity: 0; transform: translateY(-28px) scale(0.96); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bannerWrap { animation-name: popFade; }
+}

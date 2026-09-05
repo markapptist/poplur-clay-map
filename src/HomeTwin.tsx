@@ -114,6 +114,9 @@ import {
   postNativeEvent,
   wakeManagedRendering,
 } from './nativeBridge'
+import { showPopup } from './popups'
+import { NOTIFICATION_FOCUS_PIN_EVENT, followNotification, showNativeNotificationBanner, type PinFocusRequest } from './notificationBanner'
+import { nativeNotificationRow } from './notifications'
 import {
   nativeFeedPostsSnapshot,
   onNativeFeedPosts,
@@ -2350,6 +2353,30 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     return () => window.removeEventListener('poplur-post-focus-map', onFocusPost)
   }, [sendMapAction])
 
+  // A notification about a post — a banner tapped, or its row on the
+  // Notifications screen — lands on that pin: Home closes whatever is up,
+  // lands on Map, and the map flies in, paints the pin's ground and pulses
+  // it with the change. The map resolves the post to a pin itself (it holds
+  // the live board); this only carries the request across.
+  useEffect(() => {
+    const onFocusPin = (event: Event) => {
+      const detail = (event as CustomEvent<PinFocusRequest>).detail
+      if (!detail || typeof detail !== 'object') return
+      const postId = typeof detail.postId === 'string' ? detail.postId.slice(0, 180) : undefined
+      const deltaKm = typeof detail.deltaKm === 'number' && Number.isFinite(detail.deltaKm) ? detail.deltaKm : undefined
+      const pulse = detail.pulse === 'gain' || detail.pulse === 'loss' ? detail.pulse : undefined
+      setHoldOpen(false)
+      setActiveTab('map')
+      sendMapAction('focusPin', {
+        ...(postId ? { postId } : { own: 'largest' }),
+        ...(deltaKm != null ? { deltaKm } : {}),
+        ...(pulse ? { pulse } : {}),
+      })
+    }
+    window.addEventListener(NOTIFICATION_FOCUS_PIN_EVENT, onFocusPin)
+    return () => window.removeEventListener(NOTIFICATION_FOCUS_PIN_EVENT, onFocusPin)
+  }, [sendMapAction])
+
   // The map itself owns readiness. An iframe load is too early: Mapbox still
   // has to apply its style and complete the globe-to-city intro.
   const [mapReady, setMapReady] = useState(NATIVE_ADAPTIVE_MAP)
@@ -2859,6 +2886,35 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       window.dispatchEvent(new CustomEvent('poplur-notifications-result', { detail: data }))
     }
 
+    // A push that landed while the app is up. The shell no longer lets the
+    // phone draw it as a system banner over us; it hands the row down and
+    // this document draws its own banner, which can be tapped to the thing
+    // the push is about.
+    const onNativeNotificationBanner = (event: MessageEvent) => {
+      const data = event.data
+      if (!isNativeShell() || event.source !== window || !data || typeof data !== 'object') return
+      if (data.type !== 'poplurNotificationBanner') return
+      showNativeNotificationBanner(data.notification)
+    }
+
+    // A system notification tapped OUTSIDE the app (cold launch or from the
+    // background). Native remembers the post until this document is ready,
+    // then asks for the same route a banner tap takes.
+    const onNativeOpenPost = (event: MessageEvent) => {
+      const data = event.data
+      if (!isNativeShell() || event.source !== window || !data || typeof data !== 'object') return
+      if (data.type !== 'poplurOpenPost') return
+      const row = nativeNotificationRow({
+        id: typeof data.notificationId === 'string' && data.notificationId ? data.notificationId : `open:${String(data.postId ?? '')}`,
+        kind: data.kind,
+        title: typeof data.title === 'string' && data.title ? data.title : 'Poplur',
+        detail: typeof data.detail === 'string' ? data.detail : '',
+        postId: data.postId,
+        threadId: data.threadId,
+      })
+      if (row) followNotification(row)
+    }
+
     const onNativeWalletPassResult = (event: MessageEvent) => {
       const data = event.data
       if (!isNativeShell() || event.source !== window || !data || typeof data !== 'object') return
@@ -2884,6 +2940,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     window.addEventListener('poplur-dm-requested', onDMRequested)
     window.addEventListener('message', onNativeDMResult)
     window.addEventListener('message', onNativeNotificationsResult)
+    window.addEventListener('message', onNativeNotificationBanner)
+    window.addEventListener('message', onNativeOpenPost)
     window.addEventListener('message', onNativeCheckoutResult)
     window.addEventListener('message', onNativeWalletPassResult)
     return () => {
@@ -2892,6 +2950,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       window.removeEventListener('poplur-dm-requested', onDMRequested)
       window.removeEventListener('message', onNativeDMResult)
       window.removeEventListener('message', onNativeNotificationsResult)
+      window.removeEventListener('message', onNativeNotificationBanner)
+      window.removeEventListener('message', onNativeOpenPost)
       window.removeEventListener('message', onNativeCheckoutResult)
       window.removeEventListener('message', onNativeWalletPassResult)
     }
@@ -3147,6 +3207,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             overall: scope === 'world',
           })
         }
+      }
+      if (event.data.type === 'poplur-map-focus-miss') {
+        showPopup({ kind: 'engagement', icon: '📍', text: 'That pop is not on your map right now' })
       }
       if (event.data.type === 'poplur-map-radius' && typeof event.data.radiusKm === 'number') {
         // The visible pin's ground just changed. Keep the shell card on that
