@@ -50,7 +50,7 @@ function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; ra
 }
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaimGroup, onClaimsSettled } from './mapClaims'
-import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin, installPinSpotlight, updatePinSpotlight, pulsePinSpotlight, installOwnerRoute, updateOwnerRoute } from './ClayMap'
+import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin, installPinSpotlight, updatePinSpotlight, pulsePinSpotlight } from './ClayMap'
 import WeatherMark from './WeatherMark'
 import { weatherIconIdForCode, weatherIconIdForMode } from './sideControlIcons'
 import { windyFromSpeed } from './weatherCode'
@@ -63,7 +63,6 @@ import {
 import {
   mapPointCycleCameraPlan,
   mapPointCycleDestinationPose,
-  mapPointCyclePanMs,
   mapPointRadiusFrameZoom,
   programmaticCameraBlurAllowed,
   programmaticCameraPoseMatches,
@@ -1856,16 +1855,15 @@ export default function MapApp() {
 
     if (motionMode === 'map-point-cycle' && cameraPlan.kind === 'translate') {
       // Arrow browsing is selection, not a replay of the cinematic tour: no
-      // flatten, pull-back, or second reveal move. But it IS a move. This used
-      // to put the next point under the camera in one frame, which read as
-      // the map "flipping" to the point rather than going there (5 Sep 2026);
-      // now one atomic ease carries centre, zoom, pitch and bearing together,
-      // paced by how far the next point is, so the eye follows the camera
-      // across the board. Zoom is the nearby-preserved or subject-framed
-      // destination chosen above. Close pins regain the shallow isometric
-      // board after a world view; landmarks use their authored hero angle.
-      // An ease (rather than flyTo) keeps Mapbox's support for an authored
-      // landmark offset.
+      // flatten, pull-back, or second reveal move. The next point is put
+      // under the camera in ONE frame — a flip, not a pan. A paced ease
+      // between points was tried and rejected (5 Sep 2026): stepping pin to
+      // pin, a cut reads as "next", a glide reads as travel nobody asked for.
+      // Zoom is the nearby-preserved or subject-framed destination chosen
+      // above. Close pins regain the shallow isometric board after a world
+      // view; landmarks use their authored hero angle. A zero-duration ease
+      // (rather than jumpTo) keeps Mapbox's support for an authored landmark
+      // offset.
       const destinationPose = mapPointCycleDestinationPose({
         finalZoom: cameraPlan.zoom,
         currentZoom,
@@ -1876,25 +1874,12 @@ export default function MapApp() {
         subject: pointSubject ?? 'pin',
         streetView,
       })
-      const panMs = mapPointCyclePanMs(hopMeters)
-      mapCamera.__suppressNextMapClickUntil = Date.now() + panMs + 500
-      wakeManagedRendering(panMs + MANAGED_CAMERA_SETTLE_MS)
+      mapCamera.__suppressNextMapClickUntil = Date.now() + 500
+      wakeManagedRendering(MANAGED_CAMERA_SETTLE_MS)
       map.setMinPitch(0)
       // A world frame leaves Mapbox's pitch ceiling at zero. Raise it without
       // moving the camera before the single atomic destination ease.
       map.setMaxPitch(Math.max(destinationPose.maxPitch, currentPitch, destinationPose.pitch))
-      beginProgrammaticCameraMotion(map, panMs)
-      // Arrival is the end of the pan, not the start of it: ownership and the
-      // pitch ceiling are handed back when Mapbox says the camera has landed,
-      // and only if no later flight has taken over in the meantime.
-      const arrive = () => {
-        if (!ownsFlight()) return
-        map.setMaxPitch(destinationPose.maxPitch)
-        mapCamera.__tripping = false
-        mapCamera.__cinematic = false
-        onArrival?.()
-      }
-      map.once('moveend', arrive)
       try {
         map.easeTo({
           center: targetCenter,
@@ -1904,17 +1889,24 @@ export default function MapApp() {
           // The authored offset is pixel framing for the hero close-up; a
           // held birds-eye survey centres the subject instead.
           ...(landmarkFrame?.offset && !atWorldOverview ? { offset: landmarkFrame.offset } : {}),
-          duration: panMs,
-          easing: (t: number) => t * t * (3 - 2 * t),
+          duration: 0,
           essential: true,
         })
       } catch {
-        map.off('moveend', arrive)
         if (ownsFlight()) {
           mapCamera.__tripping = false
           mapCamera.__cinematic = false
         }
         return false
+      }
+      // A zero-duration ease lands synchronously, so ownership and the pitch
+      // ceiling are handed back right here — and the arrival callback (SELECT
+      // MODE opening the pop's card) fires on the frame the pin appears.
+      if (ownsFlight()) {
+        map.setMaxPitch(destinationPose.maxPitch)
+        mapCamera.__tripping = false
+        mapCamera.__cinematic = false
+        onArrival?.()
       }
       return true
     }
@@ -3704,26 +3696,18 @@ export default function MapApp() {
     } catch { /* standalone route has no separate shell consumer */ }
   }, [focusedUserKey])
 
-  // SELECT MODE: with a poster armed, their pins are threaded by a dotted line
-  // in arrow order (the same order the camera will fly them), and the ground
-  // paint of the pin the arrows last landed on stays up. Releasing the filter
-  // takes both down. Rebuilt with the route so a pin arriving or leaving
-  // re-threads the line rather than leaving a dead segment.
+  // SELECT MODE: the ground paint of the pin the arrows last landed on stays
+  // up while a poster is armed; releasing the filter takes it down. The dotted
+  // thread that used to join the poster's pins went with the camera pan — a
+  // trail only earns its place when the camera is seen to travel it, and the
+  // arrows now flip.
   useEffect(() => {
     const live = mapRef.current
-    if (!live) return
-    const pins = focusedUserKey
-      ? mapPointRoute.filter(point => point.kind === 'pin')
-      : []
-    const first = pins.length
-      ? mapPins.find(candidate => candidate.id === pins[0].id)
-      : undefined
+    if (!live || focusedUserKey) return
     try {
-      installOwnerRoute(live)
-      updateOwnerRoute(live, pins.map(point => point.coords), first?.color ?? null)
-      if (!focusedUserKey) updatePinSpotlight(live, null)
-    } catch { /* style reloading; the next route change redraws */ }
-  }, [focusedUserKey, mapPointRoute, mapPins, mapLive])
+      updatePinSpotlight(live, null)
+    } catch { /* style reloading; the next filter change redraws */ }
+  }, [focusedUserKey, mapLive])
 
   // A running tour owns the arrows, and the poster filter would fight it for
   // the same route — so starting a tour releases the filter.

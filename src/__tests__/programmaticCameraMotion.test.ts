@@ -247,13 +247,13 @@ describe('programmatic Map camera motion', () => {
     expect(directPointMove).toContain('pitch: destinationPose.pitch')
     expect(directPointMove).toContain('bearing: destinationPose.bearing')
     expect(directPointMove).toContain('map.setMaxPitch(Math.max(destinationPose.maxPitch')
-    // The arrows PAN to the next point (5 Sep 2026): a paced ease, its
-    // arrival handed back on moveend, never a one-frame cut.
-    expect(directPointMove).toContain('const panMs = mapPointCyclePanMs(hopMeters)')
-    expect(directPointMove).toContain('duration: panMs')
-    expect(directPointMove).not.toContain('duration: 0')
-    expect(directPointMove).toContain("map.once('moveend', arrive)")
-    expect(directPointMove).toContain('beginProgrammaticCameraMotion(map, panMs)')
+    // The arrows FLIP to the next point: one zero-duration ease, arrival
+    // handed back synchronously. A paced pan was tried and rejected
+    // (5 Sep 2026) — stepping pin to pin, a cut reads as "next".
+    expect(directPointMove).toContain('duration: 0')
+    expect(directPointMove).not.toContain('mapPointCyclePanMs')
+    expect(directPointMove).not.toContain("map.once('moveend'")
+    expect(directPointMove).not.toContain('beginProgrammaticCameraMotion')
     expect(directPointMove).not.toContain('map.flyTo({')
   })
 
