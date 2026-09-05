@@ -1169,7 +1169,9 @@
   position: absolute;
   left: 18px;
   right: 18px;
-  bottom: 142px;
+  /* Above a two-line title (bottom 118px, ~46px tall): the sparkline must
+     never sit on the words. Captions, when on, share this band at 166px. */
+  bottom: 174px;
   color: rgba(255, 255, 255, 0.9);
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
 }
