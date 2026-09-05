@@ -1160,3 +1160,33 @@
 @media (prefers-reduced-motion: reduce) {
   .liveDot { animation: none; }
 }
+
+/* BLOCK on the channel column's head, in the card's clay until the icon set
+   carries art for it. Same footprint as a side button so the column reads as
+   one material. */
+.railGlyph {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.78), transparent 30%),
+    linear-gradient(145deg, #fff, #ecd8e2);
+  box-shadow:
+    inset 0 8px 13px rgba(255, 255, 255, 0.52),
+    0 8px 14px rgba(69, 38, 53, 0.14);
+  color: #b3145f;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.railGlyph svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+.railGlyph:active { transform: scale(0.96); }

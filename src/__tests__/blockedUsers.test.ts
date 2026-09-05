@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { blockUser, blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange, resetBlockedUsersForTests } from '../blockedUsers'
+import { blockUser, blockedUserEntries, blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange, resetBlockedUsersForTests, unblockUser } from '../blockedUsers'
 import { visitedProfilePhoto } from '../profileRealtimePosts'
 
 describe('blocking someone from their profile', () => {
@@ -35,5 +35,30 @@ describe('blocking someone from their profile', () => {
     expect(visitedProfilePhoto(rows, null, 'glowgetter')).toBe('https://cdn.example/glow.jpg')
     expect(visitedProfilePhoto(rows, 'u1', '@orange.peel')).toBeNull()
     expect(visitedProfilePhoto(rows, null, null)).toBeNull()
+  })
+})
+
+describe('unblocking', () => {
+  it('lifts a uid block locally at once, and a handle-only block on the handle', async () => {
+    resetBlockedUsersForTests()
+    await blockUser({ uid: 'uid-a', username: '@Alpha' })
+    await blockUser({ username: '@handle.only' })
+    expect(isUserBlocked('uid-a')).toBe(true)
+    expect(isUserBlocked(null, '@handle.only')).toBe(true)
+    expect(blockedUserEntries()).toHaveLength(2)
+
+    await unblockUser({ uid: 'uid-a' })
+    expect(isUserBlocked('uid-a')).toBe(false)
+    expect(isUserBlocked(null, '@handle.only')).toBe(true)
+
+    await unblockUser({ username: 'HANDLE.only' })
+    expect(isUserBlocked(null, '@handle.only')).toBe(false)
+    expect(blockedUserEntries()).toHaveLength(0)
+  })
+
+  it('lists what Settings shows: the uid when known, the handle beside it', async () => {
+    resetBlockedUsersForTests()
+    await blockUser({ uid: 'uid-b', username: '@Bravo' })
+    expect(blockedUserEntries()).toEqual([{ uid: 'uid-b', handle: 'bravo' }])
   })
 })

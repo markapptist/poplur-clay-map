@@ -1,10 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   cubeTransition, holdPreviewMode, screenTransition, setCubeTransition,
   setHoldPreviewMode, setScreenTransition,
   type CubeTransition, type HoldPreviewMode, type ScreenTransition,
 } from './cubeTransitions'
 import styles from './SettingsScreen.module.css'
+import { blockUser, blockedUserEntries, onBlockedUsersChange, unblockUser } from './blockedUsers'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
@@ -86,7 +87,7 @@ import {
 // lives under Audio playback. Pages with nothing to set yet still get a row — a gap in
 // the list would read as "this page has no settings screen", which is a
 // different claim from "there is nothing to set here yet".
-type Page = 'home' | 'map' | 'feed' | 'camera' | 'radio' | 'ringtone' | 'app' | 'privacy' | 'profile' | 'verify'
+type Page = 'home' | 'map' | 'feed' | 'camera' | 'radio' | 'ringtone' | 'app' | 'privacy' | 'blocked' | 'profile' | 'verify'
 
 const PAGE_TITLE: Record<Page, string> = {
   home: 'HOME',
@@ -97,6 +98,7 @@ const PAGE_TITLE: Record<Page, string> = {
   ringtone: 'RINGTONE',
   app: 'APP ICON',
   privacy: 'PRIVACY',
+  blocked: 'BLOCKED',
   profile: 'PROFILE',
 
   verify: 'VERIFICATION',
@@ -226,6 +228,18 @@ export default function SettingsScreen({ bindBack }: {
     : target === 'profile' || target === 'app'
       ? 'appearance'
       : 'gear'
+  // Who you have blocked, live: unblocking here puts their pops back on the
+  // next render of every surface, the way blocking took them away.
+  const blocked = useSyncExternalStore(onBlockedUsersChange, blockedUserEntries, blockedUserEntries)
+  const [blockDraft, setBlockDraft] = useState('')
+  const addBlockByHandle = () => {
+    const handle = blockDraft.trim().replace(/^@/, '')
+    if (!handle) return
+    playPop()
+    void blockUser({ username: handle })
+    setBlockDraft('')
+  }
+
   const openPage = (next: Page) => {
     // Most Settings pages keep the gear. Claim sound ownership only when the
     // destination really changes the persistent navigator object.
@@ -582,6 +596,14 @@ export default function SettingsScreen({ bindBack }: {
 
 
 
+              <button type="button" className={styles.row} onClick={() => openPage('blocked')}>
+                <span className={styles.rowText}>
+                  <b>Blocked</b>
+                  <i>People whose pops and messages you have shut out.</i>
+                </span>
+                <span className={styles.rowValue}>{blocked.length === 0 ? 'Nobody' : String(blocked.length)}</span>
+                <span className={styles.chev} aria-hidden="true">›</span>
+              </button>
               <button type="button" className={styles.row} onClick={() => openPage('app')}>
                 <span className={styles.rowText}>
                   <b>App Icon</b>
@@ -772,6 +794,50 @@ export default function SettingsScreen({ bindBack }: {
         </article>
         )}
 
+        {page === 'blocked' && (
+          <>
+            <article className={styles.group} aria-label="Blocked accounts">
+              {blocked.length === 0 && (
+                <p className={styles.blockedEmpty}>
+                  Nobody is blocked. Block someone from their post in the feed, or from their profile, and they appear here.
+                </p>
+              )}
+              {blocked.map(entry => (
+                <div key={entry.uid ?? entry.handle} className={styles.blockedRow}>
+                  <span className={styles.rowText}>
+                    <b>{entry.handle ? `@${entry.handle}` : 'An account'}</b>
+                    <i>{entry.uid ? 'Blocked on their account' : 'Blocked on their handle'}</i>
+                  </span>
+                  <button
+                    type="button"
+                    className={styles.blockedUnblock}
+                    onClick={() => { playPop(); void unblockUser({ uid: entry.uid, username: entry.handle }) }}
+                  >
+                    Unblock
+                  </button>
+                </div>
+              ))}
+            </article>
+            {/* Add by handle, for someone you are not looking at right now. A
+                handle block lands on what you can see; it becomes an account
+                block the first time one of their pops carries the id. */}
+            <article className={styles.group} aria-label="Block someone by handle">
+              <form className={styles.blockedAdd} onSubmit={event => { event.preventDefault(); addBlockByHandle() }}>
+                <input
+                  type="text"
+                  value={blockDraft}
+                  onChange={event => setBlockDraft(event.currentTarget.value.slice(0, 48))}
+                  placeholder="@handle"
+                  aria-label="Handle to block"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+                <button type="submit" disabled={!blockDraft.trim()}>Block</button>
+              </form>
+            </article>
+          </>
+        )}
         {page === 'privacy' && (
         <article className={styles.group} aria-label="Account location privacy">
           <button

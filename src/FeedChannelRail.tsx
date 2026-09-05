@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { CHANNELS } from './FeedTwin'
 import type { ControlSide } from './controlPlacement'
 import { channelUrl } from './assetPacks'
@@ -25,11 +25,17 @@ export default function FeedChannelRail({
   side,
   hidden = false,
   newChannelIds,
+  head,
 }: {
   activeIndex: number
   onPick: (index: number) => void
   side: ControlSide
   hidden?: boolean
+  /** Controls that stand at the TOP of this column, above the dial — the
+   *  post's block and delete. The same seat the camera's grid and timer take
+   *  above its filter wheel: about the thing on screen, on the column the
+   *  other rail leaves free. */
+  head?: ReactNode
   /** Channels holding a pop the radius delivered that this viewer has not
    *  opened. Those tiles wear the NEW burst; it comes off the moment the
    *  channel is visited (FeedTwin marks the channel's pops seen on arrival). */
@@ -75,6 +81,8 @@ export default function FeedChannelRail({
       // must not also see that wheel and step a second time.
       onWheel={event => event.stopPropagation()}
     >
+      {head && <div className={styles.head}>{head}</div>}
+      <div className={styles.wheelBox}>
       <ClayWheel
         items={items}
         selectedId={selectedId}
@@ -99,6 +107,7 @@ export default function FeedChannelRail({
         // goToChannel already pops; a second detent from the wheel doubled it.
         notchSound={false}
       />
+      </div>
     </div>
   )
 }

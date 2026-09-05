@@ -13,6 +13,7 @@ import {
   nativeFeedPostsSnapshot,
   onNativeFeedPosts,
   type NativeFeedPost,
+  requestNativeFeedPosts,
 } from './nativeFeedPosts'
 import { accountSnapshot, onAccountChange } from './accountStore'
 import {
@@ -40,6 +41,7 @@ const deferToOwner = (owner: AudioOwner | null): boolean =>
   owner === 'voice' || owner === 'radio' || owner === 'ipod'
 import ClayCornerButton from './ClayCornerButton'
 import SideControlIconButton from './SideControlIcon'
+import PoplurDialog from './PoplurDialog'
 import PoplurStatusToast from './PoplurStatusToast'
 import FeedChannelRail from './FeedChannelRail'
 import FeedChannelStep from './FeedChannelStep'
@@ -66,6 +68,7 @@ import {
 } from './radiusLedger'
 import { currentViewerCoords as viewerCoordsFromFix } from './viewerFix'
 import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
+import { blockUser, blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } from './blockedUsers'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
 // a fullscreen vertical TV-channel video pager. Vertical swipe changes channel;
@@ -883,6 +886,67 @@ export default function FeedTwin({
   const dmPeer = post?.ownerId && post.ownerId !== accountUid
     ? { userId: post.ownerId, user: post.user }
     : null
+
+  // ── Block and delete, at the top of the channel column ──
+  //
+  // Two controls about the post on screen, on the column the action rail
+  // leaves free — the seat the camera's grid and timer take above its filter
+  // wheel. BLOCK is offered on somebody else's post that carries an account
+  // id (the same rule as the DM above: a block has to land on an account).
+  // DELETE is offered on your own. Each asks first; a block is a boundary
+  // and a delete cannot be undone.
+  const [blockPromptPost, setBlockPromptPost] = useState<ChannelPost | null>(null)
+  const [deletePromptPost, setDeletePromptPost] = useState<ChannelPost | null>(null)
+  const [deletePending, setDeletePending] = useState<{ requestId: string; postId: string } | null>(null)
+  const canBlockPoster = Boolean(dmPeer)
+  const canDeletePost = Boolean(post?.id && post.ownerId && accountUid && post.ownerId === accountUid)
+  const confirmBlock = () => {
+    const target = blockPromptPost
+    setBlockPromptPost(null)
+    if (!target?.ownerId) return
+    // Local first: feedPostsForChannel drops their pops on the very next
+    // render, so the feed steps off this post by itself.
+    void blockUser({ uid: target.ownerId, username: target.user })
+    showPopup({ kind: 'engagement', icon: '⛔', text: `Blocked ${target.user || 'this account'}` })
+  }
+  const confirmDelete = () => {
+    const target = deletePromptPost
+    const postId = target?.id?.trim()
+    setDeletePromptPost(null)
+    if (!target || !postId || deletePending) return
+    const requestId = `feed-delete-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    setDeletePending({ requestId, postId })
+    // The same native route the profile's delete takes — one deleter, one
+    // result event — so a post removed here is removed the way it is there.
+    if (!postNativeEvent({ type: 'deleteProfilePost', requestId, postId })) {
+      setDeletePending(null)
+      showPopup({ kind: 'engagement', icon: '⚠️', text: 'Delete is only available in the app' })
+    }
+  }
+  useEffect(() => {
+    if (!deletePending) return
+    const receive = (event: Event) => {
+      const result = (event as CustomEvent<{ requestId?: string; postId?: string; ok?: boolean; error?: string }>).detail
+      if (result?.requestId !== deletePending.requestId || result?.postId !== deletePending.postId) return
+      setDeletePending(null)
+      if (!result.ok) {
+        showPopup({ kind: 'engagement', icon: '⚠️', text: result.error?.trim() || 'Could not delete this post' })
+        return
+      }
+      showPopup({ kind: 'engagement', icon: '🗑', text: 'Post deleted' })
+      requestNativeFeedPosts()
+    }
+    // A shell that never answers must not leave the feed waiting forever.
+    const timer = window.setTimeout(() => {
+      setDeletePending(null)
+      showPopup({ kind: 'engagement', icon: '⚠️', text: 'Could not delete this post' })
+    }, 12_000)
+    window.addEventListener('poplur-native-profile-post-delete-result', receive)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('poplur-native-profile-post-delete-result', receive)
+    }
+  }, [deletePending])
   // Never sit on an empty channel — and "empty" means nothing IN REACH: a
   // channel full of pops that cannot reach the viewer is empty to them, and
   // demo padding does not count. Whenever the channel under the viewer has
@@ -2139,6 +2203,33 @@ export default function FeedTwin({
           side={controlSide === 'left' ? 'right' : 'left'}
           hidden={playerMode}
           newChannelIds={newChannelIds}
+          head={(canBlockPoster || canDeletePost) ? (
+            <>
+              {/* Block wears a drawn glyph until the icon set carries clay
+                  art for it; it takes that through the registry when it
+                  arrives, the way select and select-all did. */}
+              {canBlockPoster && (
+                <button
+                  type="button"
+                  className={styles.railGlyph}
+                  aria-label={`Block ${post?.user || 'this account'}`}
+                  onPointerDown={event => event.stopPropagation()}
+                  onClick={event => { event.stopPropagation(); playPop(); if (post) setBlockPromptPost(post) }}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M6 6l12 12" /></svg>
+                </button>
+              )}
+              {canDeletePost && (
+                <SideControlIconButton
+                  icon="profile.delete"
+                  aria-label={deletePending ? 'Deleting this post' : 'Delete this post'}
+                  disabled={Boolean(deletePending)}
+                  loading={Boolean(deletePending)}
+                  onActivate={() => { playPop(); if (post && !deletePending) setDeletePromptPost(post) }}
+                />
+              )}
+            </>
+          ) : undefined}
         />
         <PostActionRail
           side={feedRailSide}
@@ -2158,6 +2249,32 @@ export default function FeedTwin({
           onLike={likeCurrentPost}
           onDislike={dislikeCurrentPost}
         />
+        {blockPromptPost && (
+          <div className={surfaceStyles.scrim} onClick={() => setBlockPromptPost(null)} data-feed-safety-dialog="">
+            <PoplurDialog
+              eyebrow="Poplur"
+              title={`Block ${blockPromptPost.user || 'this account'}?`}
+              subtitle="Their pops leave your map and feed, and messages close both ways. You can undo this in Settings › Blocked."
+              primaryAction={{ label: 'Block', onActivate: () => { playPop(); confirmBlock() } }}
+              secondaryAction={{ label: 'Keep seeing them', onActivate: () => { playPop(); setBlockPromptPost(null) } }}
+              onClose={() => { playPop(); setBlockPromptPost(null) }}
+              dataId={`feed-block:${blockPromptPost.ownerId ?? ''}`}
+            />
+          </div>
+        )}
+        {deletePromptPost && !deletePending && (
+          <div className={surfaceStyles.scrim} onClick={() => setDeletePromptPost(null)} data-feed-delete-dialog="">
+            <PoplurDialog
+              eyebrow="Poplur"
+              title="Delete this post?"
+              subtitle="It comes off the feed, the map and your profile. This cannot be undone."
+              primaryAction={{ label: 'Delete', onActivate: () => { playPop(); confirmDelete() } }}
+              secondaryAction={{ label: 'Keep it', onActivate: () => { playPop(); setDeletePromptPost(null) } }}
+              onClose={() => { playPop(); setDeletePromptPost(null) }}
+              dataId={`feed-delete:${deletePromptPost.id ?? ''}`}
+            />
+          </div>
+        )}
         {/* The no-signal card above is aria-hidden, so with nothing on the
             live channel would otherwise announce nothing at all. */}
         {ch.id === 'live' && !post && (

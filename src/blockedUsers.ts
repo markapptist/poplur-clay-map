@@ -19,7 +19,7 @@
 // to Poplur (reports/{auto}) plus the native event, and a local memory so the
 // dialog can say you already did.
 
-import { addDoc, collection, doc, serverTimestamp, setDoc } from 'firebase/firestore'
+import { addDoc, collection, deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { currentUid, webDb } from './webFirebase'
 
@@ -125,6 +125,39 @@ export async function blockUser(who: { uid?: string | null; username?: string | 
       })
       return 'web'
     } catch { /* the local block stands; the rules' boundary follows next sign-in */ }
+  }
+  return 'local'
+}
+
+/** Everyone you have blocked, as the list Settings shows: what is known of
+ *  each — the uid when the block landed on a resolved account, the handle
+ *  when it landed on what you could see. */
+export interface BlockedUserEntry { uid?: string; handle?: string }
+export function blockedUserEntries(): readonly BlockedUserEntry[] {
+  load()
+  return entries.map(e => ({ ...e }))
+}
+
+/**
+ * Unblock someone. The mirror of blockUser: local first (their pops are back
+ * on the next render), then the durable record removed by whichever client
+ * owns identity here. A handle-only block is matched on the handle.
+ */
+export async function unblockUser(who: { uid?: string | null; username?: string | null }): Promise<SafetyRoute> {
+  load()
+  const uid = who.uid?.trim().slice(0, 128) || undefined
+  const handle = normalHandle(who.username) ?? undefined
+  if (!uid && !handle) return 'local'
+  const before = entries.length
+  entries = entries.filter(e => !((uid && e.uid === uid) || (!uid && handle && e.handle === handle)))
+  if (entries.length !== before) persist()
+  if (uid && postNativeEvent({ type: 'unblockUser', userId: uid, username: who.username ?? '' })) return 'native'
+  const me = isNativeShell() ? null : currentUid()
+  if (uid && me && me !== uid) {
+    try {
+      await deleteDoc(doc(webDb(), 'users', me, 'blocked', uid))
+      return 'web'
+    } catch { /* the local unblock stands */ }
   }
   return 'local'
 }
