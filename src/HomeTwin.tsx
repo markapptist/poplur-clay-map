@@ -5618,10 +5618,15 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             frontMost={activeTab === 'feed' && committedTab === 'feed' && mainSurfaceVisible}
             onPlayerModeChange={setFeedFullscreen}
             autoPlayOnMount={feedAutoPlayOnMount}
-            onOpenProfile={(user, userId) => {
+            onOpenProfile={(user, userId, postId) => {
+              // The same landing the map's tapped pin takes (poplur-map-open-
+              // profile above): the person, by stable id, with the pop that
+              // brought you lit on their grid. A null user is your own pop —
+              // your own grid, no visit.
               setProfileOrigin(activeTab)
               setViewingUser(user)
               setViewingUserId(userId?.trim() || null)
+              if (postId) setProfilePopFlash(prev => ({ ids: [postId], seq: (prev?.seq ?? 0) + 1 }))
               setActiveTab('profile')
             }}
             // The playing pop is a PERSON too. Same "DM them" journey the

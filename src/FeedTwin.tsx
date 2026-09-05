@@ -43,7 +43,8 @@ import PoplurStatusToast from './PoplurStatusToast'
 import FeedChannelRail from './FeedChannelRail'
 import FeedChannelStep from './FeedChannelStep'
 import { nextFilledChannelIndex } from './feedChannelSelection'
-import { VERIFIED_CHECK_SRC, verifiedKindForHandle } from './verifiedCheck'
+import { VERIFIED_CHECK_SRC, verifiedKindForHandle, type VerifiedCheckKind } from './verifiedCheck'
+import { businessDirectorySnapshot, subscribeBusinessDirectory } from './businessDirectory'
 import PostActionRail from './PostActionRail'
 import { useControlSide, type ControlSide } from './controlPlacement'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -338,8 +339,12 @@ export default function FeedTwin({
   onIndexChange?: (index: number) => void
   /** hold-menu hook: LIKE / COMMENT / CC act on the post that is playing */
   bindActions?: (fn: ((action: FeedAction) => void) | null) => void
-  /** PROFILE opens the poster's profile, not yours */
-  onOpenProfile?: (user: string, userId?: string) => void
+  /** PROFILE opens the poster's profile, not yours. `user` is null for a pop
+   *  of your OWN — the map's rule for its own pins — so the shell lands on
+   *  your grid rather than "visiting" you; `userId` is the stable identity
+   *  everything keys on (handles are not unique); `postId` is the pop that
+   *  brought you, for the grid to light. Also the byline's tap. */
+  onOpenProfile?: (user: string | null, userId?: string, postId?: string) => void
   /** "DM the poster" on the playing pop — the same person-addressed MAIL
    *  journey the map's opened-pop card offers. Only rendered for a post owned
    *  by ANOTHER account whose row carries the stable id a DM is addressed to. */
@@ -859,14 +864,26 @@ export default function FeedTwin({
 
   const posts = rankedPostsFor(ch, publishedPosts, discovery, focusedContent?.target)
   const post = posts.length ? posts[(contentIdxRef.current[ch.id] ?? 0) % posts.length] : undefined
-  // The byline's mark: the supplied check, by the same rule the profile uses.
-  const bylineVerified = verifiedKindForHandle(post?.user, ownHandle)
   // Whose account is watching, for telling somebody else's post from your own.
   const accountUid = useSyncExternalStore(
     subscribeAccountUid,
     () => accountSnapshot().uid,
     () => null,
   )
+  // The byline's mark. A poster listed in the public business directory is a
+  // BUSINESS — keyed on their account id, never their handle — and wears the
+  // black check when verified, nothing when not (an unverified business is
+  // not a verified person either). Everybody else follows the same
+  // handle rule the profile uses.
+  const businesses = useSyncExternalStore(
+    subscribeBusinessDirectory,
+    businessDirectorySnapshot,
+    businessDirectorySnapshot,
+  )
+  const posterBusiness = post?.ownerId ? businesses.get(post.ownerId) ?? null : null
+  const bylineVerified: VerifiedCheckKind | null = posterBusiness
+    ? (posterBusiness.verified ? 'business' : null)
+    : verifiedKindForHandle(post?.user, ownHandle)
   // A pop is a person before it is a place, and a person can be written to —
   // the map's opened-pop card rule (`!pin.mine && pin.ownerId`), applied to
   // the post that intercepted you here. Only somebody ELSE'S post offers the
@@ -1070,6 +1087,24 @@ export default function FeedTwin({
   // read inside the action bridge without re-binding it every post
   const postRef = useRef(post)
   postRef.current = post
+  // Whoever posted the pop that is playing. ONE route for the byline tap and
+  // the hold menu's PROFILE: the shell's existing open-profile path, keyed
+  // on the poster's stable id. Your own pop goes to your own grid (`user`
+  // null, exactly the map's rule for its own pins) and records no visit — a
+  // visit to yourself is not a visit.
+  const openPosterProfile = useCallback(() => {
+    const current = postRef.current
+    // Hold already claimed its wheel-preview return. With no post there is
+    // no final model destination, so acknowledge locally without leaving
+    // a navigation claim that could silence the next unrelated swap.
+    if (!current) { playPop(); return }
+    // A real destination changes Feed's TV to the selected profile model.
+    // Re-arm ownership after Hold's preview return and keep one pop total.
+    playCubeNavigationPop()
+    const own = Boolean(current.ownerId && current.ownerId === accountUid)
+    if (!own) recordProfileVisitAfterView(radiusPostId(ch.id, current))
+    onOpenProfile?.(own ? null : current.user, current.ownerId, radiusPostId(ch.id, current))
+  }, [accountUid, ch.id, onOpenProfile])
   // The static layer uses tv_static_clean.mp4 — the logo-free 0-4s window of
   // tv_static.mp4 (the full clip bursts a Poplur 'P' at ~4.2-8.5s, which would
   // double up with the channel identity drawn over it).
@@ -1798,22 +1833,11 @@ export default function FeedTwin({
       if (action === 'share') { sharePost(); return }
       if (action === 'captions') { toggleCaptions(); return }
       if (action === 'suggestion') { showCurrentSuggestion(); return }
-      if (action === 'profile') {
-        // whoever posted the video you are watching
-        const current = postRef.current
-        // Hold already claimed its wheel-preview return. With no post there is
-        // no final model destination, so acknowledge locally without leaving
-        // a navigation claim that could silence the next unrelated swap.
-        if (!current) { playPop(); return }
-        // A real destination changes Feed's TV to the selected profile model.
-        // Re-arm ownership after Hold's preview return and keep one pop total.
-        playCubeNavigationPop()
-        recordProfileVisitAfterView(radiusPostId(ch.id, current))
-        onOpenProfile?.(current.user, current.ownerId)
-      }
+      // whoever posted the video you are watching — the byline's own tap
+      if (action === 'profile') openPosterProfile()
     })
     return () => bindActions(null)
-  }, [bindActions, ch.id, likeCurrentPost, onOpenProfile, openComments, sharePost, showCurrentSuggestion, toggleCaptions])
+  }, [bindActions, likeCurrentPost, openComments, openPosterProfile, sharePost, showCurrentSuggestion, toggleCaptions])
 
   // Tapping outside sends the window back up the way it came, then unmounts.
   const closeComments = () => {
@@ -2166,7 +2190,36 @@ export default function FeedTwin({
             <div className={styles.feedHeaderCopy}>
               {/* One line, two turns: the title and the handle share a cell and
                   trade places on a slow fade. Keyed on the title so a new pop
-                  restarts both in step — title first. */}
+                  restarts both in step — title first.
+                  The WHOLE cell is the poster's button, not the handle span:
+                  the handle is faded out half the time and is display:none
+                  under reduced motion, so the cell is the only target that is
+                  always there to press. The feed's gesture recogniser stands
+                  aside for anything inside a button, so this tap can never
+                  arm the long-press or count as a swipe. Without an opener
+                  (a standalone preview) it stays a plain line. */}
+              {onOpenProfile ? (
+                <button
+                  type="button"
+                  className={`${styles.feedHeadline} ${styles.feedHeadlineButton}`}
+                  aria-label={post.ownerId && post.ownerId === accountUid
+                    ? `${title}. Open your profile`
+                    : `${title}. Open ${post.user}'s profile`}
+                  key={title}
+                  onClick={openPosterProfile}
+                  data-feed-byline="true"
+                >
+                  <div className={styles.feedTitleTrack}>
+                    <span>{title}</span>
+                  </div>
+                  <div className={`${styles.feedHandle} ${styles.feedMetaHandle}`} aria-hidden="true">
+                    {post.user}
+                    {bylineVerified && (
+                      <img src={VERIFIED_CHECK_SRC[bylineVerified]} className={styles.verifyBadge} alt="" draggable="false" />
+                    )}
+                  </div>
+                </button>
+              ) : (
               <div className={styles.feedHeadline} aria-label={`${title}, ${post.user}`} key={title}>
                 <div className={styles.feedTitleTrack}>
                   <span>{title}</span>
@@ -2178,6 +2231,7 @@ export default function FeedTwin({
                   )}
                 </div>
               </div>
+              )}
               {/* The DM action moved to the control rail (feed.dm, the mail
                   icon): a pill under the byline covered the video and read as
                   part of the headline rather than as an action. */}

@@ -231,6 +231,29 @@
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.72);
 }
 
+/* The headline as the poster's button: same line, same grid, no chrome of
+   its own. The user-agent's button box (border, padding, font, colour) would
+   otherwise re-flow the cell and paint the title in black on the video. */
+.feedHeadlineButton {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  width: 100%;
+}
+.feedHeadlineButton:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
 .feedTitleTrack {
   grid-area: swap;
   display: flex;

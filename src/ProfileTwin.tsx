@@ -88,6 +88,7 @@ import { createClientMessageId } from './dmContract'
 import { getLibraryNewest, onCameraStore } from './cameraStore'
 import { readVerification } from './profileVerification'
 import { VERIFIED_CHECK_LABEL, VERIFIED_CHECK_SRC, verifiedCheckKind, type VerifiedCheckKind } from './verifiedCheck'
+import { businessDirectorySnapshot, subscribeBusinessDirectory } from './businessDirectory'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -2293,7 +2294,17 @@ export default function ProfileTwin({
   const displayedProfileTheme = visiting || failedProfileThemeID === selectedProfileTheme.id
     ? DEFAULT_PROFILE_THEME
     : selectedProfileTheme
-  const shownName = viewUser ? viewUser.replace(/^@/, '') : username
+  // A visited BUSINESS: the public directory names it by account id — the
+  // one thing a peer is allowed to read about another account — so its
+  // header carries the trading name and category where a person's carries
+  // a handle. Nothing about your own header comes from here.
+  const businesses = useSyncExternalStore(
+    subscribeBusinessDirectory,
+    businessDirectorySnapshot,
+    businessDirectorySnapshot,
+  )
+  const visitedBusiness = viewUser && viewUserId ? businesses.get(viewUserId.trim()) ?? null : null
+  const shownName = visitedBusiness?.name ?? (viewUser ? viewUser.replace(/^@/, '') : username)
   const explicitRecipientId = viewUserId?.trim()
   const visitingRecipientId = explicitRecipientId && explicitRecipientId.length <= 128
     ? explicitRecipientId
@@ -2323,9 +2334,13 @@ export default function ProfileTwin({
   // demo's standing (every handle but @poplur reads as a verified person); the
   // owner's mark follows the category they asked to be verified under, so a
   // business or organisation carries the black check and a person the pink.
-  const verifiedKind: VerifiedCheckKind | null = viewUser
-    ? (viewUser === '@poplur' ? null : 'personal')
-    : verifiedCheckKind(readVerification().category)
+  // A listed business wears the black check only once verified, and no mark
+  // at all until then — it is not a verified person either.
+  const verifiedKind: VerifiedCheckKind | null = visitedBusiness
+    ? (visitedBusiness.verified ? 'business' : null)
+    : viewUser
+      ? (viewUser === '@poplur' ? null : 'personal')
+      : verifiedCheckKind(readVerification().category)
   const visitingAvatar = viewUser ? (AVATAR_BY_HANDLE[viewUser] ?? 'mark_talk0.png') : null
 
   // Tell the shell the taking screen is up, so the cube navigator can wear the
@@ -2545,6 +2560,15 @@ export default function ProfileTwin({
             />
           )}
         </h1>
+        {visitedBusiness && (
+          // What kind of business, and the handle it posts under — the line a
+          // person's header has no need of, because a handle IS their name.
+          <div className={styles.businessLine} data-business-category={visitedBusiness.category ?? ''}>
+            {visitedBusiness.category && <span>{visitedBusiness.category}</span>}
+            {visitedBusiness.category && visitedBusiness.handle && <span aria-hidden="true"> · </span>}
+            {visitedBusiness.handle && <span>{visitedBusiness.handle}</span>}
+          </div>
+        )}
         <div className={styles.modeSwitch}>
           {(['media', 'messages', 'liked'] as Mode[]).map(m => (
             <button

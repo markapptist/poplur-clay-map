@@ -402,6 +402,17 @@
 
 /* ---- Media / Messages / Saved switcher with cyan underline ---- */
 
+/* Under a visited business's name: its category and the handle it posts
+   under. Quiet, one line, no shader — the name above already carries it. */
+.businessLine {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: rgba(37, 19, 31, 0.62);
+}
+
 .modeSwitch {
   display: flex;
   gap: clamp(8px, 3.2vw, 22px);
