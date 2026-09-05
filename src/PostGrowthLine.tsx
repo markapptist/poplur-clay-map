@@ -32,6 +32,8 @@ export interface GrowthLineText {
   span: string
   /** "2 views · 1 like", or '' when nothing has moved it. */
   counts: string
+  /** "when posted" for a true creation point, "first recorded" otherwise. */
+  opening: string
   /** The whole line, for a screen reader and for probes. */
   sentence: string
 }
@@ -55,10 +57,13 @@ export function formatGrowthLine(summary: RadiusHistorySummary, useMiles: boolea
   if (summary.kinds.comment) parts.push(plural(summary.kinds.comment, 'comment'))
   if (summary.causes.boost) parts.push(plural(summary.causes.boost, 'boost'))
   const counts = parts.join(' · ')
+  // "when posted" is a claim about the beginning; only a 'create' point is
+  // one. A curve that opens on a reconstructed or later point says so.
+  const opening = summary.firstCause === 'create' ? 'when posted' : 'first recorded'
   const sentence = direction === 'flat' && summary.points.length === 1
-    ? `${from} when posted, ${span}`
-    : `${from} when posted → ${to} now, ${change}, ${span}${counts ? `, ${counts}` : ''}`
-  return { from, to, change, direction, span, counts, sentence }
+    ? `${from} ${opening}, ${span}`
+    : `${from} ${opening} → ${to} now, ${change}, ${span}${counts ? `, ${counts}` : ''}`
+  return { from, to, change, direction, span, counts, opening, sentence }
 }
 
 /**
@@ -133,7 +138,7 @@ export default function PostGrowthLine({
         <circle className={styles.sparkEnd} cx={spark.endX} cy={spark.endY} r="2.6" />
       </svg>
       <div className={styles.words} aria-hidden="true">
-        <span className={styles.from}>{text.from}</span>
+        <span className={styles.from}>{text.from}<i className={styles.opening}> {text.opening}</i></span>
         <span className={styles.arrow}>→</span>
         <span className={styles.to}>{text.to}</span>
         <span className={styles.change}>{text.change}</span>

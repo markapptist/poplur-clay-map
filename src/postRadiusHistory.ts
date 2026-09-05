@@ -81,6 +81,9 @@ export interface RadiusHistorySummary {
   /** How many entries each cause contributed, and the engagement kinds. */
   causes: Record<RadiusHistoryCause, number>
   kinds: Record<RadiusHistoryKind, number>
+  /** What the first point IS: 'create' is the reach the pop was posted with;
+   *  anything else is the earliest RECORD, not the beginning. */
+  firstCause: RadiusHistoryCause
 }
 
 /** Fold a pop's points into the numbers a screen says. Pure; sorts a copy. */
@@ -109,6 +112,7 @@ export function summarizeRadiusHistory(points: readonly RadiusHistoryPoint[]): R
     lastAtMillis: last.atMillis,
     causes,
     kinds,
+    firstCause: first.cause,
   }
 }
 

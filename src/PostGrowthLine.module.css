@@ -52,6 +52,7 @@
 }
 
 .from { opacity: 0.72; }
+.opening { font-style: normal; font-weight: 700; font-size: 10px; letter-spacing: 0.03em; opacity: 0.8; }
 .arrow { opacity: 0.55; }
 .to { font-size: 13px; }
 

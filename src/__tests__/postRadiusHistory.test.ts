@@ -51,6 +51,7 @@ describe('a pop\'s radius history', () => {
     expect(summary!.spanMs).toBe(26 * HOUR)
     expect(summary!.causes).toMatchObject({ create: 1, engagement: 2, decay: 2, boost: 0 })
     expect(summary!.kinds).toMatchObject({ view: 1, like: 1, dislike: 0, comment: 0 })
+    expect(summary!.firstCause).toBe('create')
     expect(summarizeRadiusHistory([])).toBeNull()
   })
 

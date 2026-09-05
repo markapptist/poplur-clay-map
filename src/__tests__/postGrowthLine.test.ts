@@ -44,6 +44,11 @@ describe('how a pop grew', () => {
     expect(fresh.direction).toBe('flat')
     expect(fresh.sentence).toBe('5.0 km when posted, just posted')
     expect(fresh.counts).toBe('')
+    // A curve that opens on a reconstructed point never claims to be the
+    // beginning: "first recorded", not "when posted".
+    const opened = formatGrowthLine(summarizeRadiusHistory([p(0, 'backfill', 4_000), p(5, 'engagement', 5_000, 'like')])!, false)
+    expect(opened.opening).toBe('first recorded')
+    expect(opened.sentence).toBe('4.0 km first recorded → 5.0 km now, ▲ 1.0 km, over 5 hours, 1 like')
   })
 
   it('draws the curve to the scale of its own box, first and last points on the edges', () => {
