@@ -11,6 +11,7 @@ import { playPop } from './pop'
 import SideControlIconButton from './SideControlIcon'
 import { playCubeNavigationPop } from './cubeNavigationSound'
 import { isNativeShell } from './nativeBridge'
+import { track } from './analytics'
 import CameraARButton from './CameraARButton'
 import ARFilters from './ARFilters'
 import FaceAROverlay from './FaceAROverlay'
@@ -96,6 +97,9 @@ const POPLUR_STICKERS = [
 type PoplurStickerId = typeof POPLUR_STICKERS[number]['id']
 
 type ComposerTab = 'chat' | 'media' | 'stickers' | 'games' | 'share'
+
+// The dm_sent analytics param: the shape of a first send. Retries never log.
+type DMSentKind = 'text' | 'sticker' | 'game_invite' | 'share' | 'attachment'
 
 type ShareCategory = 'apps' | 'games' | 'music' | 'podcasts' | 'wardrobe'
 type ShareKind = 'app' | 'game' | 'music' | 'podcast' | 'wardrobe'
@@ -1397,7 +1401,9 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
     return () => { cancelled = true }
   }, [composerTab, messageToolsOpen, shareCategory])
 
-  const sendText = useCallback((rawText: string) => {
+  // `kind` is the only thing analytics learns about a message: what shape it
+  // was, never its text, the other party or the client message id.
+  const sendText = useCallback((rawText: string, kind: DMSentKind = 'text') => {
     const text = rawText.trim()
     const otherId = activeThread?.otherId
     const isBrowserDemo = !otherId && !isNativeShell()
@@ -1416,6 +1422,7 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
       window.dispatchEvent(new CustomEvent('poplur-dm-requested', {
         detail: { type: 'sendDM', otherId, text, clientMessageId },
       }))
+      track('dm_sent', { kind })
     }
     return true
   }, [activeThread])
@@ -1426,16 +1433,16 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
   }, [composerText, sendText])
 
   const sendSticker = useCallback((stickerId: PoplurStickerId) => {
-    if (sendText(stickerWire(stickerId))) setComposerTab('chat')
+    if (sendText(stickerWire(stickerId), 'sticker')) setComposerTab('chat')
   }, [sendText])
 
   const sendAIGameInvite = useCallback((game: PoplurGameDraft) => {
     const invitation = `🎮 Poplur AI made “${game.title}” for us. ${game.detail} Want to play?`
-    if (sendText(invitation)) setComposerTab('chat')
+    if (sendText(invitation, 'game_invite')) setComposerTab('chat')
   }, [sendText])
 
   const sendWorkShare = useCallback((share: SharedWork) => {
-    if (sendText(shareWire(share))) {
+    if (sendText(shareWire(share), 'share')) {
       setComposerTab('chat')
       setMessageToolsOpen(false)
     }
@@ -1476,6 +1483,7 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
           clientMessageId,
         },
       }))
+      track('dm_sent', { kind: 'attachment' })
     }
   }, [activeThread])
 

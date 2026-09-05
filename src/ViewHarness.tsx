@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import HomeTwin from './HomeTwin'
+import { track } from './analytics'
 import type { CubeTab } from './CubeTab3D'
 import UploadFlowReview from './UploadFlowReview'
 import FeedMixPanel from './FeedMixPanel'
@@ -97,6 +98,19 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
     )
   ))
   useTestActivityReporter(visibleActivityScreen)
+
+  // screen_view is owned HERE, by the page: native automatic screen reporting
+  // is off on both platforms, and HomeTwin's onVisibleScreenChange already
+  // funnels every tab, hold-menu wheel and subscreen into this one value. The
+  // name is the same bounded route vocabulary the test reporter may transmit
+  // (TEST_ACTIVITY_SCREENS) — never a post or user id. A repeat of the surface
+  // already on screen (StrictMode's double effect, a re-render) is not a view.
+  const lastScreenViewRef = useRef<TestActivityScreen | null>(null)
+  useEffect(() => {
+    if (!visibleActivityScreen || visibleActivityScreen === lastScreenViewRef.current) return
+    lastScreenViewRef.current = visibleActivityScreen
+    track('screen_view', { screen_name: visibleActivityScreen, screen_class: 'HomeTwin' })
+  }, [visibleActivityScreen])
 
   // Standalone routes do not mount HomeTwin, so they publish their own bounded
   // surface name. Home-owned tabs and subscreens report through the callback

@@ -9,6 +9,7 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 import './index.css'
 import App from './App'
 import { isNativeShell, isIOSNativeShell } from './nativeBridge'
+import { initAnalytics } from './analytics'
 import { applyProfileThemeToDocument, readSelectedProfileTheme } from './profileThemes'
 
 // Resolve the asset manifest before first paint. Anything that builds a pack
@@ -97,6 +98,12 @@ if (params.get('iosTier') === '1'
   || (inIOSAppShell && params.get('iosTier') !== '0')) {
   document.documentElement.classList.add('tier-ios')
 }
+
+// Firebase Analytics: this page is the source of screen_view and every in-app
+// action event, relayed over the native bridge (no gtag here — the shell's SDK
+// is the only transport). The map iframe and the plain browser preview no-op
+// inside initAnalytics; see src/analytics.ts for the ownership split.
+initAnalytics()
 
 // On-device heat probe, explicit opt-in only. Profiling scans the document and
 // reports to the native bridge on a timer, so merely running inside the app must

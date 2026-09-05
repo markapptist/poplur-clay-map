@@ -1,3 +1,4 @@
+import { track } from './analytics'
 import { isNativeShell } from './nativeBridge'
 import { authToken, requestAuthToken } from './nativeAuth'
 
@@ -117,6 +118,10 @@ export async function recordPostEngagement(
   eventId = createPostEngagementEventId(),
 ): Promise<PostEngagementResult> {
   const payload = postEngagementPayload(postId, kind, eventId)
+  // Analytics sees the action only, never the post. This is the single funnel
+  // for like/dislike/comment on both the Feed and the Profile; a `view` only
+  // reaches here through recordVisiblePostView, which owns pop_view.
+  if (kind !== 'view') track('pop_engagement', { action: kind })
   try {
     return await invokePostEngagement(payload)
   } catch (firstError) {
@@ -139,6 +144,10 @@ export function recordVisiblePostView(
   const previous = viewAttemptAt.get(postId)
   if (previous != null && now - previous < CLIENT_VIEW_MIN_MS) return Promise.resolve(null)
   viewAttemptAt.set(postId, now)
+  // pop_view shares this 30 s fence, so it counts engagement views the way
+  // the server does, not raw impressions. No params: the surface is already
+  // the current screen_view, and the post id never crosses.
+  track('pop_view')
   return recordPostEngagement(postId, 'view')
 }
 

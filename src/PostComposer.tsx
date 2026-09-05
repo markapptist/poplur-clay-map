@@ -14,6 +14,7 @@ import {
   prepareAIImageSource,
 } from './aiGeneration'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { track } from './analytics'
 import { setPendingMapPost, type PendingMapPost } from './cameraStore'
 import { dropNewsMessage, type NewsMediaAttachment } from './newsMessages'
 import VideoEditor from './VideoEditor'
@@ -719,6 +720,15 @@ export default function PostComposer({
         }
         onPosted?.(post)
         setPosted(true)
+        // A real upload just completed. Shape only — never the caption, the
+        // coordinates, the media, the channel or the post id.
+        track('pop_published', {
+          kind: media.kind,
+          destination,
+          radius_km: publishedRadiusKm,
+          used_ai: usedAI,
+          has_caption: Boolean(caption.trim()),
+        })
         window.setTimeout(onClose, 4200)
       } else {
         setUploadNote('Posting needs your Poplur account, so it uploads from the app — nothing was sent from this browser preview.')
