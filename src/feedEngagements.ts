@@ -121,16 +121,20 @@ export async function recordPostEngagement(
   // Analytics sees the action only, never the post. This is the single funnel
   // for like/dislike/comment on both the Feed and the Profile; a `view` only
   // reaches here through recordVisiblePostView, which owns pop_view.
-  if (kind !== 'view') track('pop_engagement', { action: kind })
+  // Counted once the server has taken it: an attempt the server refused (not
+  // signed in, a 5xx after the retry) is not an engagement.
+  let result: PostEngagementResult
   try {
-    return await invokePostEngagement(payload)
+    result = await invokePostEngagement(payload)
   } catch (firstError) {
     try {
-      return await invokePostEngagement(payload)
+      result = await invokePostEngagement(payload)
     } catch {
       throw firstError
     }
   }
+  if (kind !== 'view') track('pop_engagement', { action: kind })
+  return result
 }
 
 /** Media readiness can fire again after WebKit decoder recovery. The server is

@@ -199,15 +199,27 @@ describe('radius_change dedupe', () => {
     const events = () => posted.filter(message => message.name === 'radius_change').map(message => message.params)
     publishAccountRadiusKm(0)     // poplur-map-loading reset, nothing cached
     expect(events()).toEqual([])
-    publishAccountRadiusKm(12)    // first real total on a fresh install
-    expect(events()).toEqual([{ radius_km: 12 }])
+    publishAccountRadiusKm(12)    // first real total on a fresh install: a sync, not a change
+    expect(events()).toEqual([])
     publishAccountRadiusKm(12)    // the shell republishes the same number
     publishAccountRadiusKm(12)
     publishAccountRadiusKm(0)     // map reload
     publishAccountRadiusKm(12)    // its snapshot lands again
-    expect(events()).toEqual([{ radius_km: 12 }])
+    expect(events()).toEqual([])
     publishAccountRadiusKm(14.6)  // the account really grew
-    expect(events()).toEqual([{ radius_km: 12 }, { radius_km: 15 }])
+    expect(events()).toEqual([{ radius_km: 15 }])
+  })
+
+  it('never reads a zeroed cache as a baseline: the map iframe writes 0 on mount before the shell speaks', async () => {
+    const { posted, store } = installWindow()
+    store.set('poplur.totalRadiusKm', '0')
+    const { publishAccountRadiusKm } = await import('../accountRadius')
+    publishAccountRadiusKm(0)
+    publishAccountRadiusKm(27)    // the real total, learned — not a change
+    expect(posted.filter(message => message.name === 'radius_change')).toEqual([])
+    publishAccountRadiusKm(26)    // decay took a kilometre
+    expect(posted.filter(message => message.name === 'radius_change').map(message => message.params))
+      .toEqual([{ radius_km: 26 }])
   })
 
   it('seeds its baseline from the cached total so a relaunch is not a change', async () => {
@@ -395,7 +407,8 @@ describe('analytics hook contract', () => {
     const source = read('accountRadius.ts')
     expect(source).toContain("track('radius_change', { radius_km: Math.round(radiusKm) })")
     expect(source.match(/track\(/g)).toHaveLength(1)
-    expect(source).toContain('if (radiusKm === 0 || radiusKm === analyticsRadiusKm) return')
+    expect(source).toContain('if (radiusKm === 0) return')
+    expect(source).toContain('analyticsRadiusKm = cached > 0 ? cached : null')
   })
 
   it('dm_sent logs the two first-send dispatches and never the retry', () => {

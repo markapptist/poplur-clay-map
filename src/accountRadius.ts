@@ -38,13 +38,25 @@ let analyticsRadiusKm: number | null = null
 function noteRadiusForAnalytics(radiusKm: number, storedBefore: string | null): void {
   if (analyticsRadiusKm === null) {
     // First observation in this document: last session's cached total is the
-    // baseline (nothing cached reads as zero), never an event by itself.
-    analyticsRadiusKm = normalizeAccountRadiusKm(storedBefore)
+    // baseline, never an event by itself. The cache is not trustworthy as a
+    // baseline when it reads zero — the map iframe writes '0' on mount before
+    // the shell hears anything — so a zero baseline stays "unknown" (null)
+    // rather than making the first real total look like a change.
+    const cached = normalizeAccountRadiusKm(storedBefore)
+    analyticsRadiusKm = cached > 0 ? cached : null
   }
   // `poplur-map-loading` resets the cache to zero until the map's snapshot
   // lands, so zero is the reload, not a change. (A real drop to zero is the
   // one transition this deliberately does not report.)
-  if (radiusKm === 0 || radiusKm === analyticsRadiusKm) return
+  if (radiusKm === 0) return
+  if (analyticsRadiusKm === null) {
+    // The first real total is learning where the account stands — a sync,
+    // not a change. A fresh install therefore reports nothing until the total
+    // actually moves.
+    analyticsRadiusKm = radiusKm
+    return
+  }
+  if (radiusKm === analyticsRadiusKm) return
   analyticsRadiusKm = radiusKm
   track('radius_change', { radius_km: Math.round(radiusKm) })
 }
