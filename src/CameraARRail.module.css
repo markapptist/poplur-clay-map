@@ -53,7 +53,15 @@
    dial now, so both wheels centre on the same line. */
 .rail {
   position: absolute;
-  top: var(--poplur-rail-top, max(154px, calc(env(safe-area-inset-top, 0px) + 112px)));
+  /* The mirror of the camera's control rail, which runs in fill mode and so
+     starts at the HEADER line (--poplur-feed-action-top, right under the
+     wordmark) — not at the generic rail line 154px down. Anchoring here put
+     the grid and timer a whole row and a half lower than the first control
+     opposite, floating mid-screen instead of sitting in the corner. */
+  top: var(
+    --poplur-feed-action-top,
+    var(--poplur-rail-top, max(154px, calc(env(safe-area-inset-top, 0px) + 112px)))
+  );
   bottom: var(--poplur-home-clearance, 120px);
   width: 96px;
   z-index: 46;
@@ -69,10 +77,39 @@
 .head {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 6px;
+  /* Same rhythm as the control rail opposite, which runs in fill mode and
+     takes its control size and gap from the shared feed-column variables
+     (46px controls on an iPhone 16). Reading the same variables keeps the two
+     rails identical on every device instead of near-identical on one. */
+  gap: var(--poplur-feed-gap, 12px);
   padding: 0 0 8px;
   pointer-events: auto;
+}
+.head > * {
+  width: var(--poplur-feed-ctl, 44px);
+  height: var(--poplur-feed-ctl, 44px);
+  min-width: 0;
+  min-height: 0;
+}
+.head > * img { width: 100%; height: 100%; object-fit: contain; }
+/* The head's controls hug the screen edge at exactly the control rail's inset
+   (max(12px, safe-inset)), not the centre of this 96px column, which left them
+   26px in. The column itself keeps its own edge-bleeding offset for the wheel
+   below, so the padding is the difference between the two, and stays exact
+   when a safe-area inset applies on that side. */
+.railRight .head {
+  align-items: flex-end;
+  padding-right: calc(
+    max(12px, env(safe-area-inset-right, 0px))
+    - max(0px, calc(env(safe-area-inset-right, 0px) - 8px))
+  );
+}
+.railLeft .head {
+  align-items: flex-start;
+  padding-left: calc(
+    max(12px, env(safe-area-inset-left, 0px))
+    - max(0px, calc(env(safe-area-inset-left, 0px) - 8px))
+  );
 }
 .wheelBox {
   width: 100%;
