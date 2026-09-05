@@ -181,16 +181,16 @@ function pngAlphaAt(file: URL, x: number, y: number) {
 }
 
 describe('Poplur side-control asset registry', () => {
-  it('contains the exact 43 control IDs and 14 weather IDs from the package', () => {
-    expect(SIDE_CONTROL_ICON_IDS).toHaveLength(43)
+  it('contains the exact 45 control IDs and 14 weather IDs from the package', () => {
+    expect(SIDE_CONTROL_ICON_IDS).toHaveLength(45)
     expect(WEATHER_ICON_IDS).toHaveLength(14)
-    expect(new Set(ALL_IDS).size).toBe(57)
+    expect(new Set(ALL_IDS).size).toBe(59)
     expect(Object.keys(POPLUR_SIDE_ICONS).sort()).toEqual([...ALL_IDS].sort())
-    expect(SIDE_ICON_MANIFEST.buttonCount).toBe(43)
+    expect(SIDE_ICON_MANIFEST.buttonCount).toBe(45)
     expect(SIDE_ICON_MANIFEST.weatherConditionCount).toBe(14)
   })
 
-  it('resolves all 171 declared PNGs at their declared dimensions with transparency', () => {
+  it('resolves all 177 declared PNGs at their declared dimensions with transparency', () => {
     for (const id of ALL_IDS) {
       for (const size of SIZES) {
         const file = assetFile(id, size)

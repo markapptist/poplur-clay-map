@@ -43,6 +43,8 @@ export const SIDE_CONTROL_ICON_IDS = [
   'profile.camera',
   'profile.map',
   'profile.delete',
+  'profile.select',
+  'profile.select_all',
   'news.menu',
   'news.top_latest',
 ] as const

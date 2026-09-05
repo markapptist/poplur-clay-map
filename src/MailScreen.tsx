@@ -1964,14 +1964,12 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
           no clay art for them yet; when it does, they take it through the
           registry like the other two. */}
       <div className={styles.inboxTools} role="toolbar" aria-label="Inbox tools">
-        <button
-          type="button"
-          className={selectMode && visibleThreads.length > 0 && selectedIds.size === visibleThreads.length
-            ? `${styles.toolGlyph} ${styles.toolGlyphOn}`
-            : styles.toolGlyph}
+        <SideControlIconButton
+          icon="profile.select_all"
           aria-label={selectMode && selectedIds.size === visibleThreads.length ? 'Unselect all conversations' : 'Select all conversations'}
+          aria-pressed={selectMode && visibleThreads.length > 0 && selectedIds.size === visibleThreads.length}
           disabled={visibleThreads.length === 0}
-          onClick={() => {
+          onActivate={() => {
             playPop()
             setSelectMode(true)
             setSwipeOpenId(null)
@@ -1979,23 +1977,18 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
               ? new Set()
               : new Set(visibleThreads.map(thread => thread.id)))
           }}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7l2.5 2.5L10 5M3 13l2.5 2.5L10 11M3 19l2.5 2.5L10 17M13 7h8M13 13h8M13 19h8" /></svg>
-        </button>
-        <button
-          type="button"
-          className={selectMode ? `${styles.toolGlyph} ${styles.toolGlyphOn}` : styles.toolGlyph}
+        />
+        <SideControlIconButton
+          icon="profile.select"
           aria-label={selectMode ? 'Stop selecting' : 'Select conversations'}
           aria-pressed={selectMode}
           disabled={visibleThreads.length === 0 && !selectMode}
-          onClick={() => {
+          onActivate={() => {
             playPop()
             setSwipeOpenId(null)
             setSelectMode(on => { if (on) setSelectedIds(new Set()); return !on })
           }}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4" /><path d="M8.5 12.5l2.5 2.5 4.5-5" /></svg>
-        </button>
+        />
         <SideControlIconButton
           icon="profile.delete"
           aria-label={selectMode

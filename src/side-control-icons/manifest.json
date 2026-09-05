@@ -8,7 +8,7 @@
   256
  ],
  "style": "Glossy rounded 3D clay/plastic icons using Poplur hot pink, black, white, and selective weather accents.",
- "buttonCount": 43,
+ "buttonCount": 45,
  "weatherConditionCount": 14,
  "buttons": [
   {
@@ -530,6 +530,30 @@
     "256": "assets/256/camera/timer.png",
     "512": "assets/512/camera/timer.png",
     "1024": "assets/1024/camera/timer.png"
+   }
+  },
+  {
+   "id": "profile.select",
+   "asset": "profile/select",
+   "screen": "Chats",
+   "purpose": "Enter or leave selection mode in the inbox, where a tap marks a conversation instead of opening it.",
+   "accessibilityLabel": "Select conversations",
+   "files": {
+    "256": "assets/256/profile/select.png",
+    "512": "assets/512/profile/select.png",
+    "1024": "assets/1024/profile/select.png"
+   }
+  },
+  {
+   "id": "profile.select_all",
+   "asset": "profile/select_all",
+   "screen": "Chats",
+   "purpose": "Mark or unmark every conversation in view.",
+   "accessibilityLabel": "Select all conversations",
+   "files": {
+    "256": "assets/256/profile/select_all.png",
+    "512": "assets/512/profile/select_all.png",
+    "1024": "assets/1024/profile/select_all.png"
    }
   }
  ],

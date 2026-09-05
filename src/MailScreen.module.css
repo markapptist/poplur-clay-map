@@ -1880,40 +1880,6 @@
 .inboxTools > * { flex: none; }
 .toolSpacer { flex: 1 1 auto !important; }
 
-/* SELECT and SELECT ALL, until the icon set carries clay art for them: the
-   same clay as a conversation card, so the row reads as one material. */
-.toolGlyph {
-  width: 44px;
-  height: 44px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.34);
-  border-radius: 14px;
-  background:
-    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.78), transparent 30%),
-    linear-gradient(145deg, #fff, #ecd8e2);
-  box-shadow:
-    inset 0 8px 13px rgba(255, 255, 255, 0.52),
-    0 8px 14px rgba(69, 38, 53, 0.14);
-  color: #5a1237;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-.toolGlyph svg {
-  width: 22px;
-  height: 22px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.toolGlyph:active { transform: scale(0.96); }
-.toolGlyph:disabled { opacity: 0.45; cursor: default; }
-.toolGlyphOn {
-  background: linear-gradient(145deg, #ff8ac6, #f63b9a 52%, #5a1237);
-  color: #fff;
-}
 
 /* The mark a card wears in SELECT mode, in the chevron's seat. */
 .selectMark {
