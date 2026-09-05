@@ -8,6 +8,10 @@ import { usePullToRefresh } from './usePullToRefresh'
 import { OTHER_POPS } from './data'
 import { feedUrl } from './assetPacks'
 import { playPop } from './pop'
+import RadiusStrikerRail from './RadiusStrikerRail'
+import ProfilePostStep from './ProfilePostStep'
+import { profilePostStepAvailability, stepProfilePostIndex } from './profilePostSteps'
+import { ACCOUNT_RADIUS_CHANGE_EVENT, readAccountRadiusKm } from './accountRadius'
 import { playCubeNavigationPop } from './cubeNavigationSound'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -868,6 +872,21 @@ export default function ProfileTwin({
   const [notifsClosing, setNotifsClosing] = useState(false)
   const [faceAsk, setFaceAsk] = useState(false)
   const [viewerIdx, setViewerIdx] = useState<number | null>(null)
+  // Your overall radius, for the meter on the free rail: the authoritative
+  // account total the map and the shell already share (accountRadius.ts),
+  // and every change to it, so the tower and the RADIUS number stay one
+  // figure while a like lands or a pop is published.
+  const [accountRadiusKm, setAccountRadiusKm] = useState(readAccountRadiusKm)
+  useEffect(() => {
+    const refresh = () => setAccountRadiusKm(readAccountRadiusKm())
+    refresh()
+    window.addEventListener(ACCOUNT_RADIUS_CHANGE_EVENT, refresh)
+    window.addEventListener('poplur-radius-change', refresh)
+    return () => {
+      window.removeEventListener(ACCOUNT_RADIUS_CHANGE_EVENT, refresh)
+      window.removeEventListener('poplur-radius-change', refresh)
+    }
+  }, [])
   const [viewerPlaying, setViewerPlaying] = useState(false)
   const [viewerMuted, setViewerMuted] = useState(isUserMuted)
   const [viewerCaptionsOn, setViewerCaptionsOn] = useState(false)
@@ -2263,6 +2282,8 @@ export default function ProfileTwin({
 
   const posts = mode === 'liked' ? LIKED : profilePosts
   const viewerPost = viewerIdx != null && posts.length ? posts[viewerIdx % posts.length] : null
+  // The open post's tile in the grid: the flat index the inner arrows step from.
+  const viewerSlot = viewerIdx != null && posts.length ? viewerIdx % posts.length : 0
   const viewerPostIsVideo = viewerPost ? postIsVideo(viewerPost) : false
   const viewerPostId = viewerPost ? (viewerPost.id ?? viewerPost.video) : null
   const viewerPostComments = viewerPostId ? (viewerComments[viewerPostId] ?? []) : []
@@ -2299,6 +2320,23 @@ export default function ProfileTwin({
     && mode === 'media'
     && uploadedPostsLoaded,
   )
+  // ── The radius meter on the free rail ──
+  // What the tower measures is whatever the RADIUS card is showing: the open
+  // pop's own reach while a post is up (the card follows it through
+  // onPostReach), otherwise the overall radius. Your own is the account
+  // total; somebody else's profile has no account figure to read, so their
+  // pops' reach combined stands in for it. The subject key is what the
+  // striker climbs for — a new key is a fresh climb from the foot.
+  const visitedRadiusKm = profilePosts.reduce((sum, post) => sum + (post.reachKm ?? 0), 0)
+  const meterRadiusKm = viewerPost
+    ? (viewerPost.reachKm ?? 0)
+    : visiting ? visitedRadiusKm : accountRadiusKm
+  const meterSubjectKey = viewerPost
+    ? `pop:${viewerPostId}`
+    : visiting ? `profile:${viewUserId ?? viewUser}` : 'account'
+  const meterLabel = viewerPost
+    ? "This pop's radius"
+    : visiting ? `${viewUser}'s overall radius` : 'Your overall radius'
   const displayedProfileTheme = visiting || failedProfileThemeID === selectedProfileTheme.id
     ? DEFAULT_PROFILE_THEME
     : selectedProfileTheme
@@ -2834,9 +2872,20 @@ export default function ProfileTwin({
         document.body,
       )}
 
+      {/* ── The radius high striker, on the rail the controls are not on ──
+          The map's zoom rail in its measuring mode, standing on its own: it
+          climbs to your overall radius every time you come to the profile,
+          ringing the trophies on the way, and re-measures for a pop you open. */}
+      <RadiusStrikerRail
+        side={controlSide === 'right' ? 'left' : 'right'}
+        radiusKm={meterRadiusKm}
+        subjectKey={meterSubjectKey}
+        label={meterLabel}
+      />
+
       {/* ── Fullscreen post viewer — channel arrows browse posts. ── */}
       {viewerPost && (
-        <div className={styles.viewer}>
+        <div className={styles.viewer} data-profile-viewer-post={viewerPostId ?? undefined}>
           {viewerPostIsVideo && viewerPlaying && !viewerCovered ? (
             <video
               key={viewerPost.video}
@@ -2874,6 +2923,21 @@ export default function ProfileTwin({
             onDelete={canDeleteViewerPost ? () => { playPop(); setDeletePromptPost(viewerPost) } : undefined}
             deletePending={deletePending != null}
             onShowOnMap={viewerPost.origin ? () => showPostOnMap(viewerPost) : undefined}
+          />
+          {/* Under the rail: the four inner arrows that walk the grid this
+              post was opened from — above, below, previous, next — each
+              disabled at the grid's edge. */}
+          <ProfilePostStep
+            side={controlSide}
+            availability={profilePostStepAvailability(viewerSlot, posts.length)}
+            onStep={direction => {
+              // A sheet over the post owns the arrows, as it does the cube's.
+              if (viewerCovered) return
+              const next = stepProfilePostIndex(viewerSlot, posts.length, direction)
+              if (next == null) return
+              playPop()
+              setViewerIdx(next)
+            }}
           />
           <div className={styles.viewerTop}>
             <span className={styles.viewerCh}>{viewerPost.ch}</span>

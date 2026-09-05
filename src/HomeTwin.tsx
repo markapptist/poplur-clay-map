@@ -5895,7 +5895,15 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               unit={unitMi ? 'mi' : 'km'}
               active={recordMs == null && !chromeIdle && (activeTab === 'profile' ? profileMetric === 'radius' : !showOnlineAudience)}
               accumulated={!seenUser && (mapHasAccumulatedRadius || (activeTab === 'profile' && !profileHasPopSubject))}
-              recountKey={activeTab === 'map' ? traversedPinKey : null}
+              recountKey={activeTab === 'map'
+                ? traversedPinKey
+                // The profile's radius tower (RadiusStrikerRail) climbs on
+                // this same beat whenever its subject changes — coming to the
+                // profile, opening a pop, closing it — so the number
+                // re-tallies with it and the two arrive together.
+                : activeTab === 'profile'
+                  ? (profileReachKm != null ? `profile-pop:${profileReachKm}` : 'profile-total')
+                  : null}
             />
             <span className={styles.statTrend}>{activeTab === 'map' ? mapRadiusTrend : activeTab === 'profile' ? (profileHasPopSubject ? 'this pop' : `${profilePostCount} posts`) : cubeScreen === 'feed-news' ? 'current story' : `${POST_COUNT} nearby`}</span>
           </div>

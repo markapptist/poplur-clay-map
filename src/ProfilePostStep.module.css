@@ -1,0 +1,40 @@
+/* The bottom of the opened post's action-rail column — the same anchoring as
+   the feed's channel stepper (FeedChannelStep.module.css): the column hangs
+   from the home chrome's clearance line, on the rail's own centre line, so
+   the rail above fills whatever is left and both end on the same pixel. Four
+   tile rows: above, below, previous, next. */
+.group {
+  position: absolute;
+  bottom: var(--poplur-home-clearance);
+  z-index: 46;
+  display: grid;
+  grid-auto-flow: row;
+  grid-template-rows:
+    var(--poplur-feed-ctl)
+    var(--poplur-feed-ctl)
+    var(--poplur-feed-ctl)
+    var(--poplur-feed-ctl);
+  grid-template-columns: var(--poplur-feed-ctl);
+  gap: var(--poplur-feed-gap);
+  justify-items: center;
+  align-items: center;
+  pointer-events: auto;
+}
+
+/* Same inset as TabControlRail's .left/.right: one vertical line. */
+.groupLeft { left: max(12px, env(safe-area-inset-left, 0px)); }
+.groupRight { right: max(12px, env(safe-area-inset-right, 0px)); }
+
+.group > * {
+  width: var(--poplur-feed-ctl);
+  height: var(--poplur-feed-ctl);
+  min-width: 0;
+  min-height: 0;
+}
+
+/* An edge of the grid: the chevron stays where it is, dimmed, so the column
+   keeps its shape and the disabled direction is still legible as one. */
+.group > button:disabled {
+  opacity: 0.38;
+  filter: saturate(0.6);
+}
