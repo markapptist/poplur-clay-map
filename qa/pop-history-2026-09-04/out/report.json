@@ -1,0 +1,18 @@
+{
+  "byline": {
+    "handle": "@orange.peel",
+    "x": 196.5,
+    "y": 104.640625
+  },
+  "opened": {
+    "postId": "post-radius-lab-cohort-2026-09-03-orange-2-eohy"
+  },
+  "growth": {
+    "label": "How this pop grew: 2.2 mi when posted → 5.1 mi now, ▲ 2.8 mi, over 25 hours, 4 views · 3 likes",
+    "fromMeters": 3576,
+    "toMeters": 8147,
+    "points": 8,
+    "words": "2.2 mi→5.1 mi▲ 2.8 miover 25 hour  · 4 view  · 3 like ",
+    "pathData": "M2 28 L23.8 22.3 L26 16.6 L29.9 11 L102.6 6.5 L129.2 4.1 L129.9 2.7 L130 2 L130 28 L2 28 Z"
+  }
+}
