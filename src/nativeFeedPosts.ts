@@ -14,6 +14,7 @@ import { webDb } from './webFirebase'
 import { accountSnapshot, onAccountChange } from './accountStore'
 import { pinColorId, type PinColorId } from './pinColors'
 import { clampRadiusMeters } from './worldRadius'
+import { photoViewSeconds } from './mediaTiming'
 
 const LIVE_FEED_POST_LIMIT = 160
 /** The account's own posts ride along regardless of age (see subscribeLiveFeedPosts). */
@@ -25,6 +26,7 @@ export interface NativeFeedPost {
   ownerId?: string
   mediaURL: string
   mediaType: 'photo' | 'video'
+  photoViewSeconds?: number | null
   posterURL?: string
   username: string
   caption?: string
@@ -183,6 +185,7 @@ function normalizeFeedPost(
     ownerId,
     mediaURL,
     mediaType,
+    photoViewSeconds: mediaType === 'photo' ? photoViewSeconds(row.photoViewSeconds) : null,
     posterURL,
     username: usernameValue.startsWith('@') ? usernameValue : `@${usernameValue}`,
     caption: boundedText(row.caption, 2_000),

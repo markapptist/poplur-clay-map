@@ -41,6 +41,15 @@ describe('native feed post boundary', () => {
     ])
   })
 
+  it('preserves photo duration through the native feed bridge', () => {
+    const rows = normalizeNativeFeedPosts({ posts: [
+      { id: 'timed', mediaURL: 'https://cdn.example/a.jpg', photoViewSeconds: 25 },
+      { id: 'old', mediaURL: 'https://cdn.example/b.jpg' },
+    ] })
+    expect(rows.find(row => row.id === 'timed')?.photoViewSeconds).toBe(25)
+    expect(rows.find(row => row.id === 'old')?.photoViewSeconds).toBeNull()
+  })
+
   it('drops malformed or unsafe media URLs at the native boundary', () => {
     expect(normalizeNativeFeedPosts({ posts: [
       { id: 'script', mediaURL: 'javascript:alert(1)' },

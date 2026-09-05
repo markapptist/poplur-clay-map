@@ -1,3 +1,4 @@
+import { attachCallVideo } from './callVideoPlayback'
 import { accountSnapshot, onAccountChange } from './accountStore'
 import { nativeFeedPostsSnapshot, onNativeFeedPosts } from './nativeFeedPosts'
 import { currentViewerCoords } from './viewerFix'
@@ -660,28 +661,14 @@ export function FaceTimeOverlay({
     const video = localVideoRef.current
     setLocalVideoReady(false)
     if (!video || !media.localStream) return
-    video.srcObject = media.localStream
-    void video.play().catch(() => { /* the labelled camera fallback stays visible */ })
-    return () => {
-      if (video.srcObject === media.localStream) {
-        video.pause()
-        video.srcObject = null
-      }
-    }
+    return attachCallVideo(video, media.localStream, setLocalVideoReady)
   }, [media.localStream])
 
   useEffect(() => {
     const video = remoteVideoRef.current
     setRemoteVideoReady(false)
     if (!video || !connected || !media.remoteStream) return
-    video.srcObject = media.remoteStream
-    void video.play().catch(() => { /* remote-media placeholder remains explicit */ })
-    return () => {
-      if (video.srcObject === media.remoteStream) {
-        video.pause()
-        video.srcObject = null
-      }
-    }
+    return attachCallVideo(video, media.remoteStream, setRemoteVideoReady)
   }, [connected, media.remoteStream])
 
   useEffect(() => {
@@ -754,6 +741,7 @@ export function FaceTimeOverlay({
             </div>
             <video
               ref={remoteVideoRef}
+              muted
               autoPlay
               playsInline
               onLoadedData={markRemoteVideoReady}

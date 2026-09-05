@@ -5669,7 +5669,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             // The native Google card owns the visible Feed slot while open.
             // Pause/mute the web post underneath it so two ads can never talk
             // at once, then Feed resumes from its normal lifecycle on close.
-            suppressed={feedAdSlotOpen}
+            suppressed={feedAdSlotOpen || faceTimeActive}
             frontMost={activeTab === 'feed' && committedTab === 'feed' && mainSurfaceVisible}
             onPlayerModeChange={setFeedFullscreen}
             autoPlayOnMount={feedAutoPlayOnMount}
@@ -5700,7 +5700,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             // ML and AR work live while the wheel and its previews animate.
             // Camera preserves its last painted frame as the backdrop and
             // resumes only after the menu closes.
-            surfaceVisible={!switchingScreens && !holdOpen}
+            surfaceVisible={!switchingScreens && !holdOpen && !faceTimeActive}
             onComposingChange={setComposerOpen}
             onPhotoCapture={() => {
               setPopping(false)

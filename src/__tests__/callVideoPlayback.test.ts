@@ -1,0 +1,30 @@
+// @vitest-environment happy-dom
+import { afterEach, expect, it, vi } from 'vitest'
+import { attachCallVideo } from '../callVideoPlayback'
+afterEach(() => vi.useRealTimers())
+it('retries a deferred stream when its track unmutes and cleans up', async () => {
+  vi.useFakeTimers()
+  const video = document.createElement('video')
+  Object.defineProperty(video, 'srcObject', { configurable: true, writable: true, value: null })
+  const track = new EventTarget()
+  const stream = { getVideoTracks: () => [track] } as unknown as MediaStream
+  const play = vi.spyOn(video, 'play').mockRejectedValueOnce(new Error('deferred')).mockResolvedValue(undefined)
+  vi.spyOn(video, 'pause').mockImplementation(() => {})
+  Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+  Object.defineProperty(video, 'paused', { configurable: true, value: true })
+  const ready = vi.fn()
+  const dispose = attachCallVideo(video, stream, ready)
+  await Promise.resolve()
+  expect(video.muted).toBe(true)
+  expect(video.srcObject).toBe(stream)
+  track.dispatchEvent(new Event('unmute'))
+  expect(play).toHaveBeenCalledTimes(2)
+  Object.defineProperties(video, { readyState: { value: 2 }, videoWidth: { value: 640 }, videoHeight: { value: 480 } })
+  video.dispatchEvent(new Event('loadeddata'))
+  expect(ready).toHaveBeenLastCalledWith(true)
+  dispose()
+  track.dispatchEvent(new Event('unmute'))
+  vi.advanceTimersByTime(2000)
+  expect(play).toHaveBeenCalledTimes(2)
+  expect(video.srcObject).toBeNull()
+})

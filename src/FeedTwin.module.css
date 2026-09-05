@@ -1240,3 +1240,17 @@
   transition: transform 120ms ease;
 }
 .railArt:active { transform: scale(0.94); }
+
+.mediaTimer {
+  display: block;
+  min-width: 48px;
+  padding: 5px 8px;
+  border: 1px solid #fb62ab;
+  border-radius: 14px;
+  background: #241324dd;
+  color: #ff91c5;
+  font: 800 15px/1.2 ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  box-shadow: 0 3px 8px #0008;
+}

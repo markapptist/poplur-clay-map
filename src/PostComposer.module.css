@@ -1200,3 +1200,15 @@
   .channelPanel { gap: 9px; }
   .publishHeader { padding-block: 8px; }
 }
+
+.viewTiming select {
+  width: 100%;
+  padding: 10px 12px;
+  color: #fff;
+  background: #35172e;
+  border: 1px solid #ec4899;
+  border-radius: 12px;
+  font: inherit;
+}
+.viewTiming input[type='range'] { width: 100%; accent-color: #ff238a; }
+.viewTiming small { color: #edbdd7; line-height: 1.4; }

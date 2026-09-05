@@ -28,7 +28,6 @@ import {
 import type { MapFeedHandoff, MapFeedHandoffRequest } from './mapFeedHandoff'
 import { canonicalFeedPostId, withHandoffPost } from './feedHandoffInjection'
 import {
-  nextFeedPostIndex,
   shouldReacquireFeedDecoder,
   shouldResumeFeedAfterFocus,
 } from './feedMediaSequence'
@@ -68,6 +67,7 @@ import {
 } from './radiusLedger'
 import { currentViewerCoords as viewerCoordsFromFix } from './viewerFix'
 import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
+import { mediaTimeLabel, nextRadiusPost } from './mediaTiming'
 import { blockUser, blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } from './blockedUsers'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
@@ -190,6 +190,7 @@ export interface ChannelPost {
   video: string
   poster?: string
   mediaType?: 'photo' | 'video'
+  photoViewSeconds?: number | null
   /** Named venue behind this post, used to ground its live ad lookup. */
   place?: string
   /** a live broadcast: the camera itself, when the broadcast is your own */
@@ -242,6 +243,7 @@ export function feedPostsForChannel(
       video: post.mediaURL,
       poster: post.mediaType === 'photo' ? post.mediaURL : post.posterURL,
       mediaType: post.mediaType,
+      photoViewSeconds: post.photoViewSeconds,
       caption: post.caption,
       reachKm: post.radiusMeters == null ? undefined : post.radiusMeters / 1_000,
       createdAtMillis: post.createdAtMillis,
@@ -596,6 +598,7 @@ export default function FeedTwin({
   const lastChannelDirRef = useRef<1 | -1>(1)
   const [contentRevision, forceContentRender] = useState(0)
 
+  const consumedFocusRef = useRef('')
   // A Discovery post result is a direct navigation, not a recommendation
   // vote. When its channel arrives underneath the closing hold menu, start
   // that channel at the focused result even if the viewer previously left the
@@ -605,9 +608,12 @@ export default function FeedTwin({
       ? focusedContent.target
       : undefined
     const focusedPostId = directTarget?.id ?? discovery.focusedPostId
-    if (!focusedPostId) return
+    if (!focusedPostId) { consumedFocusRef.current = ''; return }
+    const focusKey = `${focusedContent?.nonce ?? ''}:${focusedPostId}`
+    if (consumedFocusRef.current === focusKey) return
     const ranked = rankedPostsFor(ch, publishedPosts, discovery, directTarget)
     if (!ranked.some(post => post.id === canonicalFeedPostId(focusedPostId))) return
+    consumedFocusRef.current = focusKey
     contentIdxRef.current[ch.id] = 0
     forceContentRender(value => value + 1)
   }, [blockedUsers, ch.id, discovery, focusedContent?.nonce, publishedPosts])
@@ -841,24 +847,28 @@ export default function FeedTwin({
   // to the next post instead of holding on its last frame or replaying itself.
   // Keep this separate from the arrow handler: a passive completion should
   // not make the physical navigator say "pop".
+  const watchedMediaRef = useRef(new Set<string>())
   const advanceCompletedContent = useCallback(() => {
-    const ranked = rankedPostsFor(
-      ch,
-      publishedPosts,
-      radiusDiscoverySnapshot(),
-      focusedContent?.target,
-    )
-    const count = ranked.length
-    if (count === 0) return
-    const current = contentIdxRef.current[ch.id] ?? 0
-    const watched = ranked[current % count]
-    if (watched && !watched.demo) recordFeedDiscoverySignal({ id: watched.id, channelId: ch.id }, 'watch')
-    if (count < 2) return
-    const next = nextFeedPostIndex(current, count)
-    contentIdxRef.current[ch.id] = next
-    onContentAdvance?.(ch.id, next)
+    const discovery = radiusDiscoverySnapshot()
+    const ranked = rankedPostsFor(ch, publishedPosts, discovery, focusedContent?.target)
+    const current = ranked[(contentIdxRef.current[ch.id] ?? 0) % Math.max(1, ranked.length)]
+    const candidates = CHANNELS.flatMap((channel, channelIndex) =>
+      rankedPostsFor(channel, publishedPosts, discovery, focusedContent?.target).map((post, postIndex) =>
+        ({ ...post, channelId: channel.id, channelIndex, postIndex })))
+    const next = nextRadiusPost(candidates, watchedMediaRef.current, current?.id)
+    if (current && !current.demo) recordFeedDiscoverySignal({ id: current.id, channelId: ch.id }, 'watch')
+    if (!next) return
+    const video = adVideoRef.current
+    if (video) retireFeedVideo(video)
+    releaseAudioFocus('feed')
+    contentIdxRef.current[next.channelId] = next.postIndex
+    onContentAdvance?.(next.channelId, next.postIndex)
+    if (next.channelIndex !== index) {
+      if (onIndexChange) onIndexChange(next.channelIndex)
+      else setOwnIndex(next.channelIndex)
+    }
     forceContentRender(n => n + 1)
-  }, [ch, focusedContent, onContentAdvance, publishedPosts])
+  }, [ch, focusedContent, index, onContentAdvance, onIndexChange, publishedPosts])
 
   const handleEdgeTap = useCallback((side: 'left' | 'right') => {
     changeContent(side === 'left' ? -1 : 1)
@@ -1080,6 +1090,36 @@ export default function FeedTwin({
   const posterKey = posterSrc ? `${sourceKey}:${adSrc}:${posterSrc}` : null
   const [readyPosterKey, setReadyPosterKey] = useState<string | null>(null)
   const posterReady = Boolean(posterKey) && readyPosterKey === posterKey
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null)
+  const photoClock = useRef({ key: '', elapsed: 0, completed: false })
+  useEffect(() => {
+    photoClock.current = { key: sourceKey, elapsed: 0, completed: false }
+    setRemainingSeconds(post?.mediaType === 'photo' ? post.photoViewSeconds ?? null : null)
+  }, [sourceKey, post?.photoViewSeconds, post?.mediaType])
+  useEffect(() => {
+    const duration = post?.photoViewSeconds
+    if (post?.mediaType !== 'photo' || !duration || !posterReady || suppressed || !frontMost || commentOpen) return
+    let last = performance.now()
+    const resetClock = () => { last = performance.now() }
+    document.addEventListener('visibilitychange', resetClock)
+    const timer = window.setInterval(() => {
+      const now = performance.now()
+      const delta = now - last
+      last = now
+      if (document.hidden || photoClock.current.completed) return
+      photoClock.current.elapsed += delta / 1000
+      const remaining = Math.max(0, duration - photoClock.current.elapsed)
+      setRemainingSeconds(remaining)
+      if (remaining === 0) {
+        photoClock.current.completed = true
+        advanceCompletedContent()
+      }
+    }, 100)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', resetClock)
+    }
+  }, [sourceKey, post?.mediaType, post?.photoViewSeconds, posterReady, suppressed, frontMost, commentOpen, advanceCompletedContent])
   useEffect(() => {
     recoveryAttemptRef.current = 0
     setRecoveryAttempt(0)
@@ -2130,11 +2170,8 @@ export default function FeedTwin({
           poster={posterSrc}
           preload="auto"
           autoPlay
-          // A one-post channel (notably LIVE with no current broadcaster) has
-          // nowhere to advance at EOF. Loop that sole clip so a visible Feed
-          // never settles on a paused final frame; multi-post channels keep
-          // flowing forward through `advanceCompletedContent` below.
-          loop={posts.length === 1}
+          // Ended media enters the cross-channel radius queue.
+          loop={false}
           muted
           playsInline
           controls={false}
@@ -2146,7 +2183,14 @@ export default function FeedTwin({
           onCanPlay={() => markAdReady(adSrc)}
           onLoadedData={() => markAdReady(adSrc)}
           onPlaying={() => markAdReady(adSrc)}
-          onTimeUpdate={() => markAdReady(adSrc)}
+          onTimeUpdate={event => {
+            markAdReady(adSrc)
+            const video = event.currentTarget
+            if (Number.isFinite(video.duration)) setRemainingSeconds(Math.max(0, video.duration - video.currentTime))
+          }}
+          onLoadedMetadata={event => {
+            if (Number.isFinite(event.currentTarget.duration)) setRemainingSeconds(event.currentTarget.duration)
+          }}
           onWaiting={event => retryAdPlayback(adSrc, event.currentTarget)}
           onEnded={event => {
             completedAdRef.current = adSrc
@@ -2249,7 +2293,7 @@ export default function FeedTwin({
           side={controlSide === 'left' ? 'right' : 'left'}
           hidden={playerMode}
           newChannelIds={newChannelIds}
-          head={(canBlockPoster || canDeletePost) ? (
+          head={post ? (
             <>
               {/* Block wears the supplied clay art (global.block) through the
                   registry, like every other side control. A plain button so
@@ -2266,6 +2310,10 @@ export default function FeedTwin({
                   <SideControlIconImage icon="global.block" displaySize={44} />
                 </button>
               )}
+              <output className={styles.mediaTimer} aria-label={post.mediaType === 'photo' && remainingSeconds === null
+                ? 'Unlimited photo view' : 'Media time remaining'} data-feed-timer="">
+                {post.live ? 'LIVE' : remainingSeconds === null && post.mediaType !== 'photo' ? '–:––' : mediaTimeLabel(remainingSeconds)}
+              </output>
               {canDeletePost && (
                 <SideControlIconButton
                   icon="profile.delete"

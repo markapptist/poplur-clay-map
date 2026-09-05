@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import styles from './PostComposer.module.css'
+import { photoViewSeconds } from './mediaTiming'
 import { awaitNativeUpload, NativeUploadError, type UploadPhase } from './nativeUpload'
 import { AR_FILTERS } from './ARFilters'
 import { CHANNELS } from './FeedTwin'
@@ -95,6 +96,7 @@ export interface PublishedPost {
   locationVisibility: PostLocationVisibility
   /** The poster's chosen pin model colour; null keeps the original pink pin. */
   pinColor: PinColorId | null
+  photoViewSeconds: number | null
 }
 
 export type PostComposerStep = 'edit' | 'effects' | 'finish' | 'channel'
@@ -176,6 +178,7 @@ export default function PostComposer({
     engine: 'none',
   })
   const [effectAsset, setEffectAsset] = useState<VFXCustomAsset | null>(draft?.effectAsset ?? null)
+  const [photoSeconds, setPhotoSeconds] = useState<number | null>(photoViewSeconds(draft?.photoViewSeconds))
   const [caption, setCaption] = useState(draft?.caption ?? '')
   // Keep the non-AI/manual-edit baseline separate from an accepted AI image.
   // Otherwise Back → "Keep original" can mislabel and upload the AI pixels.
@@ -310,6 +313,7 @@ export default function PostComposer({
       media: selectedMedia,
       originalMedia: baselineMedia,
       caption,
+      photoViewSeconds: media.kind === 'photo' ? photoSeconds : null,
       channelId,
       filterId,
       effectId,
@@ -325,7 +329,7 @@ export default function PostComposer({
     // starts the one location-picker detour for the parked draft.
     window.dispatchEvent(new CustomEvent('poplur-pick-spot'))
     onClose()
-  }, [aiPrompt, baselineMedia, caption, channelId, effectAsset, effectId, effectTiming, filterId, media, onClose, pinColor, retirePreview, rightsAttested])
+  }, [aiPrompt, baselineMedia, caption, channelId, effectAsset, effectId, effectTiming, filterId, media, onClose, photoSeconds, pinColor, retirePreview, rightsAttested])
 
   const continueAfterFinish = React.useCallback((
     selectedMedia: ComposerMedia = media,
@@ -623,6 +627,7 @@ export default function PostComposer({
       effectAsset: effectAsset ?? undefined,
       channelId,
       caption,
+      photoViewSeconds: media.kind === 'photo' ? photoSeconds : null,
       usedAI,
       // A hidden-origin post remains visible in the feed/profile, but it must
       // not paint a public claim or hand its chosen map point to another UI.
@@ -660,6 +665,7 @@ export default function PostComposer({
           postId: postIdRef.current,
           schemaVersion: POST_SCHEMA_VERSION,
           kind: media.kind,
+          photoViewSeconds: media.kind === 'photo' ? photoSeconds : null,
           data,
           caption,
           channelId,
@@ -1071,6 +1077,21 @@ export default function PostComposer({
             <img src="logo_icon.png" alt="" />
             <span><b>READY TO POST</b><strong>One last check</strong><small>{usedAI ? 'AI version selected' : 'Original version selected'}</small></span>
           </header>
+
+          <section className={`${styles.fieldLabel} ${styles.viewTiming}`} aria-label="Media view time">
+            <span>VIEW TIME</span>
+            {media.kind === 'photo' ? <>
+              <select aria-label="Photo view time" value={photoSeconds === null ? 'unlimited' : 'timed'}
+                onChange={event => setPhotoSeconds(event.target.value === 'unlimited' ? null : 10)}>
+                <option value="unlimited">Unlimited</option>
+                <option value="timed">Timed view (up to 60 seconds)</option>
+              </select>
+              {photoSeconds !== null && <span>Seconds: {photoSeconds}
+                <input aria-label="Photo view seconds" type="range" min="1" max="60" step="1"
+                  value={photoSeconds} onChange={event => setPhotoSeconds(photoViewSeconds(Number(event.target.value)))} />
+              </span>}
+            </> : <small>Counts down the video's playback time, then advances by radius.</small>}
+          </section>
 
           <label className={styles.fieldLabel}>
             <span>CAPTION <small>OPTIONAL</small></span>
