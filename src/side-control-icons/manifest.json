@@ -8,7 +8,7 @@
   256
  ],
  "style": "Glossy rounded 3D clay/plastic icons using Poplur hot pink, black, white, and selective weather accents.",
- "buttonCount": 45,
+ "buttonCount": 46,
  "weatherConditionCount": 14,
  "buttons": [
   {
@@ -35,6 +35,18 @@
     "1024": "assets/1024/global_navigation/channel_down.png",
     "512": "assets/512/global_navigation/channel_down.png",
     "256": "assets/256/global_navigation/channel_down.png"
+   }
+  },
+  {
+   "id": "global.block",
+   "asset": "global/block",
+   "screen": "Feed + Profile",
+   "purpose": "Block the account behind the post or profile on screen; the confirmation asks first.",
+   "accessibilityLabel": "Block this account",
+   "files": {
+    "1024": "assets/1024/global/block.png",
+    "512": "assets/512/global/block.png",
+    "256": "assets/256/global/block.png"
    }
   },
   {

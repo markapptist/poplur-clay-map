@@ -10,13 +10,13 @@
   --zoom-track-size: 16px;
   --zoom-thumb-size: 68px;
   position: absolute;
-  top: var(--poplur-map-control-top, max(154px, calc(env(safe-area-inset-top, 0px) + 112px)));
+  top: var(--profile-control-top, 110px);
   bottom: auto;
   /* The map's rail is this tall; the profile is a size container, so the
      same tower shortens rather than colliding with the cube on a small phone. */
   height: min(
     var(--mapControlSpan, 492px),
-    calc(100cqh - var(--poplur-map-control-top, 154px) - var(--poplur-home-clearance, 200px) - 10px)
+    calc(100cqh - var(--profile-control-top, 110px) - var(--poplur-home-clearance, 200px) - 10px)
   );
   width: 44px;
   box-sizing: border-box;

@@ -225,10 +225,43 @@
   overflow: hidden;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: 'swap';
   align-items: center;
-  min-height: clamp(20px, 5vw, 24px);
+  /* A definite height, not a floor: the swap track below is two of these
+     stacked and slides by exactly one, which only resolves against a height
+     that exists. Named once here so the track's rows, its travel and this
+     window can never disagree — percentages did disagree: grid's automatic
+     minimum let the rows grow to their content, so the handle slid clean past
+     the window and the line went blank on its half of the cycle. */
+  --poplur-feed-headline-line: clamp(20px, 5vw, 24px);
+  height: var(--poplur-feed-headline-line);
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.72);
+}
+
+/* The title and the handle take turns on this one line.
+ *
+ * They used to be two overlapping cells with two opposing infinite fades —
+ * two forever-running animations for one line of type, which is what put the
+ * feed over the thermal gate's animation budget the moment a post was on
+ * screen. They are now two rows of ONE track that slides by exactly one row:
+ * the same trade, half the animations, and the pair can no longer drift out
+ * of step with each other because there is only one clock. */
+.feedHeadlineSwap {
+  display: grid;
+  grid-template-rows: var(--poplur-feed-headline-line) var(--poplur-feed-headline-line);
+  align-items: center;
+  justify-items: center;
+  width: 100%;
+  min-width: 0;
+  animation: feedHeadlineSwap 6s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* Each line is exactly one row tall: grid would otherwise let a taller line
+   push its row open, and the travel is a fixed distance. */
+.feedHeadlineSwap > * {
+  min-height: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 /* The headline as the poster's button: same line, same grid, no chrome of
@@ -255,32 +288,20 @@
 }
 
 .feedTitleTrack {
-  grid-area: swap;
   display: flex;
   width: 100%;
   justify-content: center;
   white-space: nowrap;
-  color: transparent;
-  background-image: linear-gradient(105deg, #fff2f8 0%, #ff8ac6 18%, #f63b9a 38%, #ffffff 50%, #73d7ff 68%, #35c8ef 82%, #fff2f8 100%);
-  background-size: 260% 100%;
-  background-position: 0 0;
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.9)) drop-shadow(0 0 8px rgba(246, 59, 154, 0.38));
-  /* The shimmer, then the turn-taking with the handle. No scroll: a title you
-     have to chase is a title you cannot read. */
-  animation: feedCenterTextShader 4.8s linear 3, feedHeadlineTitleSwap 6s ease-in-out infinite;
-  will-change: opacity, transform;
-  /* WebKit will run this animation and never repaint it. The track paints its
-     text through -webkit-background-clip: text, and on iOS that combination can
-     be rasterised once and then translated as a static tile — getAnimations()
-     reports `running`, the computed transform advances, and the title sits dead
-     still on the device while animating correctly in Chrome. Forcing its own
-     compositing layer makes WebKit repaint per frame. */
-  will-change: transform, background-position;
-  transform: translateZ(0);
-  backface-visibility: hidden;
+  /* One voice for the whole headline: the title wears exactly the handle's
+     type (same size, weight, colour, shadow), so the two lines that trade
+     places read as one card speaking twice — not a shimmer over a caption.
+     The gradient text shader went with it; that shader was what made the
+     title look like a different font from the byline. */
+  font-size: clamp(15px, 4.4vw, 19px);
+  font-weight: 900;
+  letter-spacing: 0.01em;
+  color: rgba(255, 242, 248, 0.8);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
 }
 
 .feedTitleTrack span {
@@ -288,6 +309,25 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* A title wider than its cell scrolls instead of being cut: a slow ping-pong
+   drift that carries the tail into view and back, paced by how far it has to
+   travel (FeedTitle measures the overflow and sets the variables). The drift
+   lives on the inner span so it never fights the swap's own transform on the
+   track. A title that fits sits perfectly still, exactly as before. */
+.feedTitleScrolls {
+  justify-content: flex-start;
+}
+.feedTitleScrolls span {
+  flex: 0 0 auto;
+  overflow: visible;
+  text-overflow: clip;
+  animation: feedTitleMarquee var(--feed-title-scroll-s, 6s) ease-in-out 1.2s infinite alternate;
+}
+@keyframes feedTitleMarquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc(-1 * var(--feed-title-overflow, 0px))); }
 }
 
 /* Quieter than the caption so the two rows read as title-then-byline rather
@@ -308,25 +348,18 @@
    with a "reached you from" line on a six-second fade; the reach line is gone
    and a name you have to wait for is a name you cannot read. */
 .feedMetaHandle {
-  grid-area: swap;
   justify-self: center;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
-  will-change: opacity, transform;
-  animation: feedHeadlineHandleSwap 6s ease-in-out infinite;
 }
 
-@keyframes feedHeadlineTitleSwap {
-  0%, 40% { opacity: 1; transform: translateY(0); }
-  47%, 93% { opacity: 0; transform: translateY(-65%); }
-  100% { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes feedHeadlineHandleSwap {
-  0%, 40% { opacity: 0; transform: translateY(65%); }
-  47%, 93% { opacity: 1; transform: translateY(0); }
-  100% { opacity: 0; transform: translateY(65%); }
+/* Hold each line long enough to read, then travel: the same rhythm the two
+   fades kept, expressed once. */
+@keyframes feedHeadlineSwap {
+  0%, 40% { transform: translateY(0); }
+  47%, 93% { transform: translateY(calc(-1 * var(--poplur-feed-headline-line))); }
+  100% { transform: translateY(0); }
 }
 
 .verifyBadge {
@@ -395,10 +428,6 @@
   white-space: nowrap;
 }
 
-
-@keyframes feedCenterTextShader {
-  to { background-position: -260% 0; }
-}
 
 .chIcon {
   width: 44px;
@@ -635,6 +664,10 @@
     transform: none;
   }
   .feedTitleTrack span[aria-hidden="true"] { display: none; }
+  /* No drift either: the wrap above already keeps a long title readable. */
+  .feedTitleScrolls span { animation: none; }
+  /* The line stops trading places too; the title is the one that stays. */
+  .feedHeadlineSwap { animation: none; }
   .commentRollTrack { animation: none; }
   .video,
   .drift,
@@ -1190,3 +1223,20 @@
   stroke-linecap: round;
 }
 .railGlyph:active { transform: scale(0.96); }
+
+/* A rail slot wearing supplied clay art: the image IS the button, no bed or
+   frame of its own — the same footing every SideControlIconButton stands on. */
+.railArt {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.35));
+  transition: transform 120ms ease;
+}
+.railArt:active { transform: scale(0.94); }

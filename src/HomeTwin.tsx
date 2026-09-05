@@ -2549,17 +2549,35 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     return () => window.clearTimeout(timer)
   }, [chromeIdle, activeTab])
 
+  // The profile's stat card rotates online → radius → posts on its own. A cube
+  // tap asks for RADIUS outright — your total reach, the number that card
+  // owns — and holds it a full radius beat before the rotation resumes from
+  // there. `nonce` lets a repeat tap re-arm the hold on a metric already up.
+  const [profileMetricRequest, setProfileMetricRequest] = useState<{
+    metric: 'online' | 'radius' | 'posts'
+    nonce: number
+  }>({ metric: 'online', nonce: 0 })
   useEffect(() => {
     if (activeTab !== 'profile' || chromeIdle) return
     const metrics: Array<'online' | 'radius' | 'posts'> = ['online', 'radius', 'posts']
-    let index = 0
+    let index = Math.max(0, metrics.indexOf(profileMetricRequest.metric))
     setProfileMetric(metrics[index])
-    const timer = window.setInterval(() => {
+    const firstHold = profileMetricRequest.nonce > 0 ? RADIUS_STAT_HOLD_MS : 3_200
+    let timer = 0
+    const advance = () => {
       index = (index + 1) % metrics.length
       setProfileMetric(metrics[index])
-    }, 3_200)
-    return () => window.clearInterval(timer)
-  }, [activeTab, chromeIdle])
+      timer = window.setTimeout(advance, 3_200)
+    }
+    timer = window.setTimeout(advance, firstHold)
+    return () => window.clearTimeout(timer)
+  }, [activeTab, chromeIdle, profileMetricRequest])
+  // Leaving the profile forgets the request, so the next visit starts on the
+  // ordinary rotation rather than a held radius from last time.
+  useEffect(() => {
+    if (activeTab === 'profile') return
+    setProfileMetricRequest(current => current.nonce === 0 ? current : { metric: 'online', nonce: 0 })
+  }, [activeTab])
 
   useEffect(() => {
     const onPhoneMessage = (event: MessageEvent) => {
@@ -5345,6 +5363,15 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // …and the profile's own layers (viewer, share sheet, photo capture, a
     // visited profile) answer the cube rather than carrying their own ✕.
     if (activeTab === 'profile' && profileBackRef.current?.()) { playPop(); return }
+    // On the unobstructed profile the cube reveals your TOTAL RADIUS: the stat
+    // card jumps to the radius metric and holds it, instead of waiting for the
+    // rotation to come round to it.
+    if (activeTab === 'profile') {
+      playPop()
+      setPopping(true)
+      setProfileMetricRequest(current => ({ metric: 'radius', nonce: current.nonce + 1 }))
+      return
+    }
     if (activeTab === 'post') {
       playPop()
       // Selection changes the object; tapping that object performs its shutter.

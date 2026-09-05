@@ -5,15 +5,49 @@ import { verifiedKindForHandle } from '../verifiedCheck'
 const read = (name: string) => readFileSync(new URL(`../${name}`, import.meta.url), 'utf8')
 
 describe('feed byline', () => {
-  it('lets the title and the handle take turns on one still line', () => {
+  it('lets the title and the handle take turns on one still line, on ONE clock', () => {
     const css = read('FeedTwin.module.css')
-    expect(css).toContain('@keyframes feedHeadlineTitleSwap')
-    expect(css).toContain('@keyframes feedHeadlineHandleSwap')
+    // One track that slides by exactly one row, not two opposing fades. The
+    // pair cost two forever-running animations for one line of type, which is
+    // what put the feed over the thermal gate's animation budget as soon as a
+    // post was on screen; and with two clocks the halves could drift apart.
+    expect(css).toContain('@keyframes feedHeadlineSwap')
+    expect(css).not.toContain('@keyframes feedHeadlineTitleSwap')
+    expect(css).not.toContain('@keyframes feedHeadlineHandleSwap')
+    // Rows, travel and window all measure the SAME named line. With
+    // percentages they disagreed: grid's automatic minimum grew the rows to
+    // their content, the track slid further than the window, and the handle
+    // went past it — the line was simply blank on its half of the cycle.
+    expect(css).toContain('--poplur-feed-headline-line: clamp(20px, 5vw, 24px);')
+    expect(css).toMatch(/\.feedHeadline \{[\s\S]*?height: var\(--poplur-feed-headline-line\);/)
+    expect(css).toMatch(/\.feedHeadlineSwap \{[\s\S]*?grid-template-rows: var\(--poplur-feed-headline-line\) var\(--poplur-feed-headline-line\);[\s\S]*?animation: feedHeadlineSwap/)
+    expect(css).toMatch(/47%, 93% \{ transform: translateY\(calc\(-1 \* var\(--poplur-feed-headline-line\)\)\); \}/)
+    expect(css).toMatch(/\.feedHeadlineSwap > \* \{[\s\S]*?min-height: 0;/)
     expect(read('FeedTwin.tsx')).toContain('className={styles.feedHeadline}')
+    expect(read('FeedTwin.tsx')).toContain('className={styles.feedHeadlineSwap}')
     expect(css).not.toContain('feedMetaHandleSwap')
     expect(css).not.toContain('feedMetaReachSwap')
-    expect(css).not.toContain('feedTitleMarquee')
     expect(css).toMatch(/\.feedHandle \{\n  font-size: clamp\(15px/)
+  })
+
+  it("sets the title in the handle's own type, and scrolls it only when it overflows", () => {
+    const css = read('FeedTwin.module.css')
+    const tsx = read('FeedTwin.tsx')
+    // One voice: the title track wears the handle's size, weight and colour,
+    // and the gradient text shader that made it read as a different font is
+    // gone.
+    expect(css).toMatch(/\.feedTitleTrack \{[\s\S]*?font-size: clamp\(15px, 4\.4vw, 19px\);[\s\S]*?font-weight: 900;[\s\S]*?color: rgba\(255, 242, 248, 0\.8\);/)
+    expect(css).not.toContain('feedCenterTextShader')
+    // The drift is gated on a MEASURED overflow, never unconditional, and it
+    // rides the inner span so it cannot fight the swap's transform on the
+    // track. A title that fits still sits perfectly still.
+    expect(css).toContain('@keyframes feedTitleMarquee')
+    expect(css).toMatch(/\.feedTitleScrolls span \{[\s\S]*?animation: feedTitleMarquee/)
+    expect(tsx).toContain('function FeedTitle(')
+    expect(tsx).toContain("'--feed-title-overflow'")
+    expect(tsx).toMatch(/const extra = span\.scrollWidth - track\.clientWidth/)
+    // Reduced motion: no drift — the wrap keeps a long title readable.
+    expect(css).toMatch(/prefers-reduced-motion[\s\S]*?\.feedTitleScrolls span \{ animation: none; \}/)
   })
 
   it('marks verified accounts with the supplied check', () => {
@@ -50,5 +84,28 @@ describe('feed byline', () => {
     expect(css).toContain('--poplur-feed-number: var(--poplur-feed-ctl);')
     expect(css).toContain('--poplur-feed-seam: var(--poplur-feed-gap);')
     expect(css).not.toContain('--poplur-feed-slack')
+  })
+})
+
+describe('feed popup and profile radius', () => {
+  it('draws the feed ad in the house dialog — the same shape as the map pop card', () => {
+    const win = read('CommerceSuggestionWindow.tsx')
+    expect(win).toContain("import PoplurDialog, { type PoplurDialogPill } from './PoplurDialog'")
+    expect(win).not.toContain('NewsPopCard')
+    expect(win).toContain('<PoplurDialog')
+    expect(win).toContain('eyebrow="POPLUR AD"')
+    // Sponsor, channel and offer rows travel as fact pills, the way the pop
+    // card carries its radius and place.
+    expect(win).toMatch(/const pills: PoplurDialogPill\[\] = \[[\s\S]*?card\.sponsor \?\? card\.title/)
+  })
+
+  it('a cube tap on the profile reveals TOTAL RADIUS and holds it', () => {
+    const home = read('HomeTwin.tsx')
+    // The tap asks for the radius metric outright…
+    expect(home).toMatch(/playPop\(\)\s+setPopping\(true\)\s+setProfileMetricRequest\(current => \(\{ metric: 'radius', nonce: current\.nonce \+ 1 \}\)\)/)
+    // …and the rotation restarts on it with the radius hold before the
+    // ordinary cadence resumes.
+    expect(home).toMatch(/const firstHold = profileMetricRequest\.nonce > 0 \? RADIUS_STAT_HOLD_MS : 3_200/)
+    expect(home).toMatch(/metrics\.indexOf\(profileMetricRequest\.metric\)/)
   })
 })

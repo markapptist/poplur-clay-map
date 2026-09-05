@@ -2337,6 +2337,9 @@ export default function ProfileTwin({
   const meterLabel = viewerPost
     ? "This pop's radius"
     : visiting ? `${viewUser}'s overall radius` : 'Your overall radius'
+  // Profile controls span the 200px avatar, with space-between gaps.
+  // Match that authored column rather than TabControlRail's default spacing.
+  const profileRailSpan = 200
   const displayedProfileTheme = visiting || failedProfileThemeID === selectedProfileTheme.id
     ? DEFAULT_PROFILE_THEME
     : selectedProfileTheme
@@ -2510,13 +2513,16 @@ export default function ProfileTwin({
             control wears the rail's own mail icon (feed.dm, the one the feed
             rail uses on somebody else's post) instead of a moulded stand-in. */}
         {visiting && (
-          <ClayCornerButton
-            kind="block"
-            label={`Block or report ${shownName}`}
-            size={44}
-            activateOnClick
-            onPress={() => { playPop(); setBlockPrompt(true) }}
-          />
+          <button
+            className={styles.mapBtn}
+            onClick={() => { playPop(); setBlockPrompt(true) }}
+            aria-label={`Block or report ${shownName}`}
+            data-profile-block=""
+          >
+            {/* The supplied clay block button (global.block), the same art
+                the feed's channel column wears on a stranger's post. */}
+            <SideControlIconImage icon="global.block" displaySize={44} />
+          </button>
         )}
         {visiting ? (
           <button
@@ -2881,6 +2887,10 @@ export default function ProfileTwin({
         radiusKm={meterRadiusKm}
         subjectKey={meterSubjectKey}
         label={meterLabel}
+        // Exactly the control rail's height: it flanks the picture the way
+        // the buttons opposite do, and ends before the grid begins.
+        span={profileRailSpan}
+        thumbSize={44}
       />
 
       {/* ── Fullscreen post viewer — channel arrows browse posts. ── */}

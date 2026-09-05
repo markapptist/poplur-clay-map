@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { RADIUS_TROPHIES, STRIKER_MS, radiusMeterLevel } from '../radiusTrophies'
 
@@ -36,6 +37,16 @@ describe('the profile radius meter is the map’s striker, in sync with the radi
     expect(radiusMeterLevel(6_371)).toBeCloseTo(1, 6)
   })
 
+  it('stands exactly as tall as the control rail opposite, above the grid, wearing a rail-sized trophy', () => {
+    // Profile overrides the default rail to span the 200px avatar.
+    expect(profile).toContain('const profileRailSpan = 200')
+    expect(read('../ProfileTwin.module.css')).toContain('top: var(--profile-control-top);')
+    expect(profile).toContain('span={profileRailSpan}')
+    expect(profile).toContain('thumbSize={44}')
+    expect(rail).toContain("'--mapControlSpan': `${Math.max(0, Math.round(span))}px`")
+    expect(railCss).toContain('top: var(--profile-control-top')
+  })
+
   it('re-climbs from the foot for a new subject and never takes a pointer', () => {
     expect(rail).toContain('const from = fresh ? 0 : levelRef.current')
     expect(rail).toContain('role="meter"')
@@ -59,6 +70,28 @@ describe('the profile radius meter is the map’s striker, in sync with the radi
 
   it('makes the RADIUS number re-tally on the same beat the tower climbs', () => {
     expect(home).toContain("? (profileReachKm != null ? `profile-pop:${profileReachKm}` : 'profile-total')")
+  })
+})
+
+describe('the block control wears the supplied clay art', () => {
+  const feed = read('../FeedTwin.tsx')
+  const ids = read('../sideControlIcons.ts')
+  const manifest = JSON.parse(read('../side-control-icons/manifest.json')) as { buttons: { id: string; asset: string }[] }
+
+  it('is registered once, as global.block, backed by the 512/256 pack files', () => {
+    expect(ids).toContain("'global.block'")
+    const entry = manifest.buttons.find(button => button.id === 'global.block')
+    expect(entry?.asset).toBe('global/block')
+    for (const size of [256, 512]) {
+      expect(existsSync(fileURLToPath(new URL(`../../public/poplur-side-buttons/assets/${size}/global/block.png`, import.meta.url))), `${size}`).toBe(true)
+    }
+  })
+
+  it('replaces the drawn glyph in the feed column and the moulded ring on a visited profile', () => {
+    expect(feed).toContain('<SideControlIconImage icon="global.block" displaySize={44} />')
+    expect(feed).not.toContain('<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M6 6l12 12" /></svg>')
+    expect(profile).toContain('<SideControlIconImage icon="global.block" displaySize={44} />')
+    expect(profile).not.toContain('kind="block"')
   })
 })
 

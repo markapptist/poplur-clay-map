@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { SmartCard } from './tourSmarts'
 import { normalizeInAppBrowserURL, openInPoplurBrowser } from './inAppBrowser'
-import NewsPopCard from './NewsPopCard'
+import PoplurDialog, { type PoplurDialogPill } from './PoplurDialog'
 import { playPop } from './pop'
 import { productImage } from './productImage'
 import { placeCreative, type PlaceCreative } from './placeCreative'
@@ -96,32 +96,41 @@ export default function CommerceSuggestionWindow({
     onClose()
   } : undefined
   const browserAction = safeLink ? () => openBrowser() : undefined
-  const rows = card.rows?.slice(0, 3).map(row => `${row.label}: ${row.value}`).join(' · ')
+  // The house dialog, not the broadsheet window: the same pink clay frame,
+  // dark panel and fact pills the map's pop card wears, so an ad on the Feed
+  // reads as Poplur telling you something — one shape for every notice. The
+  // sponsor, channel and offer rows become pills, the way the pop card carries
+  // its radius and place.
+  const pills: PoplurDialogPill[] = [
+    { icon: '🛍', text: card.sponsor ?? card.title },
+    ...(card.channelTag ? [{ icon: '📺', text: card.channelTag }] : []),
+    ...(card.rows?.slice(0, 3).map(row => ({ icon: '◆', text: `${row.label}: ${row.value}` })) ?? []),
+  ]
+  const summary = livePlace?.summary ?? card.line
 
   return (
-    <NewsPopCard
-      embedded
-      status="POPLUR AD"
-      statusKind="ad"
-      place={card.sponsor ?? card.title}
+    <PoplurDialog
+      dataId={`ad:${card.headline}`}
+      eyebrow="POPLUR AD"
       title={card.headline}
-      summary={livePlace?.summary ?? card.line}
-      summaryLabel="POPLUR PICK"
-      meta={(
+      subtitle={(
         <>
-          {rows}
-          {rows && livePlace && ' · '}
+          {summary}
           {livePlace && normalizeInAppBrowserURL(livePlace.sourceUrl) && (
-            <button
-              type="button"
-              className={styles.newsSource}
-              onClick={() => openBrowser(livePlace.sourceUrl)}
-            >{livePlace.sourceLabel}</button>
+            <>
+              {' '}
+              <button
+                type="button"
+                className={styles.newsSource}
+                onClick={() => openBrowser(livePlace.sourceUrl)}
+              >{livePlace.sourceLabel}</button>
+            </>
           )}
         </>
       )}
+      pills={pills}
       media={media}
-      onMediaActivate={browserAction}
+      onMediaActivate={browserAction ?? runAppAction}
       onClose={() => { playPop(); onClose() }}
       primaryAction={runAppAction ? { label: action?.label ?? 'OPEN', onActivate: runAppAction }
         : browserAction ? { label: card.link?.label ?? 'SEE DEAL', onActivate: browserAction }

@@ -4,6 +4,7 @@ import weatherConditionMapJson from './side-control-icons/weather_condition_map.
 export const SIDE_CONTROL_ICON_IDS = [
   'global.channel_up',
   'global.channel_down',
+  'global.block',
   'map.mute',
   'map.locate',
   'map.search',

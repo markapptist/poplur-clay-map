@@ -51,6 +51,8 @@ export default function RadiusStrikerRail({
   radiusKm,
   subjectKey,
   label,
+  span,
+  thumbSize = THUMB_FALLBACK_PX,
 }: {
   /** Which edge the tower stands on — the one the control rail is not on. */
   side: ControlSide
@@ -59,6 +61,14 @@ export default function RadiusStrikerRail({
   /** Identity of what is being measured; a change restarts the climb from 0. */
   subjectKey: string
   label: string
+  /** The tower's height in px. Given, it stands exactly as tall as the
+   *  control rail opposite it — the profile's, four 44px buttons and their
+   *  gaps — so the two flank the page as one pair. Omitted, it takes the
+   *  map rail's span. */
+  span?: number
+  /** The trophy's size; the map's knob is 68px, a rail-sized tower wears a
+   *  44px one so it reads as another side button. */
+  thumbSize?: number
 }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const railRef = useRef<HTMLDivElement>(null)
@@ -200,7 +210,11 @@ export default function RadiusStrikerRail({
       data-radius-striker={shown.tier ?? 'below-bronze'}
       data-radius-striker-running={String(shown.running)}
       data-radius-striker-level={shown.level.toFixed(3)}
-      style={thumbSprite ? ({ '--zoomThumb': `url("${thumbSprite}")` } as React.CSSProperties) : undefined}
+      style={{
+        ...(thumbSprite ? { '--zoomThumb': `url("${thumbSprite}")` } : {}),
+        ...(span != null ? { '--mapControlSpan': `${Math.max(0, Math.round(span))}px` } : {}),
+        '--zoom-thumb-size': `${thumbSize}px`,
+      } as React.CSSProperties}
     >
       <div className={styles.rail} ref={railRef}>
         {RADIUS_TROPHIES.map((trophy, index) => (

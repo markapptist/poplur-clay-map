@@ -8,6 +8,7 @@
     radial-gradient(120% 60% at 50% 6%, rgba(246, 59, 154, 0.08), transparent 46%),
     linear-gradient(180deg, #f7f4ef, #efeae3);
   /* bell/camera drift outward on wider screens (mirrors the home HUD) */
+  --profile-control-top: 110px;
   --flank: clamp(0px, calc((100cqw - 440px) / 5), 150px);
   --control-outset: clamp(0px, calc(20cqw - 64px), 32px);
   container-type: size;
@@ -215,7 +216,7 @@
    gaps. ONLY the vertical box is touched: .left/.right still own x, so the
    rail stays on the shell edge exactly where it is. */
 .profile :global([data-poplur-control-rail]) {
-  top: 110px;
+  top: var(--profile-control-top);
   height: 200px;
   align-content: space-between;
   gap: 0;
