@@ -171,7 +171,7 @@ export default function RadiusStrikerRail({
         setShown({ tier, running: true, level })
       }
       if (raw < 1) {
-        rafRef.current = requestAnimationFrame(frame)
+        rafRef.current = requestAnimationFrame(frame) // governor-ok: bounded 880ms radius-change animation; cancels on cleanup
       } else {
         rafRef.current = 0
         levelRef.current = target
@@ -179,7 +179,7 @@ export default function RadiusStrikerRail({
         setShown({ tier: finalTier, running: false, level: target })
       }
     }
-    rafRef.current = requestAnimationFrame(frame)
+    rafRef.current = requestAnimationFrame(frame) // governor-ok: bounded 880ms radius-change animation; cancels on cleanup
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       rafRef.current = 0

@@ -1868,13 +1868,13 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         setStriker({ key: strikerKey, targetLevel, tier, done: false })
       }
       if (raw < 1) {
-        strikerRafRef.current = requestAnimationFrame(frame)
+        strikerRafRef.current = requestAnimationFrame(frame) // governor-ok: bounded 880ms radius-change animation; cancels on cleanup
       } else {
         strikerRafRef.current = 0
         setStriker({ key: strikerKey, targetLevel, tier, done: true })
       }
     }
-    strikerRafRef.current = requestAnimationFrame(frame)
+    strikerRafRef.current = requestAnimationFrame(frame) // governor-ok: bounded 880ms radius-change animation; cancels on cleanup
     return () => {
       if (strikerRafRef.current) cancelAnimationFrame(strikerRafRef.current)
       strikerRafRef.current = 0
