@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { CAPTION_CUES } from './captionCues'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
@@ -66,7 +66,6 @@ import {
 } from './radiusLedger'
 import { currentViewerCoords as viewerCoordsFromFix } from './viewerFix'
 import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
-import { blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } from './blockedUsers'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
 // a fullscreen vertical TV-channel video pager. Vertical swipe changes channel;
@@ -230,9 +229,7 @@ export function feedPostsForChannel(
   published: readonly NativeFeedPost[] = [],
 ): ChannelPost[] {
   return published
-    // Someone you blocked is gone from the feed the moment you did it, on
-    // this device, whatever the server has heard yet (blockedUsers.ts).
-    .filter(post => post.channelId === channelId && !isUserBlocked(post.ownerId, post.username))
+    .filter(post => post.channelId === channelId)
     .map(post => ({
       id: post.id,
       ownerId: post.ownerId,
@@ -312,44 +309,6 @@ function cuesFor(video: string | undefined, fallback: string) {
 // useSyncExternalStore adapter: accountStore hands its listener a snapshot,
 // the store contract wants a bare change notification.
 const subscribeAccountUid = (onStoreChange: () => void) => onAccountChange(onStoreChange)
-
-// The headline's title line. A title wider than its cell scrolls (a paced
-// ping-pong drift, see .feedTitleScrolls) instead of being ellipsed; one that
-// fits sits still. The overflow is measured here, per title, so the CSS can
-// pace the drift by distance rather than guess at it.
-function FeedTitle({ title }: { title: string }) {
-  const trackRef = useRef<HTMLDivElement>(null)
-  const spanRef = useRef<HTMLSpanElement>(null)
-  const [overflow, setOverflow] = useState(0)
-  useLayoutEffect(() => {
-    const track = trackRef.current
-    const span = spanRef.current
-    if (!track || !span) return
-    const measure = () => {
-      const extra = span.scrollWidth - track.clientWidth
-      setOverflow(extra > 2 ? extra : 0)
-    }
-    measure()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(track)
-    return () => observer.disconnect()
-  }, [title])
-  const scrolls = overflow > 0
-  return (
-    <div
-      ref={trackRef}
-      className={scrolls ? `${styles.feedTitleTrack} ${styles.feedTitleScrolls}` : styles.feedTitleTrack}
-      style={scrolls ? {
-        '--feed-title-overflow': `${overflow}px`,
-        // ~30px/s: slow enough to read, quick enough to reach the end.
-        '--feed-title-scroll-s': `${Math.max(3, overflow / 30).toFixed(1)}s`,
-      } as React.CSSProperties : undefined}
-    >
-      <span ref={spanRef}>{title}</span>
-    </div>
-  )
-}
 
 export default function FeedTwin({
   index: controlledIndex,
@@ -571,9 +530,6 @@ export default function FeedTwin({
   // delivered something there you have not seen yet — a per-device set, not
   // server state (see seenPosts.ts).
   const seenPosts = useSyncExternalStore(onSeenPostsChange, seenPostsSnapshot, seenPostsSnapshot)
-  // A block re-ranks the channel at once; the filter itself lives in
-  // feedPostsForChannel, this is what makes the screen re-read it.
-  const blockedUsers = useSyncExternalStore(onBlockedUsersChange, blockedUsersSnapshot, blockedUsersSnapshot)
   const newChannelIds = useMemo(() => {
     const ids = new Set<string>()
     for (const candidate of publishedPosts) {
@@ -608,7 +564,7 @@ export default function FeedTwin({
     if (!ranked.some(post => post.id === canonicalFeedPostId(focusedPostId))) return
     contentIdxRef.current[ch.id] = 0
     forceContentRender(value => value + 1)
-  }, [blockedUsers, ch.id, discovery, focusedContent?.nonce, publishedPosts])
+  }, [ch.id, discovery, focusedContent?.nonce, publishedPosts])
 
   useEffect(() => {
     const refresh = () => setLocationRevision(value => value + 1)
@@ -2243,7 +2199,9 @@ export default function FeedTwin({
                   onClick={openPosterProfile}
                   data-feed-byline="true"
                 >
-                  <FeedTitle title={title} />
+                  <div className={styles.feedTitleTrack}>
+                    <span>{title}</span>
+                  </div>
                   <div className={`${styles.feedHandle} ${styles.feedMetaHandle}`} aria-hidden="true">
                     {post.user}
                     {bylineVerified && (
@@ -2253,7 +2211,9 @@ export default function FeedTwin({
                 </button>
               ) : (
               <div className={styles.feedHeadline} aria-label={`${title}, ${post.user}`} key={title}>
-                <FeedTitle title={title} />
+                <div className={styles.feedTitleTrack}>
+                  <span>{title}</span>
+                </div>
                 <div className={`${styles.feedHandle} ${styles.feedMetaHandle}`} aria-hidden="true">
                   {post.user}
                   {bylineVerified && (
