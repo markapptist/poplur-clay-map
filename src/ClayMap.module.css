@@ -2117,6 +2117,32 @@ header.weatherTitleBar {
 }
 .popPin:active { transform: translateY(6px) scale(0.92); }
 
+/* The pin's half of the radius pulse (pulsePinSpotlight).
+   Both keyframes carry the resting translateY(6px) through every step — that
+   offset is what lands the sprite's TIP on the coordinate, so dropping it
+   mid-animation would slide the pin off its own spot and back.
+   The curves follow the claim's: growth strikes past its rest and springs
+   back, decay presses in and settles without overshoot. */
+@keyframes popPinPop {
+  0% { transform: translateY(6px) scale(1); }
+  38% { transform: translateY(-12px) scale(1.16); }
+  68% { transform: translateY(2px) scale(0.98); }
+  100% { transform: translateY(6px) scale(1); }
+}
+
+@keyframes popPinDip {
+  0% { transform: translateY(6px) scale(1); }
+  42% { transform: translateY(13px) scale(0.9); }
+  100% { transform: translateY(6px) scale(1); }
+}
+
+.popPinPop { animation: popPinPop 620ms cubic-bezier(0.3, 1.4, 0.4, 1); }
+.popPinDip { animation: popPinDip 1400ms cubic-bezier(0.4, 0, 0.3, 1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .popPinPop, .popPinDip { animation: none; }
+}
+
 /* Yours, on a board full of other people's. */
 /* The NEW burst on a pop you have not opened. It sits ON the pin — a small
    tag straddling the top-right edge of the round head — not floating beside

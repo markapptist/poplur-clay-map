@@ -87,7 +87,7 @@ import { preferredLandmarkRendererId } from './landmarkRendererSelection'
 import { playPop } from './pop'
 import { spreadOverlappingPins } from './pinSpread'
 import { feedPostIdFromPinId, isPostSeen, onSeenPostsChange } from './seenPosts'
-import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim, pulseDominanceLayer } from './mapClaims'
+import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim, pulseDominanceLayer, CLAIM_GROWTH_MS, CLAIM_DECAY_MS } from './mapClaims'
 import { ownershipTerrainPolygon } from './ownershipTerrain'
 import { fitZoomForRadius } from './mapFitZoom'
 import {
@@ -1129,6 +1129,83 @@ export function updatePinSpotlight(map: mapboxgl.Map, pin: PopPin | null) {
     if (map.getLayer(PIN_SPOTLIGHT_FILL)) map.setPaintProperty(PIN_SPOTLIGHT_FILL, 'fill-color', tint)
     if (map.getLayer(PIN_SPOTLIGHT_EDGE)) map.setPaintProperty(PIN_SPOTLIGHT_EDGE, 'line-color', tint)
   } catch { /* style changed while the spotlight was repainting */ }
+}
+
+/**
+ * The pulse a radius change gets when you arrive from its notification.
+ *
+ * Paint only, deliberately. The claim's real geometry is already sweeping
+ * under this (setClaim animates the radius on the same 620/1400 curves), and
+ * an expanding second polygon means ownershipTerrainPolygon recomputed every
+ * frame on top of that sweep — which is exactly what put this animation over
+ * the map-idle budget the first time (41 frames against a budget of 8). A
+ * flash on two paint properties costs no geometry, and the pin's own bounce is
+ * a CSS keyframe the compositor owns.
+ *
+ * Direction is the message: growth flashes and settles on the earned curve,
+ * loss takes the longer decay so it reads as ground going quiet rather than as
+ * a second strike.
+ */
+export function pulsePinSpotlight(
+  map: mapboxgl.Map,
+  pin: PopPin,
+  direction: 'gain' | 'loss',
+): void {
+  const duration = direction === 'loss' ? CLAIM_DECAY_MS : CLAIM_GROWTH_MS
+  // The pin itself: a compositor-only bounce or dip, no governor subscription.
+  try {
+    // Escaped for a QUOTED attribute value, not as an identifier: CSS.escape
+    // would turn a post id that starts with a digit into an escaped codepoint
+    // and the selector would then match nothing.
+    const quoted = pin.id.replace(/["\\]/g, '\\$&')
+    const marker = document.querySelector<HTMLElement>(
+      `[data-map-point-id="pin:${quoted}"] .${styles.popPin}`,
+    )
+    if (marker) {
+      const beat = direction === 'loss' ? styles.popPinDip : styles.popPinPop
+      marker.classList.remove(styles.popPinDip, styles.popPinPop)
+      // Reflow so re-firing on the same pin restarts the keyframe.
+      void marker.offsetWidth
+      marker.classList.add(beat)
+      window.setTimeout(() => marker.classList.remove(beat), duration + 240)
+    }
+  } catch { /* pin not on the board yet; the paint flash still lands */ }
+
+  if (!map.getLayer(PIN_SPOTLIGHT_FILL) || !map.getLayer(PIN_SPOTLIGHT_EDGE)) return
+
+  const started = performance.now()
+  // Managed, not ambient: this is finite work an explicit tap asked for, and
+  // the ambient gate is asleep precisely when a notification arrives.
+  wakeManagedRendering(duration + 120)
+  let stop = () => {}
+  const settle = () => {
+    try {
+      map.setPaintProperty(PIN_SPOTLIGHT_FILL, 'fill-opacity', 0.5)
+      map.setPaintProperty(PIN_SPOTLIGHT_EDGE, 'line-width', 2.5)
+      map.setPaintProperty(PIN_SPOTLIGHT_EDGE, 'line-opacity', 0.9)
+    } catch { /* style swapped mid-pulse */ }
+    stop()
+  }
+  try {
+    stop = onFrame((_dt, now) => {
+      const t = Math.min(1, (now - started) / duration)
+      // One rise and fall, so the flash never leaves the ground brighter than
+      // it found it.
+      const swell = Math.sin(t * Math.PI)
+      try {
+        map.setPaintProperty(PIN_SPOTLIGHT_FILL, 'fill-opacity', 0.5 + swell * 0.28)
+        map.setPaintProperty(PIN_SPOTLIGHT_EDGE, 'line-width', 2.5 + swell * 5.5)
+        map.setPaintProperty(PIN_SPOTLIGHT_EDGE, 'line-opacity', 0.9 - swell * 0.35)
+      } catch {
+        settle()
+        return
+      }
+      if (t >= 1) settle()
+    }, 'managed')
+  } catch {
+    /* no governor in this context; leave the paint at rest */
+    settle()
+  }
 }
 
 const OWNER_ROUTE_SOURCE = 'poplur-owner-route'

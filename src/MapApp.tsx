@@ -50,7 +50,7 @@ function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; ra
 }
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaimGroup, onClaimsSettled } from './mapClaims'
-import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin, installPinSpotlight, updatePinSpotlight, installOwnerRoute, updateOwnerRoute } from './ClayMap'
+import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin, installPinSpotlight, updatePinSpotlight, pulsePinSpotlight, installOwnerRoute, updateOwnerRoute } from './ClayMap'
 import WeatherMark from './WeatherMark'
 import { weatherIconIdForCode, weatherIconIdForMode } from './sideControlIcons'
 import { windyFromSpeed } from './weatherCode'
@@ -3723,10 +3723,18 @@ export default function MapApp() {
         updatePinSpotlight(live, pin)
       } catch { /* style not ready yet; the camera has still arrived */ }
       focusMapPointForPin(pin.id)
-      // The badge with the real number, when the notification names one. The
-      // fuller pulse (ring, flash, bounce — see the Radius Pulse preview) hangs
-      // off this same landing once it is approved for the map; `request.pulse`
-      // carries the direction for it even when no number came.
+      // The pulse: ring flash, ground flash, and the pin's own bounce or dip.
+      // Direction comes off the notification even when it named no number, so
+      // a change you arrived at still reads as growth or loss before any badge
+      // is parsed. Approved 5 Sep against the Banner to Pin preview.
+      const pulse = request.pulse
+        ?? (typeof request.deltaKm === 'number' && request.deltaKm !== 0
+          ? (request.deltaKm < 0 ? 'loss' : 'gain')
+          : undefined)
+      if (pulse) {
+        try { pulsePinSpotlight(live, pin, pulse) } catch { /* paint only; never block the landing */ }
+      }
+      // The badge with the real number, when the notification names one.
       if (typeof request.deltaKm === 'number' && request.deltaKm !== 0) {
         announcedByRelayRef.current.set(pin.id, Date.now())
         showPinRadiusPulse(pin.id, request.deltaKm)
