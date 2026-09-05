@@ -1,5 +1,6 @@
 import { isWorldRadiusMeters } from './worldRadius'
 import { isLiveSimulationEnabled } from './simulationControl'
+import { accountSnapshot } from './accountStore'
 
 export type FeedDiscoveryMode = 'radius' | 'local' | 'trending'
 
@@ -25,6 +26,8 @@ export type FeedDiscoverySignal =
 export interface FeedDiscoveryPost {
   id: string
   channelId: string
+  /** The poster's account id. Your own pops always reach you. */
+  ownerId?: string
   radiusMeters?: number
   distanceMeters?: number
   originLatitude?: number
@@ -254,7 +257,7 @@ function score(
  */
 export function feedPostReachesViewer(
   post: Pick<FeedDiscoveryPost,
-    'radiusMeters' | 'locationVisibility' | 'originLatitude' | 'originLongitude' | 'syntheticCohort'>,
+    'ownerId' | 'radiusMeters' | 'locationVisibility' | 'originLatitude' | 'originLongitude' | 'syntheticCohort'>,
   viewerCoords: readonly [number, number] | null | undefined,
 ): boolean {
   // Test mode: the synthetic beta cohort's pops reach every viewer, wherever
@@ -263,6 +266,15 @@ export function feedPostReachesViewer(
   // reviewer anywhere would see nothing at all — a board with no content is
   // not a test of anything. Real pops keep the earned rule unchanged.
   if (post.syntheticCohort === true && isLiveSimulationEnabled()) return true
+  // Your own pops always reach you. The Map already stands your pins whatever
+  // their radius ("your own pops always stand", MapApp), but the Feed dropped
+  // them by the earned-reach rule the moment a pop was aimed anywhere but
+  // where you were standing — so publishing to a chosen spot left the Feed
+  // with nothing of what you had just posted, on a channel that then read
+  // "No posts in this channel" (5 Sep 2026). A hidden-origin pop of your own,
+  // which the composer promises stays visible in the feed, never showed at
+  // all. Other people's reach is unchanged: this is recognition, not reach.
+  if (post.ownerId && post.ownerId === accountSnapshot().uid) return true
   if (post.locationVisibility !== 'approximate' || !viewerCoords) return false
   const radiusMeters = post.radiusMeters
   const originLatitude = post.originLatitude

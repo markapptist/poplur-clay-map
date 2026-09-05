@@ -46,12 +46,14 @@ const FLOOR_LOG = Math.log10(FLOOR_KM)
 const CEILING_LOG = Math.log10(EARTH_RADIUS_KM)
 /** The pure log rail put a one-kilometre pop a FIFTH of the way to the top of
  *  the world, which read as a lie on the meter ("0.6 mi should not reach that
- *  high"). Biasing the log position keeps the decade trophies in order while
- *  pressing small radii toward the foot: bronze (1 km) rings at ~9% instead
- *  of ~21%, gold (100 km) near halfway, and each decade is a visibly LONGER
- *  climb than the one before — the way a high striker gets harder near the
- *  bell. */
-const METER_BIAS = 1.5
+ *  high"); a bias of 1.5 still put a 5 km pop a fifth of the way up, nearly
+ *  on the silver rung ("5.0 km should not be that high if the world radius
+ *  is 6,371", 5 Sep 2026). Biasing the log position keeps the decade trophies
+ *  in order while pressing small radii toward the foot: bronze (1 km) rings
+ *  at ~2%, 5 km sits at ~8%, silver (10 km) at ~12%, gold (100 km) at ~32%,
+ *  platinum (1,000 km) at ~64%, and each decade is a visibly LONGER climb
+ *  than the one before — the way a high striker gets harder near the bell. */
+const METER_BIAS = 2.4
 
 /** Where on the rail (0 = bottom, 1 = the top of the tower) a radius sits. */
 export function radiusMeterLevel(radiusKm: number): number {

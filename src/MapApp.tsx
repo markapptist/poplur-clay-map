@@ -63,6 +63,7 @@ import {
 import {
   mapPointCycleCameraPlan,
   mapPointCycleDestinationPose,
+  mapPointCyclePanMs,
   mapPointRadiusFrameZoom,
   programmaticCameraBlurAllowed,
   programmaticCameraPoseMatches,
@@ -1842,27 +1843,29 @@ export default function MapApp() {
     const authoredMotion = motionMode !== 'default'
     const currentCenter = map.getCenter()
     const atWorldOverview = worldCountryZoomActive(currentZoom, MAP_MIN_ZOOM)
+    const hopMeters = distanceMeters([currentCenter.lng, currentCenter.lat], targetCenter)
     const cameraPlan = motionMode === 'map-point-cycle'
       ? mapPointCycleCameraPlan({
         currentZoom,
         targetZoom,
-        distanceMeters: distanceMeters(
-          [currentCenter.lng, currentCenter.lat],
-          targetCenter,
-        ),
+        distanceMeters: hopMeters,
         requiresTargetFraming: Boolean(landmarkFrame),
         holdWideOverview: atWorldOverview,
       })
       : programmaticCameraPlanForMode(currentZoom, targetZoom, motionMode)
 
     if (motionMode === 'map-point-cycle' && cameraPlan.kind === 'translate') {
-      // Arrow browsing is selection, not a replay of the cinematic tour. Put
-      // the next point under the camera in one frame: no flatten, pull-back,
-      // or second reveal move. Zoom is the nearby-preserved or subject-framed
+      // Arrow browsing is selection, not a replay of the cinematic tour: no
+      // flatten, pull-back, or second reveal move. But it IS a move. This used
+      // to put the next point under the camera in one frame, which read as
+      // the map "flipping" to the point rather than going there (5 Sep 2026);
+      // now one atomic ease carries centre, zoom, pitch and bearing together,
+      // paced by how far the next point is, so the eye follows the camera
+      // across the board. Zoom is the nearby-preserved or subject-framed
       // destination chosen above. Close pins regain the shallow isometric
-      // board after a world view; landmarks use their authored hero angle. A
-      // zero-duration ease (rather than jumpTo) keeps Mapbox's support for an
-      // authored landmark offset.
+      // board after a world view; landmarks use their authored hero angle.
+      // An ease (rather than flyTo) keeps Mapbox's support for an authored
+      // landmark offset.
       const destinationPose = mapPointCycleDestinationPose({
         finalZoom: cameraPlan.zoom,
         currentZoom,
@@ -1873,12 +1876,25 @@ export default function MapApp() {
         subject: pointSubject ?? 'pin',
         streetView,
       })
-      mapCamera.__suppressNextMapClickUntil = Date.now() + 500
-      wakeManagedRendering(MANAGED_CAMERA_SETTLE_MS)
+      const panMs = mapPointCyclePanMs(hopMeters)
+      mapCamera.__suppressNextMapClickUntil = Date.now() + panMs + 500
+      wakeManagedRendering(panMs + MANAGED_CAMERA_SETTLE_MS)
       map.setMinPitch(0)
       // A world frame leaves Mapbox's pitch ceiling at zero. Raise it without
       // moving the camera before the single atomic destination ease.
       map.setMaxPitch(Math.max(destinationPose.maxPitch, currentPitch, destinationPose.pitch))
+      beginProgrammaticCameraMotion(map, panMs)
+      // Arrival is the end of the pan, not the start of it: ownership and the
+      // pitch ceiling are handed back when Mapbox says the camera has landed,
+      // and only if no later flight has taken over in the meantime.
+      const arrive = () => {
+        if (!ownsFlight()) return
+        map.setMaxPitch(destinationPose.maxPitch)
+        mapCamera.__tripping = false
+        mapCamera.__cinematic = false
+        onArrival?.()
+      }
+      map.once('moveend', arrive)
       try {
         map.easeTo({
           center: targetCenter,
@@ -1888,21 +1904,17 @@ export default function MapApp() {
           // The authored offset is pixel framing for the hero close-up; a
           // held birds-eye survey centres the subject instead.
           ...(landmarkFrame?.offset && !atWorldOverview ? { offset: landmarkFrame.offset } : {}),
-          duration: 0,
+          duration: panMs,
+          easing: (t: number) => t * t * (3 - 2 * t),
           essential: true,
         })
       } catch {
+        map.off('moveend', arrive)
         if (ownsFlight()) {
           mapCamera.__tripping = false
           mapCamera.__cinematic = false
         }
         return false
-      }
-      if (ownsFlight()) {
-        map.setMaxPitch(destinationPose.maxPitch)
-        mapCamera.__tripping = false
-        mapCamera.__cinematic = false
-        onArrival?.()
       }
       return true
     }
@@ -3486,6 +3498,74 @@ export default function MapApp() {
     } catch { /* standalone route has no separate shell consumer */ }
   }, [])
 
+  /** The pop itself, as the dialog a tap opens: who, what they said, the
+   *  media, and the ways to act on it. Shared with SELECT MODE, whose arrows
+   *  land on this card too — a preview window, not just a name at the top. */
+  const showPinContentCard = useCallback((pin: PopPin) => {
+    showPopup({
+      kind: 'mapContent',
+      content: {
+        id: pin.id,
+        name: pin.name,
+        user: pin.user,
+        channel: pin.channel,
+        caption: pin.media?.alt,
+        radiusKm: pin.radiusKm,
+        media: pin.media,
+      },
+      // Only a pop that HAS media can be shown in the feed. Forwarding one
+      // without it would publish a row whose mediaURL is empty, which the feed
+      // then drops on the native path while the map still shows the pin — the
+      // exact mismatch that makes a post look present and broken at once.
+      // Without this the card simply does not offer the action.
+      onActivate: pin.media ? () => {
+        window.parent?.postMessage({
+          type: 'poplur-map-open-feed-content',
+          content: {
+            id: pin.id,
+            channelId: pin.channel ?? 'live',
+            username: pin.user ?? '@you',
+            caption: pin.media?.alt || pin.name,
+            mediaURL: pin.media?.src,
+            mediaType: pin.media?.kind === 'image' ? 'photo' : 'video',
+            posterURL: pin.media?.poster,
+            radiusMeters: Math.max(0, pin.radiusKm * 1_000),
+            createdAtMillis: 0,
+            locationVisibility: 'approximate',
+            originLatitude: Math.round(pin.coords[1] * 1_000) / 1_000,
+            originLongitude: Math.round(pin.coords[0] * 1_000) / 1_000,
+          },
+        }, '*')
+      } : undefined,
+      action: {
+        label: pin.user ? `VIEW ${pin.user}` : 'VIEW YOUR PROFILE',
+        onActivate: () => {
+          window.parent?.postMessage({
+            type: 'poplur-map-open-profile',
+            user: pin.user,
+            userId: pin.ownerId,
+            popId: pin.id,
+            name: pin.name,
+          }, '*')
+        },
+      },
+      // A pop is a person before it is a place, and a person can be written
+      // to. Only somebody ELSE'S pop offers this, and only when the row
+      // carries the stable account id a DM must be addressed to — the handle
+      // alone cannot receive a message.
+      dmAction: !pin.mine && pin.ownerId ? {
+        label: pin.user ? `DM ${pin.user}` : 'DM THEM',
+        onActivate: () => {
+          window.parent?.postMessage({
+            type: 'poplur-map-open-dm',
+            user: pin.user,
+            userId: pin.ownerId,
+          }, '*')
+        },
+      } : undefined,
+    })
+  }, [])
+
   const cycleMapPoint = useCallback((direction: -1 | 1) => {
     const route = mapPointRouteRef.current
     const step = stepMapPointCycle(route, focusedMapPointKeyRef.current, direction)
@@ -3550,7 +3630,15 @@ export default function MapApp() {
           pitch: map.getPitch(),
         }
         : null
-    flyToCenter(point.coords, TOUR_FLIGHT_MS, frame, 'map-point-cycle', undefined, point.kind)
+    // Landing on a pop in SELECT MODE opens it the way a tap does — the
+    // preview window with the pop itself (5 Sep 2026). Landmarks and the
+    // current-location stop have no pop to show. The guard covers an arrow
+    // pressed again before the pan landed: the older flight's arrival must
+    // not open the card of a point the person has already stepped past.
+    flyToCenter(point.coords, TOUR_FLIGHT_MS, frame, 'map-point-cycle', pin ? () => {
+      if (focusedMapPointKeyRef.current !== point.key) return
+      showPinContentCard(pin)
+    } : undefined, point.kind)
     try {
       window.parent?.postMessage({
         type: 'poplur-map-point',
@@ -3567,7 +3655,7 @@ export default function MapApp() {
         mine: point.mine,
       }, '*')
     } catch { /* standalone route has no separate shell consumer */ }
-  }, [closeSearchImmediately, flyToCenter, liveMapPosts, mapPins, stopTour, theme])
+  }, [closeSearchImmediately, flyToCenter, liveMapPosts, mapPins, showPinContentCard, stopTour, theme])
 
   // A tap on a pin's username label (ClayMap) arms "traverse this poster's
   // pops". Same label again releases it. The camera is left where the tap
@@ -3811,69 +3899,8 @@ export default function MapApp() {
       popId: pin.id,
     }, '*')
 
-    showPopup({
-      kind: 'mapContent',
-      content: {
-        id: pin.id,
-        name: pin.name,
-        user: pin.user,
-        channel: pin.channel,
-        caption: pin.media?.alt,
-        radiusKm: pin.radiusKm,
-        media: pin.media,
-      },
-      // Only a pop that HAS media can be shown in the feed. Forwarding one
-      // without it would publish a row whose mediaURL is empty, which the feed
-      // then drops on the native path while the map still shows the pin — the
-      // exact mismatch that makes a post look present and broken at once.
-      // Without this the card simply does not offer the action.
-      onActivate: pin.media ? () => {
-        window.parent?.postMessage({
-          type: 'poplur-map-open-feed-content',
-          content: {
-            id: pin.id,
-            channelId: pin.channel ?? 'live',
-            username: pin.user ?? '@you',
-            caption: pin.media?.alt || pin.name,
-            mediaURL: pin.media?.src,
-            mediaType: pin.media?.kind === 'image' ? 'photo' : 'video',
-            posterURL: pin.media?.poster,
-            radiusMeters: Math.max(0, pin.radiusKm * 1_000),
-            createdAtMillis: 0,
-            locationVisibility: 'approximate',
-            originLatitude: Math.round(pin.coords[1] * 1_000) / 1_000,
-            originLongitude: Math.round(pin.coords[0] * 1_000) / 1_000,
-          },
-        }, '*')
-      } : undefined,
-      action: {
-        label: pin.user ? `VIEW ${pin.user}` : 'VIEW YOUR PROFILE',
-        onActivate: () => {
-          window.parent?.postMessage({
-            type: 'poplur-map-open-profile',
-            user: pin.user,
-            userId: pin.ownerId,
-            popId: pin.id,
-            name: pin.name,
-          }, '*')
-        },
-      },
-      // A pop is a person before it is a place, and a person can be written
-      // to. Only somebody ELSE'S pop offers this, and only when the row
-      // carries the stable account id a DM must be addressed to — the handle
-      // alone cannot receive a message.
-      dmAction: !pin.mine && pin.ownerId ? {
-        label: pin.user ? `DM ${pin.user}` : 'DM THEM',
-        onActivate: () => {
-          window.parent?.postMessage({
-            type: 'poplur-map-open-dm',
-            user: pin.user,
-            userId: pin.ownerId,
-          }, '*')
-        },
-      } : undefined,
-    })
-  }, [accountPostCount, accountRadiusKm, focusMapPointForPin, liveMapPosts])
+    showPinContentCard(pin)
+  }, [accountPostCount, accountRadiusKm, focusMapPointForPin, liveMapPosts, showPinContentCard])
 
   const mapPinsRef = useRef(mapPins)
   mapPinsRef.current = mapPins

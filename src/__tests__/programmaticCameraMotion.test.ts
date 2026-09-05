@@ -247,7 +247,13 @@ describe('programmatic Map camera motion', () => {
     expect(directPointMove).toContain('pitch: destinationPose.pitch')
     expect(directPointMove).toContain('bearing: destinationPose.bearing')
     expect(directPointMove).toContain('map.setMaxPitch(Math.max(destinationPose.maxPitch')
-    expect(directPointMove).toContain('duration: 0')
+    // The arrows PAN to the next point (5 Sep 2026): a paced ease, its
+    // arrival handed back on moveend, never a one-frame cut.
+    expect(directPointMove).toContain('const panMs = mapPointCyclePanMs(hopMeters)')
+    expect(directPointMove).toContain('duration: panMs')
+    expect(directPointMove).not.toContain('duration: 0')
+    expect(directPointMove).toContain("map.once('moveend', arrive)")
+    expect(directPointMove).toContain('beginProgrammaticCameraMotion(map, panMs)')
     expect(directPointMove).not.toContain('map.flyTo({')
   })
 

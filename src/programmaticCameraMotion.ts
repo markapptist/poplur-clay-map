@@ -114,6 +114,23 @@ export function mapPointCycleCameraPlan({
   }
 }
 
+/** The arrows' pan: a short, readable glide to the next pin on the same board,
+ *  longer as the hop crosses countries, never as long as the tour's flight. */
+export const MAP_POINT_CYCLE_PAN_MIN_MS = 900
+export const MAP_POINT_CYCLE_PAN_MAX_MS = 2_200
+/** Roughly +130 ms per 100 km of hop: a cross-town step stays near the floor,
+ *  a continent-wide one reaches the ceiling. */
+const MAP_POINT_CYCLE_PAN_MS_PER_KM = 1.3
+
+export function mapPointCyclePanMs(distanceMeters: number): number {
+  const km = Number.isFinite(distanceMeters) && distanceMeters > 0 ? distanceMeters / 1_000 : 0
+  return Math.round(clamp(
+    MAP_POINT_CYCLE_PAN_MIN_MS + km * MAP_POINT_CYCLE_PAN_MS_PER_KM,
+    MAP_POINT_CYCLE_PAN_MIN_MS,
+    MAP_POINT_CYCLE_PAN_MAX_MS,
+  ))
+}
+
 /**
  * Conservative Web-Mercator framing for an owned pin's takeover disc. The
  * shorter viewport dimension leaves room for the HUD and pitched-ground

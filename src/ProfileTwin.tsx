@@ -873,6 +873,8 @@ export default function ProfileTwin({
   const [notifsClosing, setNotifsClosing] = useState(false)
   const [faceAsk, setFaceAsk] = useState(false)
   const [viewerIdx, setViewerIdx] = useState<number | null>(null)
+  /** The open pop's id, so a snapshot can re-find it rather than close it. */
+  const viewerPostIdRef = useRef<string | null>(null)
   // Your overall radius, for the meter on the free rail: the authoritative
   // account total the map and the shell already share (accountRadius.ts),
   // and every change to it, so the tower and the RADIUS number stay one
@@ -1143,9 +1145,22 @@ export default function ProfileTwin({
   // stable account uid supplied by the opening post/pin; their handle is only
   // a legacy fallback when no uid exists.
   useEffect(() => {
-    setUploadedPosts(profilePostsFromRealtime(realtimePosts, accountUid, viewUser, viewUserId))
+    const next = profilePostsFromRealtime(realtimePosts, accountUid, viewUser, viewUserId)
+    setUploadedPosts(next)
     setUploadedPostsLoaded(true)
-    setViewerIdx(null)
+    // Keep an open pop open. This used to close the viewer on EVERY snapshot,
+    // and opening a pop is itself a snapshot: the view it records bumps the
+    // document's viewCount, the listener re-delivers, and the pop you had
+    // just opened snapped back to the grid — which read as the post crashing
+    // (5 Sep 2026). Re-anchor to the same post by id; only a pop that has
+    // genuinely gone (deleted, or a different account's grid) sends the
+    // viewer home.
+    setViewerIdx(current => {
+      if (current == null) return null
+      const openId = viewerPostIdRef.current
+      const index = openId == null ? -1 : next.findIndex(post => (post.id ?? post.video) === openId)
+      return index >= 0 ? index : null
+    })
   }, [accountUid, realtimePosts, viewUser, viewUserId])
 
   const markTileReady = useCallback((key: string) => {
@@ -2287,6 +2302,7 @@ export default function ProfileTwin({
   const viewerSlot = viewerIdx != null && posts.length ? viewerIdx % posts.length : 0
   const viewerPostIsVideo = viewerPost ? postIsVideo(viewerPost) : false
   const viewerPostId = viewerPost ? (viewerPost.id ?? viewerPost.video) : null
+  viewerPostIdRef.current = viewerPostId
   const viewerPostComments = viewerPostId ? (viewerComments[viewerPostId] ?? []) : []
   // Report the OPEN pop's reach upward, the way the feed already does. Without
   // this the radius card fell through to the account-level total, so opening a

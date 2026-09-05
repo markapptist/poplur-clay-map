@@ -5,7 +5,6 @@ import { awaitNativeUpload, NativeUploadError, type UploadPhase } from './native
 import { AR_FILTERS } from './ARFilters'
 import { CHANNELS } from './FeedTwin'
 import { channelUrl } from './assetPacks'
-import { demoUploadDataUrl, randomDemoUploadPick } from './demoFeedMedia'
 import { playPop } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
 import {
@@ -534,23 +533,15 @@ export default function PostComposer({
     img.src = media.src
   })
 
-  /** What actually gets uploaded. While the live-simulation switch is on this
-   *  is a creative drawn at random from the demo pool instead of the capture —
-   *  a test run should fill the feed and map with the product's own content
-   *  rather than publishing whatever the tester happened to point the camera
-   *  at. The switch off, or a pool asset that will not load, and the real
-   *  capture goes up untouched. */
-  const renderForUpload = async (): Promise<string> => {
-    const pick = randomDemoUploadPick(media.kind)
-    if (pick) {
-      const substituted = await demoUploadDataUrl(pick)
-      if (substituted) {
-        setUploadNote(`Test run: uploading ${pick.sourceId} from the demo pool instead of your capture.`)
-        return substituted
-      }
-    }
-    return bakeCapture()
-  }
+  /** What actually gets uploaded: the capture, with its filter baked in.
+   *  Until 5 Sep 2026 the live-simulation switch swapped this for a creative
+   *  drawn from the demo pool, so a test run would "fill the board with product
+   *  content" — and the poster's own profile then showed a stock ad where the
+   *  photo they had just taken should have been, which the poster read as
+   *  "the post is different from what I posted". What you post is what you
+   *  posted, whatever switch is on; test content comes from the synthetic
+   *  cohort, never from rewriting a real person's upload. */
+  const renderForUpload = (): Promise<string> => bakeCapture()
 
   /** Blob URLs (recordings) cannot cross the native bridge — read the bytes. */
   const asTransferable = async (src: string): Promise<string> => {
