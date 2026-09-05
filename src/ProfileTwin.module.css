@@ -1040,7 +1040,7 @@
   place-items: center;
   border-radius: 50%;
   /* Recessed dark-clay well: the pink/gold 3D clay icon (real geometry from
-     ClayNotifIcon) floats in it and reads with depth against the dark dish. */
+     FlatNotifIcon) sits in it and reads with depth against the dark dish. */
   background: radial-gradient(circle at 50% 38%, #2c161d, #180a10 72%);
   box-shadow:
     inset 0 3px 6px rgba(0, 0, 0, 0.55),
@@ -1048,7 +1048,8 @@
     0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
-/* Holds the ClayNotifIcon <canvas>; the shadow grounds the floating clay mesh. */
+/* Holds the supplied flat notification icon (FlatNotifIcon); the shadow lifts
+   it off the recessed well the same way the clay mesh used to sit in it. */
 .notifIcon3d {
   display: grid;
   place-items: center;
