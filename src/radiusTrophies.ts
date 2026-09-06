@@ -26,14 +26,22 @@ export interface RadiusTrophy {
    *  under public/models/, which never ships to a phone; only the baked
    *  sprite does. */
   model: string
+  /** The metal, as one flat colour a label can be written in. Taken from the
+   *  mid stop of the medal gradients the TV guide already strikes its top
+   *  three in, so a radius label and a leaderboard medal are the same bronze.
+   *  Platinum and diamond continue the run past them: a pale cool white, then
+   *  the ice blue the map's radius label has always been written in — so the
+   *  very top of the tower is where the old fixed colour turns out to have
+   *  belonged all along. */
+  color: string
 }
 
 export const RADIUS_TROPHIES: readonly RadiusTrophy[] = [
-  { tier: 'bronze',   name: 'Bronze',   km: 1,               model: 'models/poplur_trophy_bronze.glb' },
-  { tier: 'silver',   name: 'Silver',   km: 10,              model: 'models/poplur_trophy_silver.glb' },
-  { tier: 'gold',     name: 'Gold',     km: 100,             model: 'models/poplur_trophy_gold.glb' },
-  { tier: 'platinum', name: 'Platinum', km: 1_000,           model: 'models/poplur_trophy_platinum.glb' },
-  { tier: 'diamond',  name: 'Diamond',  km: EARTH_RADIUS_KM, model: 'models/poplur_trophy_diamond.glb' },
+  { tier: 'bronze',   name: 'Bronze',   km: 1,               color: '#c87a3c', model: 'models/poplur_trophy_bronze.glb' },
+  { tier: 'silver',   name: 'Silver',   km: 10,              color: '#c2cdd9', model: 'models/poplur_trophy_silver.glb' },
+  { tier: 'gold',     name: 'Gold',     km: 100,             color: '#f0b429', model: 'models/poplur_trophy_gold.glb' },
+  { tier: 'platinum', name: 'Platinum', km: 1_000,           color: '#e6f0ff', model: 'models/poplur_trophy_platinum.glb' },
+  { tier: 'diamond',  name: 'Diamond',  km: EARTH_RADIUS_KM, color: '#7fe3ff', model: 'models/poplur_trophy_diamond.glb' },
 ]
 
 /** The sprite view every trophy is baked at. One view, so the knob swaps
@@ -90,3 +98,23 @@ export function strikerEase(raw: number): number {
 }
 
 export const STRIKER_MS = 880
+
+/**
+ * What colour a radius is WRITTEN in: the highest trophy that radius has rung.
+ *
+ * A radius label is a statement about how much ground something holds, and
+ * until now it said that in one fixed ice blue whatever the number was — the
+ * colour of the top of the tower, worn by a 0.4 km pop. It now wears the metal
+ * it has actually earned, so the label and the trophy on the striker rail
+ * agree, and a radius climbing past a decade is visible as a change of metal
+ * rather than only as a bigger number.
+ *
+ * BELOW BRONZE it is not silver-with-the-lights-off, it is YOUR COLOUR: a pop
+ * too small to have rung anything is still yours, and the map already paints
+ * your pins, your ground and your zoom rail in that one colour. `own` is that
+ * colour — pass the viewer's takeover colour.
+ */
+export function radiusTrophyColor(radiusKm: number, own: string): string {
+  if (!Number.isFinite(radiusKm)) return own
+  return radiusTrophyFor(radiusKm)?.color ?? own
+}

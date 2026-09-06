@@ -211,6 +211,7 @@ import {
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
 import ClayChannelArrows from './ClayChannelArrows'
+import { radiusTrophyColor, radiusTrophyFor } from './radiusTrophies'
 import ClayArrowCluster from './ClayArrowCluster'
 import clusterStyles from './ClayArrowCluster.module.css'
 import { responsiveChannelControlSize } from './channelControlSizing'
@@ -5264,6 +5265,14 @@ export default function MapApp() {
               // measuring the label rather than the radius.
               data-map-point-radius-km={focusedMapPoint.radiusKm}
               data-map-point-radius-display={preferMiles ? 'mi' : 'km'}
+              // The label wears the METAL this radius has earned. On the
+              // current-location stop that is your overall radius, so the
+              // colour is your own trophy; step onto a pin with the ◀ ▶ arrows
+              // and it becomes that pin's. Below bronze there is no metal yet
+              // and it wears your colour, the one your pins and your ground
+              // are already painted in.
+              data-map-point-radius-tier={radiusTrophyFor(focusedMapPoint.radiusKm)?.tier ?? 'own'}
+              style={{ '--radiusTrophyColor': radiusTrophyColor(focusedMapPoint.radiusKm, myColor) } as React.CSSProperties}
             >
               {(() => {
                 const shown = preferMiles ? focusedMapPoint.radiusKm * KM_TO_MI : focusedMapPoint.radiusKm

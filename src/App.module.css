@@ -1160,12 +1160,17 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, .45), 0 0 0 2px rgba(255, 255, 255, .9);
 }
 
+/* The metal this radius has earned — see radiusTrophyColor. The fixed ice
+   blue that used to be here is now diamond's colour, so a world-radius pop
+   still reads exactly as it always did and everything below it finally reads
+   as something. The glow is drawn from the same colour rather than a second
+   hard-coded blue, so bronze glows bronze. */
 .mapPointCardRadius {
   margin-top: 3px;
-  color: #7fe3ff;
+  color: var(--radiusTrophyColor, #7fe3ff);
   font: 950 11px/1 ui-monospace, 'SF Mono', Menlo, monospace;
   letter-spacing: .06em;
-  text-shadow: 0 0 8px rgba(74, 196, 255, .58);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--radiusTrophyColor, #7fe3ff) 58%, transparent);
 }
 
 /* Pop traversal arrows, sitting under the pin the camera has centred.
