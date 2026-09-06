@@ -289,6 +289,8 @@ export interface PopPin {
    *  pin renders translucent (ghosted) and cannot be opened. */
   ghost?: boolean
   /** The poster's chosen pin model colour; absent keeps the original pink. */
+  /** The earned half of this pop's reach, when the source knows it. */
+  organicRadiusKm?: number
   pinColor?: PinColorId
   /** Exact emulator post id used only by the first-user Test Center proof. */
   syntheticPostId?: string

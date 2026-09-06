@@ -32,6 +32,8 @@ export interface NativeFeedPost {
   caption?: string
   channelId: string
   radiusMeters?: number
+  /** The EARNED half of the reach: entitlement, excluding the discovery seed. */
+  organicRadiusMeters?: number
   createdAtMillis: number
   viewCount?: number
   likeCount?: number
@@ -162,6 +164,9 @@ function normalizeFeedPost(
   // untagged pop goes to the general channel instead.
   const channelId = boundedText(row.channelId, 40) ?? DEFAULT_FEED_CHANNEL
   const radiusMeters = finite(row.radiusMeters ?? row.radius ?? row.organicRadiusMeters)
+  // Kept separate from the total: the create rule counts this alone as claim
+  // entitlement, so the picker has to be bounded by it and not by whole reach.
+  const organicRadiusMeters = finite(row.organicRadiusMeters)
   const declaredMediaType = boundedText(row.mediaType, 16)?.toLowerCase()
   const imageURL = /\.(?:avif|gif|heic|heif|jpe?g|png|webp)(?:[?#]|$)/i.test(mediaURL)
   const mediaType: NativeFeedPost['mediaType'] = declaredMediaType === 'photo'
@@ -200,6 +205,9 @@ function normalizeFeedPost(
     username: usernameValue.startsWith('@') ? usernameValue : `@${usernameValue}`,
     caption: boundedText(row.caption, 2_000),
     channelId,
+    organicRadiusMeters: organicRadiusMeters == null
+      ? undefined
+      : clampRadiusMeters(organicRadiusMeters),
     radiusMeters: radiusMeters == null
       ? undefined
       : clampRadiusMeters(radiusMeters),

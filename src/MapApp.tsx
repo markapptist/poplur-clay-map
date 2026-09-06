@@ -186,6 +186,7 @@ function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; ra
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaimGroup, onClaimsSettled, setClaim } from './mapClaims'
 import { EARTH_RADIUS_KM, clampRadiusKm } from './worldRadius'
+import { CLAIM_RADIUS_SEED_KM } from './claimRadius'
 import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin, installPinSpotlight, updatePinSpotlight, pulsePinSpotlight } from './ClayMap'
 import WeatherMark from './WeatherMark'
 import { weatherIconIdForCode, weatherIconIdForMode } from './sideControlIcons'
@@ -3190,11 +3191,25 @@ export default function MapApp() {
   // reach-filtered out of it, so this counts every pop the map can see. A pop
   // the shell has not forwarded would still be missed — an undercount, but a
   // truthful one, where the old path was categorically zero.
+  /** A pop's claim entitlement: what engagement earned it, never its seed. */
+  const earnedRadiusKmFromPin = useCallback((pin: { radiusKm: number; organicRadiusKm?: number }) => {
+    // A relay that predates the split sends no earned figure. Fall back to the
+    // discovery seed being the whole of it — entitlement zero — rather than to
+    // the total, which is the assumption that caused the refusals.
+    if (pin.organicRadiusKm == null) return Math.max(0, pin.radiusKm - CLAIM_RADIUS_SEED_KM)
+    return Math.max(0, pin.organicRadiusKm)
+  }, [])
   useEffect(() => {
     if (!rnWebShellRoute && !nativeShell) return
     const mine = liveMapPosts.filter(pin => pin.mine)
     setAccountRadiusSnapshot({
-      radiusKm: mine.reduce((sum, pin) => sum + pin.radiusKm, 0),
+      // EARNED radius only, the same sum the web path takes
+      // (radiusKmFromAccountPost) and the same one the create rule enforces.
+      // Summing whole reach here counted every post's discovery seed as claim
+      // entitlement, so the picker offered roughly 5km per post more than the
+      // server would accept and the drop came back "Missing or insufficient
+      // permissions" — worse after every post, since each one widened the gap.
+      radiusKm: mine.reduce((sum, pin) => sum + earnedRadiusKmFromPin(pin), 0),
       postCount: mine.length,
     })
   }, [liveMapPosts, nativeShell, rnWebShellRoute])

@@ -167,6 +167,11 @@ export function normalizeLiveMapPost(
   // document minted at the planet's circumference still reads as a radius
   // the counter can show "of 3,959 mi".
   const radiusKm = clampRadiusMeters(rawRadius) / 1_000
+  // The EARNED half, kept apart from the total. Claim entitlement is summed
+  // from this alone (the create rule does the same), so a picker bounded by it
+  // can never offer ground the server will refuse.
+  const rawOrganic = finite(row.organicRadiusMeters)
+  const organicRadiusKm = rawOrganic == null ? undefined : clampRadiusMeters(rawOrganic) / 1_000
   const handleSource = text(row.username ?? row.handle ?? row.displayName, 48)
   const user = handleSource
     ? (handleSource.startsWith('@') ? handleSource : `@${handleSource}`)
@@ -216,6 +221,7 @@ export function normalizeLiveMapPost(
     name,
     coords: [longitude, latitude],
     radiusKm,
+    organicRadiusKm,
     color: ownerColor(ownerId),
     avatar,
     engagement: {
