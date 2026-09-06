@@ -1,5 +1,4 @@
 import { dominancePower } from './mapDominance'
-import { ownershipTerrainMask } from './ownershipTerrain'
 
 /**
  * The building renderer needs more than the ground fill's binary
@@ -64,9 +63,40 @@ export function buildingClaimColorExpression(
   const branches: unknown[] = []
   for (const claim of ordered) {
     branches.push(
-      ['within', ownershipTerrainMask(claim.center, claim.radiusKm)],
+      claimReachTest(claim.center, claim.radiusKm),
       claim.color || ownColor,
     )
   }
   return ['case', ...branches, unclaimedColor]
+}
+
+/**
+ * Is the building standing on this claim's ground?
+ *
+ * This used to ask `['within', ownershipTerrainMask(…)]`, and the answer was
+ * ALWAYS NO. Mapbox evaluates `within` only for Point and LineString features;
+ * a Polygon feature — which is every building footprint, and every park — can
+ * never satisfy it, however completely it sits inside the boundary. The
+ * expression installed cleanly, cost a 145-vertex ring per claim, and silently
+ * returned false forever, so a claimed building has never once worn its
+ * owner's colour. Verified 6 Sep by putting the same test on the grass layer:
+ * with `within`, parks a metre from the centre stayed unclaimed; with
+ * `distance`, they took the claimed colour and parks outside the radius kept
+ * the plain one.
+ *
+ * `distance` returns metres from the drawn feature to the input geometry and
+ * DOES evaluate for polygons. Measuring to the claim's centre point also drops
+ * the ring entirely: a claim costs two coordinates here instead of 145, which
+ * is the difference between a few hundred bytes of paint expression and the
+ * 430KB the ground layers were carrying at a full board.
+ *
+ * Nearest-point semantics are deliberate for a footprint. A building the
+ * claim's edge cuts through is standing on claimed ground, and colouring it
+ * whole is both truer and steadier than letting it flicker as the boundary
+ * grows across it. (The road layers keep `within`: a street is long enough
+ * that nearest-point would drag claimed colour well past the edge, and lines
+ * are the one geometry `within` actually answers for.)
+ */
+function claimReachTest(center: [number, number], radiusKm: number): unknown {
+  return ['<=', ['distance', { type: 'Point', coordinates: center }], radiusKm * 1000]
 }

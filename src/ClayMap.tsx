@@ -87,7 +87,7 @@ import { preferredLandmarkRendererId } from './landmarkRendererSelection'
 import { playPop } from './pop'
 import { spreadOverlappingPins } from './pinSpread'
 import { feedPostIdFromPinId, isPostSeen, onSeenPostsChange } from './seenPosts'
-import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim, pulseDominanceLayer, CLAIM_GROWTH_MS, CLAIM_DECAY_MS } from './mapClaims'
+import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, claimedGroundTest, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim, pulseDominanceLayer, CLAIM_GROWTH_MS, CLAIM_DECAY_MS } from './mapClaims'
 import { ownershipTerrainPolygon } from './ownershipTerrain'
 import { fitZoomForRadius } from './mapFitZoom'
 import {
@@ -637,7 +637,14 @@ function applyTheme(map: mapboxgl.Map, theme: MapTheme, night = mapNightModeActi
     claimFeatures.features.length
       ? ['case', ['within', claimFeatures], claimed, normal]
       : normal
-  set('clay-grass-fill', 'fill-color', claimedPaint(palette.park, takeoverTint('#D85D96')))
+  // Parks are polygons, and `within` never answers for those — so grass asks
+  // the distance test instead. Roads below stay on `within`: lines are the
+  // geometry it does answer for, and nearest-point would drag claimed colour
+  // far past the boundary along a single street.
+  const groundTest = claimedGroundTest(map)
+  set('clay-grass-fill', 'fill-color', groundTest
+    ? ['case', groundTest, takeoverTint('#D85D96'), palette.park]
+    : palette.park)
   // Claimed territory keeps its takeover colours through every theme/day
   // re-apply: streets fully inside a claim mold in Poplur plum, and claimed
   // buildings re-mold pink — the theme only styles the UNCLAIMED branch.
@@ -5147,11 +5154,17 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           // `within false` is not valid, so an empty board hands every layer
           // its plain colour directly.
           const claimed = (taken: unknown, plain: unknown) => (held ? ['case', w, taken, plain] : plain)
+          // Roads keep `within` (lines are what it answers for); grass is a
+          // polygon layer and needs the distance test, or it stays the plain
+          // park colour no matter whose ground it is standing on.
+          const groundTest = claimedGroundTest(map)
           sets = [
             ['clay-real-road-body', 'line-color', claimed(takeoverTint('#8a2260'), palette.road)],
             ['clay-minor-roads', 'line-color', claimed(takeoverTint('#9c2a6e'), palette.road)],
             ['clay-real-road-rim', 'line-color', claimed(takeoverTint('#ff9ccd'), palette.roadRim)],
-            ['clay-grass-fill', 'fill-color', claimed(takeoverTint('#D85D96'), palette.park)],
+            ['clay-grass-fill', 'fill-color', groundTest
+              ? ['case', groundTest, takeoverTint('#D85D96'), palette.park]
+              : palette.park],
             ...buildingSets,
           ]
         }

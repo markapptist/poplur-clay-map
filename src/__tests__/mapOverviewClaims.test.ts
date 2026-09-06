@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
+import {
+  DOMINANCE_DETAIL_MIN_ZOOM,
+  DOMINANCE_OVERVIEW_MAX_ZOOM,
+  dominanceOverviewWashOpacityAtZoom,
+} from '../mapDominance'
 
 const read = (name: string) => readFileSync(new URL(`../${name}`, import.meta.url), 'utf8')
 
@@ -28,7 +33,22 @@ describe('the overview draws claims above the streets', () => {
     // Off entirely by the detail zoom, so close in exactly one claim wash is
     // on screen — the established one, under the streets.
     expect(claims).toMatch(/id: CLAIMS_OVERVIEW,[\s\S]{0,400}maxzoom: DOMINANCE_DETAIL_MIN_ZOOM,/)
-    expect(claims).toMatch(/DOMINANCE_OVERVIEW_MAX_ZOOM, 0\.82,\s*\n\s*DOMINANCE_DETAIL_MIN_ZOOM, 0,/)
+    expect(claims).toContain('dominanceOverviewWashOpacityExpression()')
+    expect(dominanceOverviewWashOpacityAtZoom(DOMINANCE_DETAIL_MIN_ZOOM)).toBe(0)
+  })
+
+  it('stays a wash rather than becoming a lid', () => {
+    // The ground fill under it is already fully opaque at these zooms, so this
+    // pass exists only to lift the colour above a dense clay road web. At its
+    // original 0.82 it buried the roads, the coast and the water with them,
+    // and held territory read as a flat 2D disc pasted over the map — the
+    // thing it stops looking like the moment you zoom in and the city sits on
+    // top of the colour again. Well under half keeps the map a map.
+    const wash = dominanceOverviewWashOpacityAtZoom(DOMINANCE_OVERVIEW_MAX_ZOOM)
+    expect(wash).toBeGreaterThan(0.3)
+    expect(wash).toBeLessThan(0.55)
+    // And it only ever fades on the way in, never strengthens.
+    expect(dominanceOverviewWashOpacityAtZoom(7.4)).toBeLessThan(wash)
   })
 
   it('repaints with the takeover colour like every other claim layer', () => {

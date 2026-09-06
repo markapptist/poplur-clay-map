@@ -4,7 +4,6 @@ import {
   buildingClaimColorExpression,
   dominantBuildingClaims,
 } from '../buildingClaimDominance'
-import { ownershipTerrainMask } from '../ownershipTerrain'
 
 describe('building claim dominance', () => {
   it('selects by dominance, then lets the most LOCAL claim win an overlap', () => {
@@ -47,12 +46,21 @@ describe('building claim dominance', () => {
     const expression = buildingClaimColorExpression(claims, '#FF4BA1', '#C3A67E') as unknown[]
     expect(expression).toHaveLength(2 + MAX_VISIBLE_BUILDING_CLAIMS * 2)
     // Selection is by dominance (asserted above); the BRANCH order is by
-    // locality, so the first `within` is the most local of the selected set.
+    // locality, so the first test is the most local of the selected set.
+    //
+    // The test is `distance`, not `within`. Mapbox evaluates `within` only for
+    // Point and LineString features, and a building footprint is a Polygon, so
+    // the old ring-based branch could never match — claimed buildings simply
+    // never changed colour. Measuring metres to the claim's CENTRE also drops
+    // the 13-vertex mask per claim down to two coordinates, which is what
+    // keeps this expression small enough to hand a phone at the cap.
     const mostLocal = [...ordered].sort((a, b) => a.radiusKm - b.radiusKm)[0]
-    const firstWithin = expression[1] as [string, GeoJSON.FeatureCollection<GeoJSON.Polygon>]
-    expect(firstWithin[0]).toBe('within')
-    expect(firstWithin[1].features[0].geometry.coordinates[0]).toHaveLength(13)
-    expect(firstWithin[1]).toEqual(ownershipTerrainMask(mostLocal.center, mostLocal.radiusKm))
+    const firstTest = expression[1] as [string, [string, GeoJSON.Point], number]
+    expect(firstTest[0]).toBe('<=')
+    expect(firstTest[1][0]).toBe('distance')
+    expect(firstTest[1][1]).toEqual({ type: 'Point', coordinates: mostLocal.center })
+    // Metres, because that is what `distance` returns.
+    expect(firstTest[2]).toBe(mostLocal.radiusKm * 1000)
   })
 
   it('returns the ordinary building palette untouched when no claim applies', () => {

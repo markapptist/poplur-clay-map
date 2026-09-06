@@ -3,12 +3,14 @@ import { takeoverTint } from './takeoverColor'
 import { ambientAllowed, onFrame } from './frameGovernor'
 import {
   buildingClaimColorExpression,
+  MAX_VISIBLE_BUILDING_CLAIMS,
 } from './buildingClaimDominance'
 import {
   DOMINANCE_DETAIL_MIN_ZOOM,
   DOMINANCE_GROUND_SLOT,
   DOMINANCE_OVERVIEW_MAX_ZOOM,
   dominanceFillOpacityExpression,
+  dominanceOverviewWashOpacityExpression,
   dominanceInsertBefore,
   dominancePower,
   groundPaintOrder,
@@ -361,12 +363,9 @@ export function installClaimsLayer(map: mapboxgl.Map) {
     paint: {
       'fill-color': claimColor('#D93D89') as never,
       // A wash, not a lid: the road web and coastline still read through it,
-      // so the map stays a map and the colour says who holds it.
-      'fill-opacity': [
-        'interpolate', ['linear'], ['zoom'],
-        DOMINANCE_OVERVIEW_MAX_ZOOM, 0.82,
-        DOMINANCE_DETAIL_MIN_ZOOM, 0,
-      ] as never,
+      // so the map stays a map and the colour says who holds it. It was
+      // written as a wash and set at a lid's strength — see the constant.
+      'fill-opacity': dominanceOverviewWashOpacityExpression() as never,
     },
   })
 
@@ -529,6 +528,35 @@ export function claimsWithinCollection(): GeoJSON.FeatureCollection {
     type: 'FeatureCollection',
     features: mine().map(c => ownershipTerrainPolygon(c.center, c.radiusKm)),
   }
+}
+
+/**
+ * The same question for POLYGON layers — parks, and anything else drawn as an
+ * area rather than a line.
+ *
+ * `within` cannot answer it. Mapbox evaluates that operator only for Point and
+ * LineString features, so the collection above — correct, and correctly
+ * installed — has always returned false for every park on the map. Grass has
+ * therefore never taken its claimed colour, in any build. `distance` does
+ * evaluate for polygons, and measured to the claim's centre it needs two
+ * coordinates per claim rather than a 145-vertex ring.
+ *
+ * Bounded the same way the building expression is: world-radius claims describe
+ * reach rather than land (see `paintsGround`), and only claims that can touch
+ * the settled camera are worth carrying. Returns null when nothing is claimed
+ * here, which is the caller's signal to paint the plain palette rather than
+ * wrap it in a test that can only ever be false.
+ */
+export function claimedGroundTest(map: mapboxgl.Map): unknown | null {
+  const here = mine()
+    .filter(paintsGround)
+    .filter(claim => claimTouchesViewport(map, claim))
+    .sort((a, b) => b.radiusKm - a.radiusKm)
+    .slice(0, MAX_VISIBLE_BUILDING_CLAIMS)
+  if (!here.length) return null
+  return ['any', ...here.map(claim => (
+    ['<=', ['distance', { type: 'Point', coordinates: claim.center }], claim.radiusKm * 1000]
+  ))]
 }
 
 /**
