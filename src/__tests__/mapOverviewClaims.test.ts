@@ -49,6 +49,23 @@ describe('claimed ground is not painted over the map', () => {
     expect(Number(width?.[1])).toBeGreaterThanOrEqual(1.2)
   })
 
+  it('cases that boundary in a dark line at scoreboard zooms', () => {
+    // The border is drawn in the OWNER's colour, and owner colours are pale
+    // mid-value hues on mid-value green land — so weight alone cannot make
+    // territory readable from the air. Measured at z5: widening the border
+    // from 0.6px to 2.6px changed nothing visible, while forcing the same
+    // geometry to #ff0000 showed every claim plainly. A dark casing gives any
+    // hue something to read against, and a line can never become a lid.
+    expect(claims).toContain("const CLAIMS_EDGE_CASING = 'poplur-claims-edge-casing'")
+    expect(claims).toMatch(/id: CLAIMS_EDGE_CASING,[\s\S]{0,400}maxzoom: DOMINANCE_DETAIL_MIN_ZOOM,/)
+    // Wider than the border it sits under, or it would not show at all.
+    const casing = claims.match(/id: CLAIMS_EDGE_CASING,[\s\S]*?'line-width': \['interpolate', \['linear'\], \['zoom'\], 3, ([\d.]+)/)
+    const edge = claims.match(/'line-width': \['interpolate', \['linear'\], \['zoom'\], 3, ([\d.]+), 7, 3,/)
+    expect(casing).not.toBeNull()
+    expect(edge).not.toBeNull()
+    expect(Number(casing?.[1])).toBeGreaterThan(Number(edge?.[1]))
+  })
+
   it('repaints with the takeover colour like every other claim layer', () => {
     expect(claims).toContain("set(CLAIMS_FILL, 'fill-color', claimColor('#D93D89'))")
   })

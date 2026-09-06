@@ -53,6 +53,7 @@ const CLAIMS_FILL = 'poplur-claims-fill'
 const CLAIMS_REVEAL = 'poplur-claims-reveal'
 const CLAIMS_TEXTURE = 'poplur-claims-texture'
 const CLAIMS_EDGE = 'poplur-claims-edge'
+const CLAIMS_EDGE_CASING = 'poplur-claims-edge-casing'
 const CLAIMS_OVERVIEW = 'poplur-claims-overview'
 const CLAIMS_TEXTURE_IMAGE = 'poplur-claims-hatch'
 // Removed ownership-circle renderer ids are retained only as a one-way cleanup
@@ -311,6 +312,32 @@ export function installClaimsLayer(map: mapboxgl.Map) {
   // No new geometry and no new source: it is the same polygon the fill already
   // draws, stroked. Not gated on liteTier — a hairline is cheap, and the A03 is
   // exactly where a hard-covered clash is least legible.
+  // A dark casing UNDER that border, at scoreboard zooms only.
+  //
+  // The border alone cannot carry territory from the air, because it is drawn
+  // in the owner's colour and owner colours are pale mid-value hues on a
+  // mid-value green land: measured at z5, widening it from 0.6px to 2.6px
+  // changed nothing a viewer could see, while forcing the same geometry to
+  // #ff0000 showed every claim plainly. Contrast, not weight, was missing.
+  //
+  // A casing is the standard answer and it cannot become a lid: a dark line a
+  // little wider than the border gives every hue something to read against,
+  // whatever the owner picked and whatever the terrain underneath is doing.
+  // Off by the detail zoom, where the surfaces themselves carry ownership and
+  // a heavy outline would only fight them.
+  map.addLayer({
+    id: CLAIMS_EDGE_CASING,
+    slot: DOMINANCE_GROUND_SLOT,
+    type: 'line',
+    source: CLAIMS_SOURCE,
+    maxzoom: DOMINANCE_DETAIL_MIN_ZOOM,
+    paint: {
+      'line-color': 'rgba(24, 6, 18, 0.72)' as never,
+      'line-width': ['interpolate', ['linear'], ['zoom'], 3, 5, 7, 5.5, 7.5, 3] as never,
+      'line-blur': 0.4,
+    },
+  }, claimsInsertBefore(map))
+
   map.addLayer({
     id: CLAIMS_EDGE,
     slot: DOMINANCE_GROUND_SLOT,
@@ -321,12 +348,17 @@ export function installClaimsLayer(map: mapboxgl.Map) {
       // Thin enough to read as a border rather than a second fill, and it
       // holds its weight as the camera pulls out to world scale.
       //
-      // It carries more out there than it used to. With the overview wash gone
-      // this line IS the boundary at scoreboard zooms — the point where one
-      // owner's ground stops and the next begins — and at 0.6px it was a
-      // hairline nobody could see, which is part of why territory read as a
-      // soft smear rather than as a bounded region.
-      'line-width': ['interpolate', ['linear'], ['zoom'], 3, 1.4, 7, 2, 10, 1.8, 16, 2.4] as never,
+      // It carries the whole read out there now. With the overview wash gone
+      // this line IS the territory at scoreboard zooms, because the FILL
+      // cannot do it: owner colours are pale mid-value hues (#5FB0FF,
+      // #7CE04F, #4FD6B8) and the clay land is a mid-value green, so an
+      // opaque claim over land is nearly the same tone as the land beside it.
+      // Measured 6 Sep at z5 — forcing the same fill to #ff0000 showed the
+      // claims plainly; in their real colours the identical patches were
+      // invisible. That is a contrast problem, not a rendering one, and a
+      // border is the cartographic answer to it: an outlined region reads at
+      // any size and can never cover the map the way the wash did.
+      'line-width': ['interpolate', ['linear'], ['zoom'], 3, 2.6, 7, 3, 10, 2, 16, 2.4] as never,
       'line-opacity': 1,
     },
   }, claimsInsertBefore(map))
