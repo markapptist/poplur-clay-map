@@ -63,6 +63,29 @@ describe('one arrow cluster, one place, three screens', () => {
     expect(feed).toMatch(/<PostActionRail[\s\S]{0,600}head=\{post \?/)
   })
 
+  it('never unmounts a live control to hide it', () => {
+    // The feed's arrows are driven by the synthetic cohort through their role
+    // and aria-labels. Gating them on playerMode both changed behaviour nobody
+    // asked for and destroyed the control mid-session; a screen that wants
+    // them out of the way makes them inert (clusterHidden), as the map's news
+    // stop does.
+    expect(feed).not.toContain('{!playerMode && (\n          <ClayArrowCluster')
+    expect(clusterCss).toContain('.clusterHidden')
+    expect(clusterCss).toContain('visibility: hidden')
+  })
+
+  it('keeps the aria contract the synthetic cohort drives the feed by', () => {
+    // synthetic-live-runner reads the channel as the group's first <span>
+    // child and clicks by exact label; breaking either silently strands the
+    // beta cohort on the wrong channel.
+    expect(feed).toContain('aria-label="Channel and post controls"')
+    expect(feed).toContain('upLabel="Channel up"')
+    expect(feed).toContain('rightLabel="Next post"')
+    expect(cluster).toContain("role=\"group\"")
+    // The vertical readout must stay a direct child, and come first.
+    expect(cluster.indexOf('styles.topNumber')).toBeLessThan(cluster.indexOf("arrow('up', upLabel)"))
+  })
+
   it('does not leave the replaced steppers behind to be edited by mistake', () => {
     for (const source of [camera, feed]) {
       expect(source).not.toContain('CameraStepControls')

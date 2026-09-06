@@ -2323,8 +2323,15 @@ export default function FeedTwin({
             television, so up on the cluster and up on the dial opposite are
             the same direction — and ◀ ▶ step through the people posting on
             this channel. It replaces the six-row column that used to hang
-            under the left rail. */}
-        {!playerMode && (
+            under the left rail.
+
+            Rendered unconditionally, exactly as the stepper it replaces was.
+            An earlier draft of this gated it on !playerMode, which was a
+            behaviour nobody asked for and which UNMOUNTED a live control: the
+            synthetic cohort drives these arrows by role and would have raced
+            the remount, and this codebase's rule is to make a control inert,
+            never to destroy it to hide it. */}
+        {(
           <ClayArrowCluster
             size={responsiveChannelControlSize()}
             aria-label="Channel and post controls"
