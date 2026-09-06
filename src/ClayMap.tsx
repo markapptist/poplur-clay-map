@@ -1079,6 +1079,12 @@ function takeoverInsertBefore(map: mapboxgl.Map): string | undefined {
  *  parked one lands the whole pass well inside a second. */
 const CLAIM_PAINT_STALL_MS = 60
 
+/** How many times one layer may wait for a busy style before the walk gives up
+ *  on it and moves on. A claim expression keeps `isStyleLoaded()` false for
+ *  ~120ms, so a handful of waits covers the ordinary case; the cap only exists
+ *  so a style that never settles cannot hold the pass open. */
+const CLAIM_PAINT_MAX_STALLS = 12
+
 const PIN_SPOTLIGHT_SOURCE = 'poplur-pin-spotlight'
 const PIN_SPOTLIGHT_FILL = 'poplur-pin-spotlight-fill'
 const PIN_SPOTLIGHT_EDGE = 'poplur-pin-spotlight-edge'
@@ -5151,7 +5157,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         }
         const generation = ++claimPaintQueue
         if (!buildingsOnly) fullClaimPaintActive = true
-        const step = (i: number) => {
+        const step = (i: number, waited = 0) => {
           if (generation !== claimPaintQueue) return
           if (i >= sets.length) {
             if (!buildingsOnly) {
@@ -5164,8 +5170,32 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             return
           }
           const [layer, prop, value] = sets[i]
+          // A busy style WAITS its turn; it does not lose it.
+          //
+          // Writing one claim expression leaves Mapbox recalculating for 60ms
+          // to 120ms, and `isStyleLoaded()` is false for that whole window —
+          // which is longer than this walk's own step. So the first write made
+          // the style busy and every layer behind it failed the readiness test
+          // and was SILENTLY DROPPED, the walk advancing past each one. One
+          // settle therefore repainted exactly one layer, and since a repeated
+          // live push produces an identical source (no settle notification at
+          // all), the rest never caught up: the claim disc was the only thing
+          // on the map that ever changed colour, which is precisely the "it is
+          // just a circle covering the earth" the takeover recolour exists to
+          // avoid. Measured 6 Sep with 75 own claims on the board and the
+          // camera inside one: grass green, both road layers black, buildings
+          // cream, and a single layer — a different one each pass — wearing
+          // the takeover.
+          //
+          // Retrying the SAME index is the whole fix. It is bounded so a style
+          // that never finishes cannot spin, and a missing layer still skips
+          // immediately (that one is permanent, not a busy signal).
+          if (!map.isStyleLoaded() && waited < CLAIM_PAINT_MAX_STALLS) {
+            advanceClaimPaint(() => step(i, waited + 1))
+            return
+          }
           try {
-            if (map.isStyleLoaded() && map.getLayer(layer)) {
+            if (map.getLayer(layer)) {
               // Writing the value the layer ALREADY carries is not free: Mapbox
               // does not compare, it dirties the layer and draws a frame. Most
               // claim settles land here with nothing to say — roads and grass
