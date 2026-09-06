@@ -34,6 +34,29 @@
 .left { left: max(12px, env(safe-area-inset-left, 0px)); }
 .right { right: max(12px, env(safe-area-inset-right, 0px)); }
 
+/* ── Full screen: the tower an OPENED pop is measured on ───────────────────
+   Over the grid the tower is 200px, flanking the avatar column. An opened pop
+   is a full-screen picture and its action rail opposite runs the whole column
+   (TabControlRail's .fill), so the meter beside it does too — otherwise you
+   are reading a pop that fills the screen off a tower that occupies a fifth
+   of it, and the trophies sit so close together that the climb is unreadable.
+
+   The two guides are the SAME variables that rail uses, not numbers measured
+   to match it: the header line down to the home chrome. That bottom is what
+   keeps the tower clear of the RADIUS card and the browse arrows in the
+   corners, and it is one edit, not two, if the chrome ever moves.
+
+   `height: auto` is the point of the pair — the base rule's capped height
+   would otherwise win and the bottom guide would do nothing. */
+.fill {
+  top: var(
+    --poplur-feed-action-top,
+    max(154px, calc(env(safe-area-inset-top, 0px) + 112px))
+  );
+  bottom: var(--poplur-home-clearance, 200px);
+  height: auto;
+}
+
 .rail {
   position: relative;
   width: var(--zoom-track-size);

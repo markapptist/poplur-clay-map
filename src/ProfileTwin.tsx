@@ -2922,10 +2922,16 @@ export default function ProfileTwin({
         radiusKm={meterRadiusKm}
         subjectKey={meterSubjectKey}
         label={meterLabel}
-        // Exactly the control rail's height: it flanks the picture the way
-        // the buttons opposite do, and ends before the grid begins.
-        span={profileRailSpan}
-        thumbSize={44}
+        // Two towers, because there are two pictures to flank. Over the GRID it
+        // is exactly the control rail's height, ending before the grid begins.
+        // Over an OPENED pop the picture is the whole screen and the action
+        // rail opposite runs the whole column, so the meter does too: a pop
+        // filling the screen was being measured on a fifth of one, with the
+        // five trophies bunched too close to read the climb. Full screen it
+        // takes the map's own 68px knob, the size that tower wears.
+        fill={Boolean(viewerPost)}
+        span={viewerPost ? undefined : profileRailSpan}
+        thumbSize={viewerPost ? 68 : 44}
       />
 
       {/* ── Fullscreen post viewer — channel arrows browse posts. ── */}

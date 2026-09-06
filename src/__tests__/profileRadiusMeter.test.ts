@@ -37,14 +37,36 @@ describe('the profile radius meter is the map’s striker, in sync with the radi
     expect(radiusMeterLevel(6_371)).toBeCloseTo(1, 6)
   })
 
-  it('stands exactly as tall as the control rail opposite, above the grid, wearing a rail-sized trophy', () => {
+  it('over the GRID stands exactly as tall as the control rail opposite, wearing a rail-sized trophy', () => {
     // Profile overrides the default rail to span the 200px avatar.
     expect(profile).toContain('const profileRailSpan = 200')
     expect(read('../ProfileTwin.module.css')).toContain('top: var(--profile-control-top);')
-    expect(profile).toContain('span={profileRailSpan}')
-    expect(profile).toContain('thumbSize={44}')
+    expect(profile).toContain('span={viewerPost ? undefined : profileRailSpan}')
+    expect(profile).toContain('thumbSize={viewerPost ? 68 : 44}')
     expect(rail).toContain("'--mapControlSpan': `${Math.max(0, Math.round(span))}px`")
     expect(railCss).toContain('top: var(--profile-control-top')
+  })
+
+  it('over an OPENED pop stands the full screen, on the guides the post’s own action rail uses', () => {
+    // An opened pop is a full-screen picture; measuring it on the grid's 200px
+    // tower bunched the five trophies into a fifth of the screen.
+    expect(profile).toContain('fill={Boolean(viewerPost)}')
+    expect(rail).toContain('fill = false')
+    expect(rail).toContain('${fill ? styles.fill : \'\'}')
+    // `span` is ignored while filling — publishing it would leave the capped
+    // height rule fighting the bottom guide.
+    expect(rail).toContain("...(span != null && !fill ? { '--mapControlSpan'")
+    // The SAME two variables the action rail opposite is hung from
+    // (TabControlRail's .fill), not numbers measured to match it.
+    const fillRule = railCss.slice(railCss.indexOf('.fill {'))
+    expect(fillRule).toContain('--poplur-feed-action-top')
+    expect(fillRule).toContain('bottom: var(--poplur-home-clearance')
+    // Without this the base rule's capped height wins and the bottom guide
+    // does nothing at all.
+    expect(fillRule.slice(0, fillRule.indexOf('}'))).toContain('height: auto')
+    expect(read('../TabControlRail.module.css')).toContain('--poplur-feed-action-top,')
+    // Still a meter: going full screen does not make it a control.
+    expect(rail).not.toContain('onPointerDown')
   })
 
   it('re-climbs from the foot for a new subject and never takes a pointer', () => {

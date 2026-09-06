@@ -52,6 +52,7 @@ export default function RadiusStrikerRail({
   subjectKey,
   label,
   span,
+  fill = false,
   thumbSize = THUMB_FALLBACK_PX,
 }: {
   /** Which edge the tower stands on — the one the control rail is not on. */
@@ -66,6 +67,12 @@ export default function RadiusStrikerRail({
    *  gaps — so the two flank the page as one pair. Omitted, it takes the
    *  map rail's span. */
   span?: number
+  /** Stand the tower up the whole screen instead of at `span`, on the same two
+   *  guides the opened post's action rail uses opposite it — header line down
+   *  to the home chrome. An opened pop is a full-screen picture, so the meter
+   *  that measures it is a full-screen tower; `span` is ignored while this is
+   *  set. */
+  fill?: boolean
   /** The trophy's size; the map's knob is 68px, a rail-sized tower wears a
    *  44px one so it reads as another side button. */
   thumbSize?: number
@@ -199,7 +206,7 @@ export default function RadiusStrikerRail({
   return (
     <div
       ref={wrapRef}
-      className={`${styles.wrap} ${side === 'right' ? styles.right : styles.left}`}
+      className={`${styles.wrap} ${fill ? styles.fill : ''} ${side === 'right' ? styles.right : styles.left}`}
       role="meter"
       aria-label={label}
       aria-valuemin={0}
@@ -210,9 +217,10 @@ export default function RadiusStrikerRail({
       data-radius-striker={shown.tier ?? 'below-bronze'}
       data-radius-striker-running={String(shown.running)}
       data-radius-striker-level={shown.level.toFixed(3)}
+      data-radius-striker-fill={fill ? 'true' : 'false'}
       style={{
         ...(thumbSprite ? { '--zoomThumb': `url("${thumbSprite}")` } : {}),
-        ...(span != null ? { '--mapControlSpan': `${Math.max(0, Math.round(span))}px` } : {}),
+        ...(span != null && !fill ? { '--mapControlSpan': `${Math.max(0, Math.round(span))}px` } : {}),
         '--zoom-thumb-size': `${thumbSize}px`,
       } as React.CSSProperties}
     >
