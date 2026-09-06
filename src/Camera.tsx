@@ -341,15 +341,20 @@ export default function Camera({
   useEffect(() => onLiveStore(() => setOnAir(isLive())), [])
   const onAirRadiusRef = useRef(onAirRadiusKm)
   onAirRadiusRef.current = onAirRadiusKm
+  // On iPhone the viewfinder is a native AVCapture layer behind a transparent
+  // WebView (NATIVE_CAMERA_PREVIEW), so this document never holds a
+  // MediaStream and there is nothing here to put on air. Going live anyway
+  // would light the button and broadcast a blank tile, which is a worse
+  // answer than saying so: the button stays dark there until the shell can
+  // hand its frames to the web layer. Android and the browser use
+  // getUserMedia and go live for real.
+  const canGoLive = !NATIVE_CAMERA_PREVIEW
   const toggleLive = useCallback(() => {
     if (isLive()) { stopBroadcast(); return }
     const source = streamRef.current
+    if (!source) return
     const viewer = currentViewerCoords()
-    startBroadcast(
-      source ? source.clone() : undefined,
-      viewer ?? undefined,
-      onAirRadiusRef.current,
-    )
+    startBroadcast(source.clone(), viewer ?? undefined, onAirRadiusRef.current)
   }, [])
   // Leaving the camera comes off air. The alternative is a broadcast running
   // on a stream this screen is about to stop, which is a live tile showing
@@ -2084,9 +2089,13 @@ export default function Camera({
               <button
                 type="button"
                 className={onAir ? `${styles.cameraLive} ${styles.cameraLiveOn}` : styles.cameraLive}
-                aria-label={onAir ? 'End the live broadcast' : 'Go live from this camera'}
+                aria-label={onAir
+                  ? 'End the live broadcast'
+                  : canGoLive
+                    ? 'Go live from this camera'
+                    : 'Going live is not available from this camera yet'}
                 aria-pressed={onAir}
-                disabled={captureMode !== 'video'}
+                disabled={captureMode !== 'video' || !canGoLive}
                 data-camera-live={onAir ? 'on' : 'off'}
                 onPointerDown={event => event.stopPropagation()}
                 onClick={event => { event.stopPropagation(); playPop(); toggleLive() }}

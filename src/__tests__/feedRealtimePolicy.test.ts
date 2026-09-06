@@ -31,6 +31,18 @@ describe('production Feed realtime policy', () => {
     expect(composer).not.toContain('{CHANNELS.map(c => (')
   })
 
+  it('only offers to go live where there is something to broadcast', () => {
+    // iPhone's viewfinder is a native layer behind a transparent WebView, so
+    // this document holds no MediaStream. Lighting the button there would put
+    // an empty tile in the LIVE channel and call it a broadcast.
+    const camera = readFileSync(new URL('../Camera.tsx', import.meta.url), 'utf8')
+    expect(camera).toContain('const canGoLive = !NATIVE_CAMERA_PREVIEW')
+    expect(camera).toContain('disabled={captureMode !== \'video\' || !canGoLive}')
+    // And the broadcast never starts without a stream, whatever the button did.
+    expect(camera).toContain('if (!source) return')
+    expect(camera).toContain('startBroadcast(source.clone(), viewer ?? undefined, onAirRadiusRef.current)')
+  })
+
   it('does not replace a missing or deleted post with bundled media or identity', () => {
     expect(source).toContain(': post?.video')
     expect(source).toContain(': post?.poster')
