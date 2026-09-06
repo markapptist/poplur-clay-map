@@ -1,4 +1,5 @@
 import { attachCallVideo } from './callVideoPlayback'
+import { canSendIntoThread, dmThrottleNotice } from './dmThrottle'
 import { accountSnapshot, onAccountChange } from './accountStore'
 import { nativeFeedPostsSnapshot, onNativeFeedPosts } from './nativeFeedPosts'
 import { currentViewerCoords } from './viewerFix'
@@ -859,6 +860,8 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
   const [faceTimeWith, setFaceTimeWith] = useState<{ id: string; name: string } | null>(null)
   const [liveThreads, setLiveThreads] = useState<Thread[] | null>(null)
   const [composerText, setComposerText] = useState('')
+  /** Shown when this thread has gone unanswered long enough to stop sending. */
+  const [throttleNotice, setThrottleNotice] = useState<string | null>(null)
   const [composerTab, setComposerTab] = useState<ComposerTab>('chat')
   const [messageToolsOpen, setMessageToolsOpen] = useState(false)
   const [shareCategory, setShareCategory] = useState<ShareCategory>('apps')
@@ -1396,6 +1399,15 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
     const otherId = activeThread?.otherId
     const isBrowserDemo = !otherId && !isNativeShell()
     if (!text || !activeThread || (!otherId && !isBrowserDemo)) return false
+    // A thread is a conversation, not a megaphone. Every kind of message —
+    // a sentence, a sticker, a game invite, shared work — leaves by this one
+    // gate, so the limit cannot be walked around by sending a sticker
+    // instead (dmThrottle.ts).
+    if (!canSendIntoThread(activeThread.messages)) {
+      setThrottleNotice(dmThrottleNotice(activeThread.title))
+      return false
+    }
+    setThrottleNotice(null)
     playPop()
     const clientMessageId = createClientMessageId()
     const optimistic = {
@@ -1413,6 +1425,13 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
       track('dm_sent', { kind })
     }
     return true
+  }, [activeThread])
+
+  // Cleared the moment the other person speaks, so the notice never outlives
+  // the silence that caused it.
+  useEffect(() => {
+    if (!activeThread) { setThrottleNotice(null); return }
+    if (canSendIntoThread(activeThread.messages)) setThrottleNotice(null)
   }, [activeThread])
 
   const sendMessage = useCallback(() => {
@@ -1938,6 +1957,11 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
           </button>
           <button type="submit" className={styles.sendBtn} disabled={!composerText.trim() || !canComposeInCurrentSurface || voiceState !== 'idle'}>Send</button>
         </form>
+        {/* Why the send did nothing: they have not answered yet. Said once,
+            under the composer, and it clears the moment they reply. */}
+        {throttleNotice && (
+          <p className={styles.throttleNotice} role="status" data-dm-throttle="">{throttleNotice}</p>
+        )}
         {faceTimeWith && (
           <FaceTimeOverlay who={faceTimeWith.name} direction="outgoing" onEnd={endFaceTime} />
         )}

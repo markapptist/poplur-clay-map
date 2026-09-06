@@ -1914,3 +1914,13 @@
   appearance: none;
   -webkit-appearance: none;
 }
+
+/* The unanswered-message limit, explained where the send would have happened.
+   Quiet: it is a courtesy notice about the other person's inbox, not an error
+   the sender has to fix. */
+.throttleNotice {
+  margin: 6px 14px 0;
+  color: #b4477f;
+  font: 700 12px/1.35 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  text-align: center;
+}
