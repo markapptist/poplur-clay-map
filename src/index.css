@@ -123,6 +123,25 @@
  * the column is thirteen rows in that state, not twelve. Recomputed at the
  * feed root (not :root) because inherited custom properties carry their
  * computed value: overriding a row-count var alone would change nothing. */
+/* The camera carries TEN controls, not the feed's twelve or thirteen, but it
+   wore the feed's row budget — so its rail divided the same column into
+   thirteen and landed on 34px controls two pixels apart, cramped against the
+   top with the bottom third of the column empty. The map's rail is the house
+   spacing (44px, 12px apart) and ten rows of it come to exactly the map
+   rail's own height, so the camera can simply have it. The feed cannot: at
+   this spacing twelve rows need more column than there is, which is what the
+   compressing formula exists to solve. */
+.poplur-camera-rail {
+  --poplur-feed-ctl: clamp(
+    44px,
+    calc((var(--poplur-feed-column) - 9 * 12px) / 10),
+    64px
+  );
+  --poplur-feed-number: var(--poplur-feed-ctl);
+  --poplur-feed-gap: 12px;
+  --poplur-feed-seam: var(--poplur-feed-gap);
+}
+
 .poplur-feed-rows-13 {
   --poplur-feed-ctl: clamp(
     34px,

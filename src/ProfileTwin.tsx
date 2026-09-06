@@ -3116,24 +3116,22 @@ export default function ProfileTwin({
             </div>
           )}
 
+          {/* The house dialog, the one the map's post picker and the Block
+              prompt already wear. This asked the same question in a plain
+              dark box with two flat buttons — the only surface in the app
+              still doing that (user-ordered 6 Sep). Delete leads, because it
+              is the answer being asked for; keeping the post is the way out
+              and is also what the scrim and the cube already do. */}
           {deletePromptPost && !deletePending && (
-            <div className={`${styles.viewerDialogScrim} ${surfaceStyles.scrim}`} onClick={() => setDeletePromptPost(null)}>
-              <div
-                className={`${styles.viewerDialog} ${styles.viewerDeleteDialog} ${surfaceStyles.surface}`}
-                role="alertdialog"
-                aria-modal="true"
-                aria-labelledby="profile-delete-title"
-                aria-describedby="profile-delete-copy"
-                onClick={event => event.stopPropagation()}
-              >
-                <h2 id="profile-delete-title">Delete this post?</h2>
-                <p id="profile-delete-copy">It will be removed from your profile. This cannot be undone.</p>
-                <div className={styles.viewerDialogActions}>
-                  <button type="button" className={surfaceStyles.secondary} onClick={() => setDeletePromptPost(null)}>Keep it</button>
-                  <button type="button" className={`${styles.viewerDialogDanger} ${surfaceStyles.primary}`} onClick={confirmViewerDelete}>Delete</button>
-                </div>
-              </div>
-            </div>
+            <PoplurDialog
+              eyebrow="Poplur"
+              title="Delete this post?"
+              subtitle="It will be removed from your profile. This cannot be undone."
+              primaryAction={{ label: 'Delete', onActivate: () => { playPop(); confirmViewerDelete() } }}
+              secondaryAction={{ label: 'Keep it', onActivate: () => { playPop(); setDeletePromptPost(null) } }}
+              onClose={() => { playPop(); setDeletePromptPost(null) }}
+              dataId={`delete:${deletePromptPost.id ?? 'post'}`}
+            />
           )}
 
           {deletePending && (
