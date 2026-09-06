@@ -50,8 +50,34 @@ export function buildingClaimColorExpression(
   unclaimedColor: unknown,
   limit = MAX_VISIBLE_BUILDING_CLAIMS,
 ): unknown {
+  return claimSurfaceColorExpression(
+    claims,
+    claim => claim.color || ownColor,
+    unclaimedColor,
+    limit,
+  )
+}
+
+/**
+ * The same shape for ANY surface the map draws — roads, parks, water, ground.
+ *
+ * Claimed territory is no longer a wash laid over the map: each surface takes
+ * the owner's own shade of what it already was, so the picture keeps its
+ * structure and only changes hue. That means every one of those layers needs
+ * the identical question answered — WHICH owner holds this feature — and the
+ * only thing that differs is the colour handed back. `colorFor` is that
+ * difference; everything else (bounded selection, locality ordering, the
+ * geometry test) is shared, so no two surfaces can disagree about who holds
+ * the ground under them.
+ */
+export function claimSurfaceColorExpression(
+  claims: Iterable<BuildingDominanceClaim>,
+  colorFor: (claim: BuildingDominanceClaim) => unknown,
+  unclaimedColor: unknown,
+  limit = MAX_VISIBLE_BUILDING_CLAIMS,
+): unknown {
   // WHICH claims are represented is a question of dominance (the bounded top
-  // N). WHICH ONE WINS a building they both cover is a different question,
+  // N). WHICH ONE WINS a feature they both cover is a different question,
   // and the answer is the most local: a `case` takes its first matching
   // branch, so the branches run smallest-radius first. Selected by
   // significance, ordered by locality — without the second sort a single
@@ -62,10 +88,7 @@ export function buildingClaimColorExpression(
 
   const branches: unknown[] = []
   for (const claim of ordered) {
-    branches.push(
-      claimReachTest(claim.center, claim.radiusKm),
-      claim.color || ownColor,
-    )
+    branches.push(claimReachTest(claim.center, claim.radiusKm), colorFor(claim))
   }
   return ['case', ...branches, unclaimedColor]
 }

@@ -12,41 +12,12 @@ export const DOMINANCE_GROUND_SLOT = 'bottom' as const
 export const DOMINANCE_DETAIL_MIN_ZOOM = 7.5
 const DOMINANCE_DETAIL_FILL_OPACITY = 0.78
 
-/**
- * How strongly the overview repeats claimed ground ON TOP of the street web.
- *
- * The ground fill beneath is already fully opaque at these zooms, so this pass
- * exists only to stop a dense clay road network hiding the colour. At 0.82 it
- * did far more than that: it buried the roads, the coastline and the water
- * along with them, and claimed territory pulled back into a flat disc pasted
- * over the map — "a 2D blob", exactly what it stops being once you zoom in and
- * the city sits on top of the colour again.
- *
- * Low enough that the road web and coast read straight through, high enough
- * that the hue still reads at a glance. Legibility does not depend on this
- * number: the ground under it is opaque claim colour either way.
- */
-const DOMINANCE_OVERVIEW_WASH_OPACITY = 0.46
-
-/** The overview wash ramp: full strength while the map is a scoreboard, gone
- *  by the zoom where the ground treatment takes the look back. */
-export function dominanceOverviewWashOpacityExpression(): unknown[] {
-  return [
-    'interpolate', ['linear'], ['zoom'],
-    DOMINANCE_OVERVIEW_MAX_ZOOM, DOMINANCE_OVERVIEW_WASH_OPACITY,
-    DOMINANCE_DETAIL_MIN_ZOOM, 0,
-  ]
-}
-
-/** Pure mirror of the expression above, so the wash contract can be locked in
- *  tests without a renderer. */
-export function dominanceOverviewWashOpacityAtZoom(zoom: number): number {
-  if (zoom <= DOMINANCE_OVERVIEW_MAX_ZOOM) return DOMINANCE_OVERVIEW_WASH_OPACITY
-  if (zoom >= DOMINANCE_DETAIL_MIN_ZOOM) return 0
-  const progress = (zoom - DOMINANCE_OVERVIEW_MAX_ZOOM)
-    / (DOMINANCE_DETAIL_MIN_ZOOM - DOMINANCE_OVERVIEW_MAX_ZOOM)
-  return DOMINANCE_OVERVIEW_WASH_OPACITY * (1 - progress)
-}
+// There was an overview WASH here — an opacity ramp for a second claim fill
+// drawn above the street web at scoreboard zooms. Both are gone. A flat fill
+// over the map covers the roads, the coast and the water together, and what it
+// buys in visibility it pays for by turning held ground into a disc laid on
+// the picture. Territory is legible from the air now because the surfaces
+// inside it are a different colour, not because something covers them.
 
 export type DominanceLevel = 'mine' | 'others' | 'all'
 

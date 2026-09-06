@@ -87,7 +87,7 @@ import { preferredLandmarkRendererId } from './landmarkRendererSelection'
 import { playPop } from './pop'
 import { spreadOverlappingPins } from './pinSpread'
 import { feedPostIdFromPinId, isPostSeen, onSeenPostsChange } from './seenPosts'
-import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, claimedGroundTest, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim, pulseDominanceLayer, CLAIM_GROWTH_MS, CLAIM_DECAY_MS } from './mapClaims'
+import { installClaimsLayer, setClaim, getClaims, claimsFeatureCollection, claimsWithinCollection, visibleGroundClaims, visibleBuildingClaimColorExpression, onClaimsSettled, applyClaimsPalette, largestOwnClaim, pulseDominanceLayer, CLAIM_GROWTH_MS, CLAIM_DECAY_MS } from './mapClaims'
 import { ownershipTerrainPolygon } from './ownershipTerrain'
 import { fitZoomForRadius } from './mapFitZoom'
 import {
@@ -99,6 +99,8 @@ import { createMapConquerSnapshot, type MapConquerSnapshot } from './mapConquer'
 import { localSunriseToNoon, skyShadeAt, type SkyShade } from './skyCycle'
 import { mapDaypart } from './contextCubeModels'
 import { takeoverTint, takeoverBaseColor, onTakeoverColor, setTakeoverColor, takeoverSwatches } from './takeoverColor'
+import { claimSurfaces, type ClaimSurfacePalette } from './claimTerrainShades'
+import { claimSurfaceColorExpression } from './buildingClaimDominance'
 import { randomizeMyPinColor } from './myPinColor'
 import {
   fetchRoute,
@@ -617,6 +619,75 @@ function buildingCaps3DColor(map: mapboxgl.Map) {
   )
 }
 
+/** Where the per-surface recolour starts. `distance` is quantised to the tile
+ *  below this, so a claim edge would draw as a rectangle rather than as its
+ *  own shape; the ground fill and the boundary line carry territory instead.
+ *  Same threshold the building expression takes, for the same reason. */
+const CLAIM_SURFACE_MIN_ZOOM = 13
+
+/**
+ * What the map's own surfaces look like where somebody holds the ground.
+ *
+ * Claimed territory is no longer a flat fill laid over the picture. The ground,
+ * the parks, the water and the streets each keep being themselves and shift
+ * toward the holder's colour, so a claim reads as terrain that changed hands
+ * rather than as a disc dropped on the map — the thing that made held ground
+ * look correct close in and like a blob from the air.
+ *
+ * Every surface asks ONE list, in ONE order (see visibleGroundClaims and
+ * claimSurfaceColorExpression), so a street and the park beside it can never
+ * disagree about who holds them. Both paint paths — the theme re-apply and the
+ * claim-settle walk — build their values here, so neither can drift from the
+ * other.
+ *
+ * An empty board returns the plain palette for every layer rather than a test
+ * that can only be false, which is also what repaints a stale takeover away
+ * when the last claim leaves the camera.
+ */
+function claimedSurfaceSets(
+  map: mapboxgl.Map,
+  palette: MapTheme,
+): Array<[string, string, unknown]> {
+  // Below z13 `distance` is evaluated on geometry Mapbox has already coarsened
+  // for the zoom, and the answer comes back quantised to the tile: at z6 the
+  // recolour drew as hard-edged RECTANGLES across the map, which is a worse
+  // lie about where somebody's ground stops than the wash ever was. Mapbox
+  // documents the precision loss below z13 and the building expression has
+  // always taken the same threshold for the same reason.
+  //
+  // The claim is not invisible out there: the ground fill and the boundary
+  // line are real geometry, drawn from the claim polygon itself, and they are
+  // what carries territory at scoreboard zooms. The surface recolour is the
+  // close-in treatment, and it starts exactly where it can tell the truth.
+  const here = map.getZoom() < CLAIM_SURFACE_MIN_ZOOM ? [] : visibleGroundClaims(map)
+  const plain: ClaimSurfacePalette = {
+    land: palette.land,
+    park: palette.park,
+    water: palette.water,
+    road: palette.road,
+    roadRim: palette.roadRim,
+  }
+  // A claim with no colour of its own is yours, and wears the app's takeover
+  // pink — the same fallback the claim fill's `coalesce` uses.
+  const shadesFor = (claim: { color?: string }) =>
+    claimSurfaces(plain, claim.color || takeoverTint('#D93D89'))
+  const surface = (
+    pick: (shades: ClaimSurfacePalette) => string,
+    unclaimed: string,
+  ) => claimSurfaceColorExpression(here, claim => pick(shadesFor(claim)), unclaimed)
+  return [
+    ['clay-real-road-body', 'line-color', surface(s => s.road, palette.road)],
+    ['clay-minor-roads', 'line-color', surface(s => s.road, palette.road)],
+    ['clay-real-road-rim', 'line-color', surface(s => s.roadRim, palette.roadRim)],
+    ['clay-grass-fill', 'fill-color', surface(s => s.park, palette.park)],
+    // Water stays water. It takes the smallest step of any surface toward the
+    // owner (see CLAIM_SHADE_WEIGHTS) precisely so a claimed lake still reads
+    // as a lake — the old wash painted straight over it, which is a large part
+    // of why territory stopped looking like geography at all.
+    ['clay-water-fill', 'fill-color', surface(s => s.water, palette.water)],
+  ]
+}
+
 function applyTheme(map: mapboxgl.Map, theme: MapTheme, night = mapNightModeActive) {
   const set = (layer: string, prop: string, value: unknown) => {
     if (!map.getLayer(layer)) return
@@ -632,26 +703,9 @@ function applyTheme(map: mapboxgl.Map, theme: MapTheme, night = mapNightModeActi
   set('clay-coast-shadow', 'line-color', '#04121f')
   set('clay-coast-rim', 'line-color', 'rgba(255, 255, 255, 0.55)')
   set('clay-land-background', 'background-color', palette.land)
-  set('clay-water-fill', 'fill-color', palette.water)
-  const claimFeatures = claimsWithinCollection()
-  const claimedPaint = (normal: unknown, claimed: unknown) =>
-    claimFeatures.features.length
-      ? ['case', ['within', claimFeatures], claimed, normal]
-      : normal
-  // Parks are polygons, and `within` never answers for those — so grass asks
-  // the distance test instead. Roads below stay on `within`: lines are the
-  // geometry it does answer for, and nearest-point would drag claimed colour
-  // far past the boundary along a single street.
-  const groundTest = claimedGroundTest(map)
-  set('clay-grass-fill', 'fill-color', groundTest
-    ? ['case', groundTest, takeoverTint('#D85D96'), palette.park]
-    : palette.park)
-  // Claimed territory keeps its takeover colours through every theme/day
-  // re-apply: streets fully inside a claim mold in Poplur plum, and claimed
-  // buildings re-mold pink — the theme only styles the UNCLAIMED branch.
-  set('clay-minor-roads', 'line-color', claimedPaint(palette.road, takeoverTint('#9c2a6e')))
-  set('clay-real-road-body', 'line-color', claimedPaint(palette.road, takeoverTint('#8a2260')))
-  set('clay-real-road-rim', 'line-color', claimedPaint(palette.roadRim, takeoverTint('#ff9ccd')))
+  // Claimed territory keeps its owner's colours through every theme/day
+  // re-apply: the theme only styles the UNCLAIMED branch of each surface.
+  for (const [layer, prop, value] of claimedSurfaceSets(map, palette)) set(layer, prop, value)
   set('clay-real-road-stitches', 'line-color', theme.accentHot)
   set('clay-trail-stitches', 'line-color', theme.accent)
   set('clay-buildings-2d', 'fill-color', building2DColor(map))
@@ -5145,27 +5199,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         ]
         let sets = buildingSets
         if (!buildingsOnly) {
-          const fc = claimsWithinCollection()
           const palette = renderedTheme(theme, mapNightModeActive)
-          // No claims of YOUR OWN on the board — switching the pop level to
-          // "other pops" is the case that produces this. Paint the plain
-          // palette back instead of leaving an old takeover burned in.
-          const held = fc.features.length > 0
-          const w = held ? ['within', fc] : false
-          // `within false` is not valid, so an empty board hands every layer
-          // its plain colour directly.
-          const claimed = (taken: unknown, plain: unknown) => (held ? ['case', w, taken, plain] : plain)
-          // Roads keep `within` (lines are what it answers for); grass is a
-          // polygon layer and needs the distance test, or it stays the plain
-          // park colour no matter whose ground it is standing on.
-          const groundTest = claimedGroundTest(map)
           sets = [
-            ['clay-real-road-body', 'line-color', claimed(takeoverTint('#8a2260'), palette.road)],
-            ['clay-minor-roads', 'line-color', claimed(takeoverTint('#9c2a6e'), palette.road)],
-            ['clay-real-road-rim', 'line-color', claimed(takeoverTint('#ff9ccd'), palette.roadRim)],
-            ['clay-grass-fill', 'fill-color', groundTest
-              ? ['case', groundTest, takeoverTint('#D85D96'), palette.park]
-              : palette.park],
+            ...claimedSurfaceSets(map, palette),
             ...buildingSets,
           ]
         }
@@ -5239,7 +5275,20 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       stopClaimRoadPaint = onClaimsSettled(() => { applyClaimRoadPaint() })
       // Owner-aware building expressions are camera-scoped. Recompute only
       // after a camera settles; never during the move/render loop.
-      map.on('moveend', () => { applyClaimRoadPaint(true) })
+      //
+      // The ground surfaces are camera-scoped too, but only at one boundary:
+      // the zoom where the recolour turns on at all. Crossing it without a
+      // claim change would otherwise strand the streets and parks on the wrong
+      // side — plain after diving in, or claimed after pulling out to where
+      // the test cannot place an edge. So a settle that CHANGES that answer
+      // takes the full pass, and every other settle keeps the cheap one.
+      let claimSurfacesOn = map.getZoom() >= CLAIM_SURFACE_MIN_ZOOM
+      map.on('moveend', () => {
+        const on = map.getZoom() >= CLAIM_SURFACE_MIN_ZOOM
+        if (on === claimSurfacesOn) { applyClaimRoadPaint(true); return }
+        claimSurfacesOn = on
+        applyClaimRoadPaint()
+      })
 
       // ── The colour circle: takeover recolour ────────────────────────────────
       // The circle under the zoom slider transposes the takeover family to a

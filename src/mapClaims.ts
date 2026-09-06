@@ -10,7 +10,6 @@ import {
   DOMINANCE_GROUND_SLOT,
   DOMINANCE_OVERVIEW_MAX_ZOOM,
   dominanceFillOpacityExpression,
-  dominanceOverviewWashOpacityExpression,
   dominanceInsertBefore,
   dominancePower,
   groundPaintOrder,
@@ -65,6 +64,9 @@ const LEGACY_CLAIM_LAYER_IDS = [
   'poplur-claims-core',
   'poplur-claims-rings',
   'poplur-claims-rim',
+  // The overview wash — the flat fill that used to repeat claimed ground above
+  // the streets. Surfaces carry the owner's colour themselves now.
+  CLAIMS_OVERVIEW,
 ] as const
 const LEGACY_CLAIM_SOURCE_IDS = [
   'poplur-claims-points',
@@ -210,7 +212,6 @@ export function applyClaimsPalette(map: mapboxgl.Map): void {
     try { map.setPaintProperty(layer, prop as never, value as never) } catch { /* torn down */ }
   }
   set(CLAIMS_FILL, 'fill-color', claimColor('#D93D89'))
-  set(CLAIMS_OVERVIEW, 'fill-color', claimColor('#D93D89'))
   set(CLAIMS_REVEAL, 'fill-color', claimColor('#FF8AC6'))
 }
 
@@ -319,8 +320,14 @@ export function installClaimsLayer(map: mapboxgl.Map) {
       'line-color': claimColor('#D93D89') as never,
       // Thin enough to read as a border rather than a second fill, and it
       // holds its weight as the camera pulls out to world scale.
-      'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.6, 10, 1.6, 16, 2.4] as never,
-      'line-opacity': 0.9,
+      //
+      // It carries more out there than it used to. With the overview wash gone
+      // this line IS the boundary at scoreboard zooms — the point where one
+      // owner's ground stops and the next begins — and at 0.6px it was a
+      // hairline nobody could see, which is part of why territory read as a
+      // soft smear rather than as a bounded region.
+      'line-width': ['interpolate', ['linear'], ['zoom'], 3, 1.4, 7, 2, 10, 1.8, 16, 2.4] as never,
+      'line-opacity': 1,
     },
   }, claimsInsertBefore(map))
 
@@ -338,36 +345,30 @@ export function installClaimsLayer(map: mapboxgl.Map) {
       },
     }, claimsInsertBefore(map))
 
-  // ── The same ground, ABOVE the streets, while the map is a scoreboard ─────
+  // ── There is no second fill above the streets any more ───────────────────
   //
-  // Held ground is drawn in the `bottom` slot so that close in, the city sits
-  // on top of it: roads, buildings and parks take their claimed tint and the
-  // territory reads as material under a real place. Pulled out, that same
-  // ordering hides it completely. Mapbox draws `bottom` under `middle`, and at
-  // continental zoom the clay road network IS the map — a dense pink web over
-  // every populated area. A 30px claim under that web is invisible, which is
-  // why the board looked uncoloured from the air with 46 territories painting.
+  // There used to be: the identical polygons drawn again in the `middle` slot,
+  // above the road web, because a claim in the `bottom` slot is under the
+  // streets and a 30px one was invisible from the air — 46 territories
+  // painting and not one of them readable.
   //
-  // So the overview draws the identical polygons a second time in `middle`,
-  // above the streets, and hands back to the ground treatment at the zoom
-  // where the streets stop being a web and become streets again. No new
-  // geometry, no new source: the same features, one more fill.
-  map.addLayer({
-    id: CLAIMS_OVERVIEW,
-    slot: 'middle',
-    type: 'fill',
-    source: CLAIMS_SOURCE,
-    // Off entirely by the time the detail treatment owns the look, so close in
-    // there is exactly one claim wash on screen, the established one.
-    maxzoom: DOMINANCE_DETAIL_MIN_ZOOM,
-    paint: {
-      'fill-color': claimColor('#D93D89') as never,
-      // A wash, not a lid: the road web and coastline still read through it,
-      // so the map stays a map and the colour says who holds it. It was
-      // written as a wash and set at a lid's strength — see the constant.
-      'fill-opacity': dominanceOverviewWashOpacityExpression() as never,
-    },
-  })
+  // It solved that and created something worse. A flat fill above the streets
+  // covers the roads, the coastline and the water indiscriminately, so held
+  // ground stopped being ground and became a disc laid on the picture. It was
+  // most obvious in what people reported: the map "looks right zoomed in and
+  // is a blob zoomed out" — because this layer fades out below z7.5, and what
+  // is left below it is the treatment that was correct all along.
+  //
+  // Visibility is no longer bought by covering the map. Every surface the map
+  // draws — the ground, parks, water, streets, buildings — now takes the
+  // owner's own shade of what it already was (see claimTerrainShades), so a
+  // territory is legible at continental zoom because the land inside it is a
+  // different colour, not because something is sitting on top of it. The
+  // boundary is the edge line below, which is drawn, not implied by a seam.
+  //
+  // Kept in the legacy-removal list so an already-mounted map (HMR, or a
+  // native WebView that outlives the module) drops it rather than keeping a
+  // lid nothing updates any more.
 
   // Re-cut the ownership cells when the camera crosses a zoom half-step, so
   // their world-view readability floor keeps up without any per-frame rebuild.
@@ -548,15 +549,34 @@ export function claimsWithinCollection(): GeoJSON.FeatureCollection {
  * wrap it in a test that can only ever be false.
  */
 export function claimedGroundTest(map: mapboxgl.Map): unknown | null {
-  const here = mine()
-    .filter(paintsGround)
-    .filter(claim => claimTouchesViewport(map, claim))
-    .sort((a, b) => b.radiusKm - a.radiusKm)
-    .slice(0, MAX_VISIBLE_BUILDING_CLAIMS)
+  const here = visibleGroundClaims(map)
   if (!here.length) return null
   return ['any', ...here.map(claim => (
     ['<=', ['distance', { type: 'Point', coordinates: claim.center }], claim.radiusKm * 1000]
   ))]
+}
+
+/**
+ * Every owner's claim that can touch the settled camera — the input each
+ * surface's colour expression is built from.
+ *
+ * `mine()` is deliberately NOT the filter here. Claimed ground is now expressed
+ * by recolouring the map's own surfaces rather than by washing a polygon over
+ * them, and a treatment that only ever applied to your own claims would leave
+ * everybody else's territory with nothing to paint with — which is what forced
+ * the flat overview wash to exist in the first place. Buildings have always
+ * been owner-aware; roads, parks, water and the ground now ask the same
+ * question, of the same list, in the same order.
+ *
+ * World-radius claims are excluded (see `paintsGround`): they describe reach,
+ * not land, and one of them would otherwise recolour every surface on Earth.
+ */
+export function visibleGroundClaims(map: mapboxgl.Map): Claim[] {
+  return [...claims.values()]
+    .filter(paintsGround)
+    .filter(claim => claimTouchesViewport(map, claim))
+    .sort((a, b) => b.radiusKm - a.radiusKm)
+    .slice(0, MAX_VISIBLE_BUILDING_CLAIMS)
 }
 
 /**
