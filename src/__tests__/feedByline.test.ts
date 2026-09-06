@@ -111,6 +111,11 @@ describe('feed popup and profile radius', () => {
     // The popup carries what the corner used to rotate through, in the same
     // shader type, plus the unit choice the tap used to be.
     expect(home).toMatch(/data-home-stats-popup=""/)
+    // The stats screen in miniature: its own spinning globe, and a way through
+    // to the whole board — the map's conquer glance works this way too.
+    expect(home).toMatch(/className=\{styles\.statsGlobe\}/)
+    expect(home).toMatch(/data-home-stats-open-full=""/)
+    expect(home).toMatch(/setResume\(current => \(\{ screen: 'profile-stats', n: current\.n \+ 1 \}\)\)/)
     expect(home).toMatch(/<AnimatedOnlineCount value=\{onlineAudience\} active \/>/)
     expect(home).toMatch(/<AnimatedPostCount value=\{profilePostCount\} active \/>/)
     expect(home).toMatch(/styles\.radiusValueAccum\}`\} data-counter-value=\{statsTotalText\}/)

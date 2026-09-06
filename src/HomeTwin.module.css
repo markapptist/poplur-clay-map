@@ -1586,57 +1586,70 @@
 
 .statsCard {
   width: min(286px, calc(100vw - 36px));
-  max-height: min(72vh, 660px);
+  max-height: min(76vh, 700px);
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  border-radius: 14px;
-  background: rgba(24, 12, 26, 0.94);
-  box-shadow: 0 26px 76px rgba(0, 0, 0, 0.68), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  /* The stats screen in miniature: its dark ground and its globe, not a
+     second window style. */
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 20px;
+  background: radial-gradient(120% 80% at 50% 0%, #2a0b2a 0%, #120418 55%, #08030c 100%);
+  box-shadow: 0 26px 76px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.16);
   animation: statsCardIn 360ms cubic-bezier(0.2, 1.35, 0.35, 1) both;
 }
 
-@keyframes statsCardIn {
-  from { opacity: 0; transform: translateY(16px) scale(0.9); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+/* The stats screen's own spinning globe, at a glance's size. Same 40-frame
+   sprite sheet, scaled: 280px of art in a 132px window. */
+.statsGlobeWrap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 16px 0 6px;
 }
 
-.statsTitleBar {
-  min-height: 38px;
-  display: grid;
-  grid-template-columns: 58px minmax(0, 1fr) 34px;
+.statsGlobe {
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  background-image: url('/sprites/stats_globe_spin.png');
+  background-size: 5280px 132px;
+  background-repeat: no-repeat;
+  animation: statsGlobeSpin 3s steps(40) infinite;
+}
+
+@keyframes statsGlobeSpin {
+  from { background-position: 0 0; }
+  to { background-position: -5280px 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .statsGlobe { animation: none; }
+}
+
+/* The headline number reads under the globe, the way the stats screen reads
+   its radius under its own. */
+.statsGlobeReading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.24);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(218, 214, 216, 0.94));
-  color: #282329;
-  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
-}
-.statsTitleBar strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   text-align: center;
-  font-size: 11px;
-  font-weight: 900;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
 }
-.statsTitleBar > span:last-child {
-  justify-self: end;
-  font: 900 9px/1 ui-monospace, 'SF Mono', monospace;
-  color: #756d73;
-}
-.statsLights { display: flex; gap: 6px; }
-.statsLights i { width: 11px; height: 11px; border-radius: 50%; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58); }
-.statsLights i:nth-child(1) { background: #ff5f57; }
-.statsLights i:nth-child(2) { background: #ffbd2e; }
-.statsLights i:nth-child(3) { background: #28c840; }
 
-.statsRows {
-  display: grid;
-  gap: 14px;
-  padding: 16px 16px 6px;
+/* Through to the whole board, like the map's conquer glance. */
+.statsOpenFull {
+  width: calc(100% - 20px);
+  min-height: 40px;
+  margin: 12px 10px 0;
+  border: 1px solid rgba(127, 227, 255, 0.5);
+  border-radius: 10px;
+  background: rgba(127, 227, 255, 0.12);
+  color: #7fe3ff;
+  font: 900 12px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.1em;
 }
+.statsOpenFull:active { transform: translateY(1px); }
+
 .statsRow {
   display: flex;
   flex-direction: column;

@@ -1361,6 +1361,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // tab remounted the menu in the same render the tab changed, and the fresh
   // instance's explicit "no subscreen" report erased the record of the page
   // being left before the effect below could store it.
+  /** Open the full STATS screen from the mini one, the way the map's conquer
+   *  glance opens the full board. Same handoff every other subscreen uses. */
+  const openStatsScreen = useCallback(() => {
+    setStatsOpen(false)
+    setResume(current => ({ screen: 'profile-stats', n: current.n + 1 }))
+    setHoldOpen(true)
+  }, [])
   const [resume, setResume] = useState<{ screen: string | null; n: number; origin?: 'bell' }>(
     { screen: bootResume, n: 0 },
   )
@@ -6040,6 +6047,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           data-home-stats-popup=""
           onClick={() => { playPop(); setStatsOpen(false) }}
         >
+          {/* The stats screen in miniature — the same spinning globe and the
+              same three figures, sized to a glance. The map's conquer card
+              works this way too: read it here, or press through to the whole
+              board. It used to be a clay window with traffic lights, which
+              was a second design language for numbers this app already has a
+              screen for (user-ordered 6 Sep). */}
           <section
             className={styles.statsCard}
             role="dialog"
@@ -6047,23 +6060,21 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             aria-label="Your Poplur stats"
             onClick={event => event.stopPropagation()}
           >
-            <header className={styles.statsTitleBar}>
-              <span className={styles.statsLights} aria-hidden="true"><i /><i /><i /></span>
-              <strong>POPLUR STATS</strong>
-              <span>LIVE</span>
-            </header>
-            <div className={styles.statsRows}>
-              <div className={styles.statsRow} aria-label={`${compactAudience(onlineAudience)} users online ${onlineIsGlobal ? 'in the app' : 'in this area'}`}>
-                <span className={styles.statLabel}>{onlineIsGlobal ? 'ONLINE NOW' : 'ONLINE HERE'}</span>
-                <AnimatedOnlineCount value={onlineAudience} active />
-                <span className={styles.statSub}>{onlineIsGlobal ? 'users in app' : 'users in this area'}</span>
-              </div>
-              <div className={styles.statsRow} aria-label={`Total radius ${statsTotalText} ${unitMi ? 'miles' : 'kilometres'}`}>
+            <div className={styles.statsGlobeWrap}>
+              <div className={styles.statsGlobe} aria-hidden="true" />
+              <div className={styles.statsGlobeReading}>
                 <span className={styles.statLabel}>TOTAL RADIUS ◆</span>
                 <span className={`${styles.statValue} ${styles.radiusValueAccum}`} data-counter-value={statsTotalText}>
                   {statsTotalText}<span className={styles.statUnit}> {unitMi ? 'mi' : 'km'}</span>
                 </span>
                 <span className={styles.statSub}>of <span className={styles.statMax}>{statsCeilingText}</span> {unitMi ? 'mi' : 'km'}</span>
+              </div>
+            </div>
+            <div className={styles.statsRows}>
+              <div className={styles.statsRow} aria-label={`${compactAudience(onlineAudience)} users online ${onlineIsGlobal ? 'in the app' : 'in this area'}`}>
+                <span className={styles.statLabel}>{onlineIsGlobal ? 'ONLINE NOW' : 'ONLINE HERE'}</span>
+                <AnimatedOnlineCount value={onlineAudience} active />
+                <span className={styles.statSub}>{onlineIsGlobal ? 'users in app' : 'users in this area'}</span>
               </div>
               <div className={styles.statsRow} aria-label={`${profilePostCount} posts published`}>
                 <span className={styles.statLabel}>YOUR POPS ◆</span>
@@ -6085,6 +6096,15 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                 onClick={() => { playPop(); setUseMiles(true); setUnitMi(true) }}
               >MI</button>
             </div>
+            {/* The way through to the whole thing. */}
+            <button
+              type="button"
+              className={styles.statsOpenFull}
+              data-home-stats-open-full=""
+              onClick={() => { playPop(); openStatsScreen() }}
+            >
+              ALL YOUR STATS <span aria-hidden="true">→</span>
+            </button>
             <button type="button" className={styles.statsClose} onClick={() => { playPop(); setStatsOpen(false) }}>CLOSE</button>
           </section>
         </div>
