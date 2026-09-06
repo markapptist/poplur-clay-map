@@ -1084,6 +1084,10 @@
 /* The arrow-selected point: compact enough to leave the world visible, but
    explicit about why this camera destination is highlighted. Radius is a
    conditional third line and is rendered only for the user's own pin. */
+.mapPointCard[data-map-point-armable='true'] {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
 .mapPointCard {
   position: absolute;
   left: 50%;

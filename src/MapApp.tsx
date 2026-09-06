@@ -981,6 +981,12 @@ export default function MapApp() {
   // The shell's Map navigator follows this sky in three parts — sun by day,
   // moon by night, globe through dawn and dusk — and reads it from here
   // rather than from its own clock, so the two documents agree to the minute.
+  // A pop card is an overlay like search and weather. It lives in the MAP
+  // document, so its own z-index cannot beat the shell's rails one layer up —
+  // the card drew underneath them. Declaring it hands the surface to the web
+  // for as long as it is open, which is what puts the card over the UI.
+  const [mapContentPopupOpen, setMapContentPopupOpen] = useState(false)
+  useEffect(() => onMapContentPopupChange(setMapContentPopupOpen), [])
   const mapDaypartNow: MapDaypart = forcedPreview ? 'twilight' : mapDaypart(sky.lightPreset)
   const dayTime = !nightMode
   // Search and weather live inside this iframe, while the visible map tool
@@ -991,10 +997,10 @@ export default function MapApp() {
     if (!isEmbedded) return
     window.parent.postMessage({
       type: 'poplur-map-overlay',
-      open: searchOpen || weatherOpen,
-      kind: searchOpen ? 'search' : weatherOpen ? 'weather' : null,
+      open: searchOpen || weatherOpen || mapContentPopupOpen,
+      kind: searchOpen ? 'search' : weatherOpen ? 'weather' : mapContentPopupOpen ? 'pop' : null,
     }, '*')
-  }, [isEmbedded, searchOpen, weatherOpen])
+  }, [isEmbedded, mapContentPopupOpen, searchOpen, weatherOpen])
   useEffect(() => () => {
     if (isEmbedded) window.parent.postMessage({ type: 'poplur-map-overlay', open: false, kind: null }, '*')
   }, [isEmbedded])
@@ -5213,7 +5219,17 @@ export default function MapApp() {
           data-map-point-id={focusedMapPoint.key}
           data-map-point-kind={focusedMapPoint.kind}
           data-map-point-radius-visible={focusedMapPoint.radiusKm != null ? 'true' : 'false'}
+          data-map-point-armable={focusedPointOwner ? 'true' : 'false'}
           aria-live="polite"
+          // The WHOLE card arms this poster's route, not just the handle
+          // inside it. The handle is a small target on a card that is itself
+          // the obvious thing to press, so a tap that read as "select this
+          // poster" landed on the card and did nothing. The handle keeps its
+          // own press (it is the accessible control, and it carries the
+          // pressed state) and stops the event so one tap cannot toggle twice.
+          onClick={focusedPointOwner
+            ? () => toggleOwnerFilter(focusedPointOwner.key, focusedMapPoint.id)
+            : undefined}
         >
           <span className={styles.mapPointCardType}>
             {focusedMapPoint.kind === 'landmark'
@@ -5230,7 +5246,10 @@ export default function MapApp() {
               data-map-point-owner={focusedPointOwner.key}
               data-map-point-owner-armed={focusedUserKey === focusedPointOwner.key ? 'true' : 'false'}
               aria-pressed={focusedUserKey === focusedPointOwner.key}
-              onClick={() => toggleOwnerFilter(focusedPointOwner.key, focusedMapPoint.id)}
+              onClick={event => {
+                event.stopPropagation()
+                toggleOwnerFilter(focusedPointOwner.key, focusedMapPoint.id)
+              }}
             >
               {focusedMapPoint.name}
             </button>

@@ -301,9 +301,12 @@ export default function TVGuide({
             aria-label={muted ? 'Unmute TV Guide preview' : 'Mute TV Guide preview'}
             aria-pressed={muted}
             onActivate={() => { const next = !muted; setUserMuted(next); setMuted(next) }}
-            overlay={muted ? <span className={styles.mediaMutedBadge} aria-hidden="true">×</span> : undefined}
           />
-          {/* No ✕ — the cube is the back control for every subscreen. */}
+          {/* No ✕ anywhere in this header. The cube is the back control for
+              every subscreen, and the mute button used to carry a small ✕
+              badge while muted which read as a close button sitting on it
+              (user-ordered 6 Sep). Muted state is the button's aria-pressed
+              and its own art. */}
         </div>
       </header>
 

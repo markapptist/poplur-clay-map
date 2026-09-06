@@ -913,6 +913,14 @@ export default function ProfileTwin({
   const [viewerComments, setViewerComments] = useState<Record<string, string[]>>({})
   const [deletePromptPost, setDeletePromptPost] = useState<Post | null>(null)
   const [deletePending, setDeletePending] = useState<{ requestId: string; postId: string } | null>(null)
+  // Posts deleted in this session. The delete result filters them out of the
+  // list, but the realtime effect below re-seeds that list from the relay's
+  // pool on the next snapshot — and the pool still holds the post until it is
+  // rebuilt, which only happened on a fresh launch. So a deleted post came
+  // back within a second and stayed until the app was restarted. Remembering
+  // the id here is what makes the deletion hold; the tombstone costs nothing
+  // once the pool stops sending it.
+  const deletedPostIds = useRef<Set<string>>(new Set())
   // Share sheet over the open post: DM a friend inside Poplur, or hand the pop
   // to the OS share sheet / clipboard for outside.
   const [shareOpen, setShareOpen] = useState(false)
@@ -1160,6 +1168,7 @@ export default function ProfileTwin({
   // a legacy fallback when no uid exists.
   useEffect(() => {
     const next = profilePostsFromRealtime(realtimePosts, accountUid, viewUser, viewUserId)
+      .filter(post => !(post.id && deletedPostIds.current.has(post.id)))
     setUploadedPosts(next)
     setUploadedPostsLoaded(true)
     // Keep an open pop open. This used to close the viewer on EVERY snapshot,
@@ -2325,6 +2334,7 @@ export default function ProfileTwin({
         return
       }
       retireViewer()
+      deletedPostIds.current.add(pending.postId)
       setUploadedPosts(current => current.filter(post => post.id !== pending.postId))
       setViewerIdx(null)
       setViewerCommentOpen(false)
