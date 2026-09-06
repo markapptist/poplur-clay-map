@@ -95,6 +95,7 @@ import {
   dominanceLeaders,
   type DominanceEngagement,
 } from './mapDominance'
+import { CLUSTER_CELL_PX, clusterPinsByScreenCell, mountedPinsForClusters, type ClusterablePin } from './mapPinClusters'
 import { createMapConquerSnapshot, type MapConquerSnapshot } from './mapConquer'
 import { localSunriseToNoon, skyShadeAt, type SkyShade } from './skyCycle'
 import { mapDaypart } from './contextCubeModels'
@@ -1839,6 +1840,14 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
    *  Survives an effect re-run so a changed board reconciles instead of
    *  rebuilding — see the pin effect. */
   const pinRegistryRef = useRef(new Map<string, { marker: mapboxgl.Marker; key: string }>())
+  /** How many pins each mounted winner is standing in front of, for its badge. */
+  const clusterCountsRef = useRef(new Map<string, number>())
+  /** Which screen cell each pin fell in, so a badge tap can open that cell. */
+  const clusterCellOfRef = useRef(new Map<string, string>())
+  /** The one cell showing all of its pins, or null when every cell is closed. */
+  const expandedCellRef = useRef<string | null>(null)
+  /** Lets a badge ask the pin effect to re-select the board it owns. */
+  const syncPinsRef = useRef<(() => void) | null>(null)
   // Read through a ref inside the marker's click listener: the listener is
   // attached once when the pin is built, and capturing the prop directly would
   // freeze whatever callback identity existed at that moment.
@@ -6631,13 +6640,43 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // one.
       // Ghosts never displace a pin the viewer has actually earned sight of:
       // the capped board keeps every in-reach pop ahead of the dotted outlines.
-      inView.sort((a, c) =>
-        (a.ghost === true ? 1 : 0) - (c.ghost === true ? 1 : 0)
-        || (onScreen.has(c.id) ? 1 : 0) - (onScreen.has(a.id) ? 1 : 0)
-        || dominanceFameScore(c.radiusKm, c.engagement) - dominanceFameScore(a.radiusKm, a.engagement)
-        || (c.world === true ? 1 : 0) - (a.world === true ? 1 : 0)
-        || c.radiusKm - a.radiusKm)
-      return inView.slice(0, maxLive)
+      // ── One pin per patch of screen ────────────────────────────────────
+      // The board used to mount the highest-scoring pins wherever they were,
+      // so eighteen pins in one city hid every pin in the next, and a busy
+      // street still stacked faces on each other. Pins are bucketed into cells
+      // measured in SCREEN pixels instead: one holder per cell, the rest
+      // counted on it. A cell is the same apparent size at every zoom, so the
+      // board reads from a street and from orbit, and there is no grid to
+      // straddle because the cells move with the camera. The cap is now a
+      // backstop rather than the thing deciding what you see.
+      const placed: ClusterablePin[] = []
+      const byId = new Map<string, PopPin>()
+      for (const pin of inView) {
+        byId.set(pin.id, pin)
+        try {
+          const point = map.project([pin.coords[0], pin.coords[1]])
+          placed.push({
+            id: pin.id,
+            x: point.x,
+            y: point.y,
+            // Anyone standing on this screen outranks an off-screen holder,
+            // exactly as under the flat cap; dominance decides the rest.
+            score: dominanceFameScore(pin.radiusKm, pin.engagement)
+              + (onScreen.has(pin.id) ? 1_000_000 : 0),
+            ghost: pin.ghost === true,
+          })
+        } catch { /* style mid-reload: this pin sits out the pass */ }
+      }
+      const clusters = clusterPinsByScreenCell(placed, CLUSTER_CELL_PX)
+      const { ids, counts } = mountedPinsForClusters(clusters, expandedCellRef.current, maxLive)
+      clusterCountsRef.current = counts
+      const cellOf = new Map<string, string>()
+      for (const cluster of clusters) {
+        cellOf.set(cluster.winner.id, cluster.key)
+        for (const other of cluster.others) cellOf.set(other.id, cluster.key)
+      }
+      clusterCellOfRef.current = cellOf
+      return ids.flatMap(id => { const pin = byId.get(id); return pin ? [pin] : [] })
     }
 
     // Pins are Poplur game pieces, independent of the terrain presentation.
@@ -6813,6 +6852,35 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       }
     }
 
+    // The crowd badge is written on every pass, never baked into the marker:
+    // a cell's population changes with the camera, and rebuilding a marker for
+    // a number would undo the reconcile that stopped the board churning.
+    const applyCrowdBadges = () => {
+      for (const [id, entry] of livePins) {
+        const root = entry.marker.getElement()
+        const existing = root.querySelector<HTMLButtonElement>(`.${styles.popPinCrowd}`)
+        const crowd = clusterCountsRef.current.get(id) ?? 0
+        if (crowd <= 0) { existing?.remove(); continue }
+        const badge = existing ?? document.createElement('button')
+        if (!existing) {
+          badge.type = 'button'
+          badge.className = styles.popPinCrowd
+          badge.addEventListener('click', event => {
+            event.preventDefault()
+            event.stopPropagation()
+            playPop()
+            expandedCellRef.current = badge.dataset.pinCrowdCell || null
+            syncPinsRef.current?.()
+          })
+          root.appendChild(badge)
+        }
+        badge.dataset.pinCrowd = String(crowd)
+        badge.dataset.pinCrowdCell = clusterCellOfRef.current.get(id) ?? ''
+        badge.textContent = `+${crowd}`
+        badge.setAttribute('aria-label', `Show ${crowd} more ${crowd === 1 ? 'pop' : 'pops'} here`)
+      }
+    }
+
     const syncPins = () => {
       if (dropped || mapRef.current !== map || syncing) return
       const want = visiblePins()
@@ -6859,9 +6927,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         })
         pinMarkersRef.current = [...livePins.values()].map(held => held.marker)
         applyPinSpread()
+        applyCrowdBadges()
       })
       pinMarkersRef.current = [...livePins.values()].map(held => held.marker)
       applyPinSpread()
+      applyCrowdBadges()
     }
 
     // A pop opened here or watched in the Feed stops being new on the board
@@ -6874,7 +6944,17 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       }
     })
 
+    syncPinsRef.current = syncPins
     syncPins()
+    // An opened cell belongs to where the camera was standing when it was
+    // opened: move, and the cells are redrawn around the new view, so the one
+    // that was showing closes rather than following the camera around.
+    const collapseOnCameraMove = () => {
+      if (expandedCellRef.current === null) return
+      expandedCellRef.current = null
+      syncPins()
+    }
+    map.on('zoomend', collapseOnCameraMove)
     // moveend/zoomend only — NOT `move`. Re-selecting the board mid-gesture
     // would run a bounds test and a DOM diff on every frame of every pan,
     // which is the one thing a fps budget cannot absorb.
@@ -6886,6 +6966,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       offSeen()
       map.off('moveend', syncPins)
       map.off('zoomend', syncPins)
+      map.off('zoomend', collapseOnCameraMove)
+      if (syncPinsRef.current === syncPins) syncPinsRef.current = null
       // The markers deliberately STAY mounted. This cleanup runs on every
       // change to the board, and tearing the pins down here is what made the
       // next run rebuild all of them; the run that follows reconciles against
