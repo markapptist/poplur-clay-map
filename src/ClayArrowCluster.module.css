@@ -24,10 +24,16 @@
 
 .row {
   display: grid;
-  grid-template-columns: auto auto auto;
+  /* Three cells of ONE arrow each, so left and right sit exactly one arrow
+     from the middle — the same step up and down already take, since the up
+     arrow's centre is half its height plus half the row's from the centre.
+     The row used to be `auto auto auto` across the full cluster width, which
+     pushed the horizontal pair 98px apart (a 21px gap) while the vertical
+     pair sat 78px apart (a 1px gap): symmetric, but a stretched diamond
+     rather than a D-pad. Equal cells make all four arms equal. */
+  grid-template-columns: repeat(3, calc(var(--clusterSize) * 0.44));
   align-items: center;
   justify-items: center;
-  width: var(--clusterSize);
 }
 
 .arrow {

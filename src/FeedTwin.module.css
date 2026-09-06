@@ -1227,8 +1227,12 @@
 /* A rail slot wearing supplied clay art: the image IS the button, no bed or
    frame of its own — the same footing every SideControlIconButton stands on. */
 .railArt {
-  width: 44px;
-  height: 44px;
+  /* The rail divides the room it has between its controls, so this one has to
+     read the same size the others get. Pinned at 44px it stood 10px wider than
+     its neighbours in a 34px rail — which centred it 5px further out, broke
+     the shared left edge, and overlapped the button below it by 3px. */
+  width: var(--poplur-feed-ctl, 44px);
+  height: var(--poplur-feed-ctl, 44px);
   padding: 0;
   border: 0;
   background: none;

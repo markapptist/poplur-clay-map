@@ -2382,7 +2382,7 @@ export default function FeedTwin({
                   onPointerDown={event => event.stopPropagation()}
                   onClick={event => { event.stopPropagation(); playPop(); if (post) setBlockPromptPost(post) }}
                 >
-                  <SideControlIconImage icon="global.block" displaySize={44} />
+                  <SideControlIconImage icon="global.block" displaySize={44} fluid />
                 </button>
               )}
               {/* The timer only exists while something is counting down. An

@@ -1303,7 +1303,11 @@
   align-items: center;
   justify-content: center;
   gap: 5px;
-  width: 44px;
+  /* Share the rail's control width so LIVE keeps the column's left edge. At a
+     fixed 44px in a 34px rail it centred 5px outside the edge every other
+     control lines up on — the last of the three buttons that were sized in
+     pixels while the rail sized everything else from the room it had. */
+  width: var(--poplur-feed-ctl, 44px);
   min-height: 30px;
   padding: 0;
   /* No chip behind it (user-ordered 6 Sep): the word IS the button, the way

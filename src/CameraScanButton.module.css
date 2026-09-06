@@ -1,8 +1,12 @@
 .button {
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  /* Read the size the rail hands its controls, exactly as the feed's block
+     button does. Pinned at 44px this stood 10px wider than its neighbours in
+     a 34px rail, so it centred 5px outside their shared left edge and
+     overlapped the buttons above AND below it by 3px each. */
+  width: var(--poplur-feed-ctl, 44px);
+  height: var(--poplur-feed-ctl, 44px);
   padding: 0;
   margin: 0;
   box-sizing: border-box;
