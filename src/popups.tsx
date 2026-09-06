@@ -372,6 +372,7 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
             // card under the title, and a preview that has to be read past
             // three chips is not a preview.
             <PoplurDialog
+              variant="media"
               dataId={item.content.id}
               title={item.content.user ?? 'Your pop'}
               subtitle={item.content.caption ?? item.content.media?.alt ?? item.content.name}

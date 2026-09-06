@@ -1305,25 +1305,35 @@
   gap: 5px;
   width: 44px;
   min-height: 30px;
-  padding: 0 4px;
-  border: 1px solid rgba(255, 45, 85, 0.55);
-  border-radius: 11px;
-  background: rgba(28, 4, 14, 0.72);
+  padding: 0;
+  /* No chip behind it (user-ordered 6 Sep): the word IS the button, the way
+     the feed's own live flag is a word and a dot. A filled pill here read as
+     a third kind of control beside the clay icons it stands under. */
+  border: 0;
+  background: none;
+  /* The same shader the radius figures wear, in live red: a solid fill with a
+     dark rim and a glow, so it reads over a bright viewfinder or a dark one. */
   color: #ff2d55;
-  font: 900 9px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
-  letter-spacing: 0.12em;
-  text-shadow: 0 1px 0 rgba(40, 0, 12, 0.7);
-  transition: transform 120ms ease, background 160ms ease;
+  -webkit-text-fill-color: #ff2d55;
+  -webkit-text-stroke: 1.5px rgba(40, 0, 12, 0.85);
+  paint-order: stroke fill;
+  filter:
+    drop-shadow(0 2px 0 rgba(46, 0, 14, 0.5))
+    drop-shadow(0 0 8px rgba(255, 45, 85, 0.55));
+  font: 900 10px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.14em;
+  transition: transform 120ms ease, filter 160ms ease;
 }
 .cameraLive:active { transform: scale(0.94); }
 .cameraLive:disabled { opacity: 0.32; }
 
-/* On air: the button fills, so the state is unmistakable from across a room. */
+/* On air: brighter, and the dot blinks. Still no box. */
 .cameraLiveOn {
-  border-color: #ff2d55;
-  background: linear-gradient(180deg, #ff2d55, #c40f34);
   color: #fff;
-  box-shadow: 0 0 12px rgba(255, 45, 85, 0.6);
+  -webkit-text-fill-color: #fff;
+  filter:
+    drop-shadow(0 2px 0 rgba(46, 0, 14, 0.55))
+    drop-shadow(0 0 10px rgba(255, 45, 85, 0.95));
 }
 
 .cameraLiveDot {
@@ -1337,7 +1347,7 @@
 /* Only the live one blinks; at rest the dot is a quiet marker, not an alarm. */
 .cameraLiveOn .cameraLiveDot {
   background: #fff;
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.95);
   animation: cameraLiveBlink 1.15s steps(1, end) infinite;
 }
 @keyframes cameraLiveBlink {
@@ -1346,4 +1356,5 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .cameraLiveOn .cameraLiveDot { animation: none; }
+}
 }

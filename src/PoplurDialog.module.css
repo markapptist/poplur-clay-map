@@ -254,3 +254,55 @@
 @media (prefers-reduced-motion: reduce) {
   .dialog { animation: none; }
 }
+
+/* ── The map's pop window ────────────────────────────────────────────────────
+   Media first: the pop you tapped, playing if it is a video, and the two ways
+   to act on it. No clay tab, no frame, no heading — the point card under the
+   map's title already says whose pop this is and how far it reaches, so the
+   window only has to show the thing itself. */
+.dialogMedia {
+  margin-top: 0;
+  max-height: 100%;
+  border: 0;
+  border-radius: 18px;
+  background: rgba(10, 4, 12, 0.82);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.panelMedia {
+  gap: 8px;
+  padding: 0 0 10px;
+}
+
+/* Full-bleed content: the picture reaches the window's edges, with the actions
+   sitting under it rather than inside a second box. */
+.panelMedia .media {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.panelMedia .primary,
+.panelMedia .secondary {
+  width: calc(100% - 20px);
+  margin: 0 10px;
+}
+
+/* Present for screen readers, absent on screen: the window shows the pop, and
+   the heading would be the blocky part all over again. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+

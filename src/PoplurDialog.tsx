@@ -39,6 +39,7 @@ export default function PoplurDialog({
   onClose,
   dataId,
   ariaLabel,
+  variant = 'card',
 }: {
   eyebrow?: string
   title: string
@@ -55,7 +56,17 @@ export default function PoplurDialog({
   onClose: () => void
   dataId?: string
   ariaLabel?: string
+  /**
+   * 'card' is the Poplur dialog everything else uses: the clay tab, the big
+   * title, the pills. 'media' is the map's pop window — the content itself and
+   * the two ways to act on it, with no frame, no logo and no heading. A pop
+   * you tapped on the map is already identified by the card under the title;
+   * repeating it in a blocky frame around the picture was the thing in the way
+   * (user-ordered 6 Sep). The title still ships, for screen readers.
+   */
+  variant?: 'card' | 'media'
 }) {
+  const mediaFirst = variant === 'media'
   const stop = (event: { stopPropagation: () => void }) => event.stopPropagation()
   const activateMediaFromKeyboard = (event: KeyboardEvent<HTMLElement>) => {
     if (!onMediaActivate || (event.key !== 'Enter' && event.key !== ' ')) return
@@ -72,19 +83,23 @@ export default function PoplurDialog({
       onClick={stop}
     >
       <article
-        className={styles.dialog}
+        className={mediaFirst ? `${styles.dialog} ${styles.dialogMedia}` : styles.dialog}
         role="dialog"
         aria-modal="true"
         aria-label={ariaLabel ?? title}
       >
-        <span className={styles.tab} aria-hidden="true">
-          <img src="logo_icon.png" alt="" draggable={false} />
-        </span>
+        {!mediaFirst && (
+          <span className={styles.tab} aria-hidden="true">
+            <img src="logo_icon.png" alt="" draggable={false} />
+          </span>
+        )}
         <button type="button" className={styles.close} aria-label="Close" onClick={onClose}>×</button>
-        <div className={styles.panel}>
-          {eyebrow && <p className={styles.eyebrow}>{eyebrow}</p>}
-          <h2 className={styles.title}>{title}</h2>
-          {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
+        <div className={mediaFirst ? `${styles.panel} ${styles.panelMedia}` : styles.panel}>
+          {eyebrow && !mediaFirst && <p className={styles.eyebrow}>{eyebrow}</p>}
+          {mediaFirst
+            ? <h2 className={styles.srOnly}>{title}</h2>
+            : <h2 className={styles.title}>{title}</h2>}
+          {subtitle && !mediaFirst && <p className={styles.subtitle}>{subtitle}</p>}
           {media && (
             <figure
               className={`${styles.media}${onMediaActivate ? ` ${styles.mediaInteractive}` : ''}`}

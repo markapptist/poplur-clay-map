@@ -6490,6 +6490,12 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     mapPointHighlightMarkerRef.current?.remove()
     mapPointHighlightMarkerRef.current = null
     if (!map || mapEpoch === 0 || radiusPreviewLaunch || !focusedMapPoint) return
+    // Where YOU stand already has a pin — the clay one above, wearing your
+    // colour and your face. Drawing the selection halo there too stacked two
+    // markers on one spot and read as two pins (user-ordered 6 Sep). The
+    // you-pin is the marker for current location; the halo belongs to the
+    // points that have no pin of their own.
+    if (focusedMapPoint.kind === 'current') return
 
     const root = document.createElement('div')
     root.className = styles.mapPointHighlight
