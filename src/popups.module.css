@@ -82,7 +82,6 @@
   position: absolute;
   inset: 0;
   display: grid;
-  place-items: center;
   /* BOTH tracks are bounded by this wrapper rather than by the card.
      An implicit `auto` track takes its minimum size from the item, and a grid
      item with a definite `width` contributes that width as its minimum — so
@@ -99,14 +98,15 @@
      now 70.7..322.3 — dead centre. */
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
-  /* Centre within the room ABOVE the home chrome: the cube/counters band at
-     the bottom is opaque UI, so a dialog centred on the raw viewport read as
-     sitting low and clipped its own actions behind that band on device. */
-  padding: max(18px, env(safe-area-inset-top)) var(--popup-safe-side)
-    max(18px, env(safe-area-inset-bottom), var(--poplur-home-clearance, 18px));
-  background: rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
+  /* The pop window fills the screen now (user-ordered 6 Sep), so there is no
+     inset to centre within and no scrim to sit on: the window IS the surface.
+     The safe-area padding, the side rails and the blurred backdrop all moved
+     out — the window's own action scrim handles the bottom inset instead.
+     `stretch` rather than `center` so the dialog takes the whole track; the
+     bounded minmax(0, 1fr) tracks stay, since they are what keeps the item
+     from growing the grid past the screen. */
+  place-items: stretch;
+  padding: 0;
 }
 
 .mapContent {

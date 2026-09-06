@@ -260,35 +260,80 @@
    to act on it. No clay tab, no frame, no heading — the point card under the
    map's title already says whose pop this is and how far it reaches, so the
    window only has to show the thing itself. */
+/* Edge to edge (user-ordered 6 Sep). The window was a 344px card floating on a
+   scrim with a × in the corner and its buttons stacked in a panel underneath;
+   it is now the pop at full screen with the actions ON it and no chrome at all
+   — no radius, no border, no shadow, no blur, nothing to read past. */
+.hostMedia {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+}
+
 .dialogMedia {
   margin-top: 0;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  padding: 0;
   border: 0;
-  border-radius: 18px;
-  background: rgba(10, 4, 12, 0.82);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  border-radius: 0;
+  background: #08060a;
+  box-shadow: none;
   overflow: hidden;
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .panelMedia {
-  gap: 8px;
-  padding: 0 0 10px;
+  gap: 0;
+  height: 100%;
+  max-height: none;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  overflow: hidden;
 }
 
-/* Full-bleed content: the picture reaches the window's edges, with the actions
-   sitting under it rather than inside a second box. */
+/* The picture IS the window: it takes every pixel the panel has. */
 .panelMedia .media {
+  flex: 1 1 auto;
   margin: 0;
+  height: 100%;
+  max-height: none;
+  aspect-ratio: auto;
   border: 0;
   border-radius: 0;
+  box-shadow: none;
 }
 
-.panelMedia .primary,
-.panelMedia .secondary {
-  width: calc(100% - 20px);
-  margin: 0 10px;
+/* The actions sit inside the content, over a scrim that rises from the foot of
+   the pop so white-on-photo stays readable whatever the picture is. */
+.mediaActions {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 72px 18px max(20px, env(safe-area-inset-bottom));
+  background: linear-gradient(
+    180deg,
+    rgba(8, 6, 10, 0) 0%,
+    rgba(8, 6, 10, 0.55) 38%,
+    rgba(8, 6, 10, 0.92) 100%
+  );
+  pointer-events: auto;
+}
+
+.mediaActions .primary,
+.mediaActions .secondary {
+  width: 100%;
+  margin: 0;
 }
 
 /* Present for screen readers, absent on screen: the window shows the pop, and

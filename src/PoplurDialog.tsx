@@ -68,19 +68,54 @@ export default function PoplurDialog({
 }) {
   const mediaFirst = variant === 'media'
   const stop = (event: { stopPropagation: () => void }) => event.stopPropagation()
+  // With no × and nothing around the window to tap, the pop itself is the way
+  // out. PopupHost's tap-anywhere dismissal explicitly skips anything inside
+  // the popup host, and this window now IS the whole screen — so without this
+  // the only exits would be the two actions and the 10s expiry.
+  const dismissFromBackdrop = (event: { stopPropagation: () => void }) => {
+    event.stopPropagation()
+    onClose()
+  }
   const activateMediaFromKeyboard = (event: KeyboardEvent<HTMLElement>) => {
     if (!onMediaActivate || (event.key !== 'Enter' && event.key !== ' ')) return
     event.preventDefault()
     onMediaActivate()
   }
+  // Fullscreen, the picture is not a button: tapping it closes the window.
+  // "See in Feed" sits ON the pop now and carries that action, so nothing is
+  // lost by taking it off the media itself — and a full-screen tap target that
+  // navigates would leave no way to simply back out.
+  const mediaActivatable = !mediaFirst && !!onMediaActivate
+  const actions = (
+    <>
+      {primaryAction && (
+        <button type="button" className={styles.primary} onClick={primaryAction.onActivate}>
+          {primaryAction.label} <span aria-hidden="true">→</span>
+        </button>
+      )}
+      {/* The DM action reads as a REAL button, the same weight as the
+          primary: writing to a person is a destination, not fine print. */}
+      {tertiaryAction && (
+        <button type="button" className={styles.primary} onClick={tertiaryAction.onActivate}>
+          {tertiaryAction.label} <span aria-hidden="true">→</span>
+        </button>
+      )}
+      {secondaryAction && (
+        <button type="button" className={styles.secondary} onClick={secondaryAction.onActivate}>
+          {secondaryAction.label}
+        </button>
+      )}
+    </>
+  )
+  const hasActions = !!(primaryAction || tertiaryAction || secondaryAction)
   return (
     <section
-      className={styles.host}
+      className={mediaFirst ? `${styles.host} ${styles.hostMedia}` : styles.host}
       data-poplur-dialog={dataId ?? ''}
       data-poplur-native-hit-region
       onPointerDown={stop}
       onPointerUp={stop}
-      onClick={stop}
+      onClick={mediaFirst ? dismissFromBackdrop : stop}
     >
       <article
         className={mediaFirst ? `${styles.dialog} ${styles.dialogMedia}` : styles.dialog}
@@ -93,7 +128,13 @@ export default function PoplurDialog({
             <img src="logo_icon.png" alt="" draggable={false} />
           </span>
         )}
-        <button type="button" className={styles.close} aria-label="Close" onClick={onClose}>×</button>
+        {/* The fullscreen pop window carries no × (user-ordered 6 Sep): it is
+            the pop, edge to edge, and a chrome button in the corner is the
+            frame all over again. A tap on the pop itself closes it — see
+            `dismissFromBackdrop`. */}
+        {!mediaFirst && (
+          <button type="button" className={styles.close} aria-label="Close" onClick={onClose}>×</button>
+        )}
         <div className={mediaFirst ? `${styles.panel} ${styles.panelMedia}` : styles.panel}>
           {eyebrow && !mediaFirst && <p className={styles.eyebrow}>{eyebrow}</p>}
           {mediaFirst
@@ -102,11 +143,11 @@ export default function PoplurDialog({
           {subtitle && !mediaFirst && <p className={styles.subtitle}>{subtitle}</p>}
           {media && (
             <figure
-              className={`${styles.media}${onMediaActivate ? ` ${styles.mediaInteractive}` : ''}`}
-              role={onMediaActivate ? 'button' : undefined}
-              tabIndex={onMediaActivate ? 0 : undefined}
-              aria-label={onMediaActivate ? `Show ${title}` : undefined}
-              onClick={onMediaActivate}
+              className={`${styles.media}${mediaActivatable ? ` ${styles.mediaInteractive}` : ''}`}
+              role={mediaActivatable ? 'button' : undefined}
+              tabIndex={mediaActivatable ? 0 : undefined}
+              aria-label={mediaActivatable ? `Show ${title}` : undefined}
+              onClick={mediaActivatable ? onMediaActivate : undefined}
               onKeyDown={activateMediaFromKeyboard}
             >
               {media.kind === 'video' ? (
@@ -120,6 +161,14 @@ export default function PoplurDialog({
               ) : (
                 <img src={media.src} alt={media.alt} draggable={false} />
               )}
+              {mediaFirst && hasActions && (
+                // Inside the content, not under it: a scrim at the foot of the
+                // pop with the actions on top. `stop` keeps a button press from
+                // also reaching the close-on-tap handler on the way out.
+                <div className={styles.mediaActions} onClick={stop}>
+                  {actions}
+                </div>
+              )}
             </figure>
           )}
           {pills && pills.length > 0 && (
@@ -132,23 +181,7 @@ export default function PoplurDialog({
               ))}
             </div>
           )}
-          {primaryAction && (
-            <button type="button" className={styles.primary} onClick={primaryAction.onActivate}>
-              {primaryAction.label} <span aria-hidden="true">→</span>
-            </button>
-          )}
-          {/* The DM action reads as a REAL button, the same weight as the
-              primary: writing to a person is a destination, not fine print. */}
-          {tertiaryAction && (
-            <button type="button" className={styles.primary} onClick={tertiaryAction.onActivate}>
-              {tertiaryAction.label} <span aria-hidden="true">→</span>
-            </button>
-          )}
-          {secondaryAction && (
-            <button type="button" className={styles.secondary} onClick={secondaryAction.onActivate}>
-              {secondaryAction.label}
-            </button>
-          )}
+          {!mediaFirst && actions}
         </div>
       </article>
     </section>
