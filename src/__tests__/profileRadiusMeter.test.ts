@@ -135,4 +135,46 @@ describe('the opened post’s inner arrows', () => {
   it('does not switch the post under a sheet the user is deciding on', () => {
     expect(profile).toMatch(/onStep=\{direction => \{\s*\/\/[^\n]*\n\s*if \(viewerCovered\) return/)
   })
+
+  it('reserves the arrows own block, so the last button cannot land on a chevron', () => {
+    // The rail used to reserve the FEED's channel stepper (six rows) while the
+    // block actually under it is four chevrons, so it overflowed its own box.
+    expect(profile).toContain("const PROFILE_POST_STEP_RESERVE =")
+    expect(profile).toContain("'calc(4 * var(--poplur-feed-ctl) + 3 * var(--poplur-feed-gap) + var(--poplur-feed-seam))'")
+    expect(profile).toContain('reserveBelow={PROFILE_POST_STEP_RESERVE}')
+    const railSource = read('../PostActionRail.tsx')
+    expect(railSource).toContain('fillReserveBelow={reserveBelow ?? FEED_STEPPER_RESERVE}')
+    // Both blocks are written in the column's own variables, never in pixels:
+    // the controls grow with the column and a literal would misreserve.
+    expect(railSource).not.toMatch(/fillReserveBelow="[^"]*\d+px/)
+  })
+})
+
+describe('the opened pop and its meter hang from the same two guides', () => {
+  const railCssShared = read('../TabControlRail.module.css')
+  const profileCss = read('../ProfileTwin.module.css')
+
+  it('starts both rails on the header line, with the profile override standing clear', () => {
+    // The action rail and the tower opposite it are a PAIR: same top, same
+    // bottom. The profile's own rule re-hung the left one at the avatar's
+    // 110px, so the two columns started 43px apart.
+    expect(railCssShared).toContain('--poplur-feed-action-top,')
+    expect(railCss).toContain('--poplur-feed-action-top,')
+    expect(read('../TabControlRail.tsx')).toContain("data-poplur-control-rail-fill={fill ? 'true' : undefined}")
+    expect(profileCss).toContain('.profile :global([data-poplur-control-rail]:not([data-poplur-control-rail-fill])) {')
+    // The profile's three selfie actions still span the avatar; only the
+    // filling rail is exempt.
+    expect(profileCss).toContain('top: var(--profile-control-top);')
+  })
+
+  it('drops the two lines of text the home chrome was covering', () => {
+    for (const gone of ['viewerHint', 'browse your posts', 'styles.viewerTitle']) {
+      expect(profile, gone).not.toContain(gone)
+      }
+    expect(profileCss).not.toContain('.viewerHint')
+    expect(profileCss).not.toContain('.viewerTitle')
+    // What stays in that band clears the chrome instead of hiding behind it.
+    expect(profileCss).toContain('bottom: calc(var(--poplur-home-clearance) + 10px);')
+    expect(profileCss).toContain('bottom: calc(var(--poplur-home-clearance) + 64px);')
+  })
 })

@@ -43,6 +43,12 @@ export default function TabControlRail({
       role="toolbar"
       aria-label={label}
       data-poplur-control-rail={side}
+      // A `fill` rail is hung from the header line to the home chrome and is
+      // half of a PAIR. A screen that re-hangs its own generic rails (the
+      // profile pins its three selfie actions to the avatar) must be able to
+      // leave this one alone, and a class from a CSS module cannot be selected
+      // from another module's stylesheet.
+      data-poplur-control-rail-fill={fill ? 'true' : undefined}
     >
       {children}
     </div>

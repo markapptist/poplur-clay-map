@@ -214,8 +214,15 @@
    selfie's bottom edge.
    Three 44px items in 200px leaves 68px, so space-between yields equal 34px
    gaps. ONLY the vertical box is touched: .left/.right still own x, so the
-   rail stays on the shell edge exactly where it is. */
-.profile :global([data-poplur-control-rail]) {
+   rail stays on the shell edge exactly where it is.
+   The opened post's action rail is EXEMPT, hence the :not(). It is a `fill`
+   rail hung from the header line down to the home chrome, paired with the
+   radius tower opposite it, and this rule was re-hanging it at the avatar's
+   110px in a 200px box with gap: 0 — so the two rails started 43px apart
+   (the tops were visibly not parallel), the buttons had no air between them,
+   and eight of them in a 200px box overran the inner arrows below, which is
+   why delete sat on the "post above" chevron. */
+.profile :global([data-poplur-control-rail]:not([data-poplur-control-rail-fill])) {
   top: var(--profile-control-top);
   height: 200px;
   align-content: space-between;
@@ -1154,47 +1161,34 @@
 
 .viewerTool:active { transform: translateY(2px) scale(0.97); }
 
-.viewerTitle {
-  position: absolute;
-  left: 18px;
-  right: 18px;
-  bottom: 118px;
-  color: #fff;
-  font: 800 17px/1.35 system-ui, -apple-system, sans-serif;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
-}
+/* The pop's title and the "browse your posts" hint used to sit here, at
+   bottom 118px and 96px — both INSIDE the home chrome's clearance band, so
+   they were drawn behind the cube and the stat card and could not be read.
+   The channel is already on the card at the top, the caption is already in
+   the captions band, and the arrows announce themselves; the two lines were
+   redundant as well as hidden, and are gone (5 Sep 2026).
 
-/* The growth line sits between the pop's title and the browse hint, on the
-   viewer's dark ground: the curve reads in the pink the takeover pulse uses
-   when a pop is growing, and in the map's blue when it has shrunk. */
+   The growth line sits on the viewer's dark ground: the curve reads in the
+   pink the takeover pulse uses when a pop is growing, and in the map's blue
+   when it has shrunk. */
 .viewerGrowth {
   position: absolute;
   left: 18px;
   right: 18px;
-  /* Above a two-line title (bottom 118px, ~46px tall): the sparkline must
-     never sit on the words. Captions, when on, share this band at 166px. */
-  bottom: 174px;
+  /* Clear of the home chrome, not a measured number: it was hung above the
+     title that is now gone, at a height the cube covered anyway. */
+  bottom: calc(var(--poplur-home-clearance) + 10px);
   color: rgba(255, 255, 255, 0.9);
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
-}
-
-.viewerHint {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 96px;
-  text-align: left;
-  padding-left: 18px;
-  color: rgba(255, 255, 255, 0.55);
-  font: 700 11px system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.4px;
 }
 
 .viewerCaptions {
   position: absolute;
   left: 76px;
   right: 18px;
-  bottom: 166px;
+  /* Above the growth line, which is itself above the home chrome. Captions at
+     a flat 166px were behind the cube, which is no place to read a caption. */
+  bottom: calc(var(--poplur-home-clearance) + 64px);
   margin: 0;
   padding: 7px 10px;
   border-radius: 5px;

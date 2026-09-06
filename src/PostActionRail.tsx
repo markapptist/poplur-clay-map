@@ -10,6 +10,13 @@ import styles from './PostActionRail.module.css'
  * language, not two similar-looking copies that can drift apart over time.
  * Delete is optional because it only belongs to authenticated owner posts.
  */
+/** The feed's channel stepper, which sits under this rail in the same column:
+ *  four dial-sized controls, two readouts, five gaps and the seam above. In
+ *  terms of the column's own variables, never a number — the stepper grows
+ *  with the control size, and a literal would misreserve the moment it did. */
+const FEED_STEPPER_RESERVE =
+  'calc(4 * var(--poplur-feed-ctl) + 2 * var(--poplur-feed-number) + 5 * var(--poplur-feed-gap) + var(--poplur-feed-seam))'
+
 export default function PostActionRail({
   side,
   label,
@@ -27,6 +34,7 @@ export default function PostActionRail({
   onShowOnMap,
   onDelete,
   deletePending = false,
+  reserveBelow,
 }: {
   side: ControlSide
   label: string
@@ -51,6 +59,11 @@ export default function PostActionRail({
   onShowOnMap?: () => void
   onDelete?: () => void
   deletePending?: boolean
+  /** The room to leave below this rail for whatever shares its column. The
+   *  default is the feed's channel stepper; an opened profile post has the
+   *  four inner arrows instead, which are a shorter block, and reserving the
+   *  feed's there left the rail overflowing its own box. */
+  reserveBelow?: string
 }) {
   return (
     // Fill, because this rail is one of the feed's PAIRED columns: it has to
@@ -64,7 +77,7 @@ export default function PostActionRail({
       side={side}
       label={label}
       fill
-      fillReserveBelow="calc(4 * var(--poplur-feed-ctl) + 2 * var(--poplur-feed-number) + 5 * var(--poplur-feed-gap) + var(--poplur-feed-seam))"
+      fillReserveBelow={reserveBelow ?? FEED_STEPPER_RESERVE}
     >
       <SideControlIconButton
         fluid

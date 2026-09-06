@@ -261,6 +261,15 @@ function postPoster(post: Post): string {
   return 'logo_icon.png'
 }
 const postTileKey = (post: Post, index: number) => `${post.id ?? post.video}-${index}`
+
+/** What shares the opened post's column beneath its action rail: the four
+ *  inner arrows (ProfilePostStep — four rows and the three gaps between them),
+ *  plus the seam between the two groups. Reserving exactly this is what puts
+ *  the rail's last button one seam above the first chevron rather than on it,
+ *  and it leaves the rail's own box holding its buttons at the column's even
+ *  pitch instead of overflowing past the bottom of it. */
+const PROFILE_POST_STEP_RESERVE =
+  'calc(4 * var(--poplur-feed-ctl) + 3 * var(--poplur-feed-gap) + var(--poplur-feed-seam))'
 function releaseViewerMedia(video: HTMLVideoElement): void {
   video.pause()
   video.removeAttribute('src')
@@ -2962,6 +2971,7 @@ export default function ProfileTwin({
           <PostActionRail
             side={controlSide}
             label="Profile post controls"
+            reserveBelow={PROFILE_POST_STEP_RESERVE}
             muted={viewerMuted}
             captionsOn={viewerCaptionsOn}
             commentsOpen={viewerCommentOpen}
@@ -2993,7 +3003,6 @@ export default function ProfileTwin({
           <div className={styles.viewerTop}>
             <span className={styles.viewerCh}>{viewerPost.ch}</span>
           </div>
-          <p className={styles.viewerTitle}>{viewerPost.title}</p>
           {/* How this pop grew: its own server-written history, from the reach
               it was posted with to the reach it holds now. A pop with no
               history yet shows nothing rather than a guess. */}
@@ -3005,7 +3014,6 @@ export default function ProfileTwin({
           {viewerCaptionsOn && (
             <p className={styles.viewerCaptions} aria-live="polite">{viewerPost.title}</p>
           )}
-          <p className={styles.viewerHint}>▲ ▼ browse your posts</p>
 
           {viewerCommentOpen && (
             <div className={`${styles.viewerDialogScrim} ${surfaceStyles.scrim}`} onClick={() => setViewerCommentOpen(false)}>
