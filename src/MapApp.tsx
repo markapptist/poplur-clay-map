@@ -5199,15 +5199,33 @@ export default function MapApp() {
             }])
             // The zoom rail is a radius METER whenever a pin is focused, so
             // the striker rings up to the same number the ground just took.
-            setFocusedMapPoint({
+            const point = {
               key: 'radius-bench',
               id: 'radius-bench',
-              kind: 'pin',
+              kind: 'pin' as const,
               name: 'Radius bench',
-              coords: [centre.lng, centre.lat],
+              coords: [centre.lng, centre.lat] as [number, number],
               mine: true,
               radiusKm,
-            })
+            }
+            setFocusedMapPoint(point)
+            // And the shell's RADIUS card reads the traversed point off this
+            // message, not off the map's own state — the card lives in Home,
+            // outside this document. Without it the bench, the striker and the
+            // terrain agreed while the number in the corner sat at zero.
+            try {
+              window.parent?.postMessage({
+                type: 'poplur-map-point',
+                key: point.key,
+                id: point.id,
+                kind: point.kind,
+                name: point.name,
+                index: 0,
+                total: 1,
+                radiusKm,
+                mine: true,
+              }, '*')
+            } catch { /* standalone route has no shell listening */ }
           }}
           onClear={() => {
             const map = mapRef.current

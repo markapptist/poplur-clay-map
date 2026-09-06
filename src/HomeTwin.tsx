@@ -930,9 +930,15 @@ const CLAY_MAP_SRC = (() => {
   const locationQuery = deferLocation ? '&deferLocation=1' : ''
   const managedLocationQuery = managedLocation ? '&managedLocation=1' : ''
   const rnWebShellQuery = isRNWebShellRoute() ? '&rnWebShell=1' : ''
+  // The radius bench lives in the map document, but the RADIUS card it has to
+  // agree with lives out here in the shell — so the flag has to cross into the
+  // iframe or the two can never be read side by side.
+  const radiusBenchQuery = import.meta.env.DEV && parentParams.get('radius-lab') === '1'
+    ? '&radius-lab=1'
+    : ''
   return typeof window !== 'undefined' && window.location.protocol.startsWith('http')
-    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}`
-    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}`
+    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}${radiusBenchQuery}`
+    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}${radiusBenchQuery}`
 })()
 
 /** The Map navigator's time of day from this document's own clock, used
