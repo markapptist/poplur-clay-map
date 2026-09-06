@@ -116,6 +116,11 @@
      is genuinely room. */
   grid-auto-rows: var(--poplur-feed-ctl);
   gap: var(--poplur-feed-gap);
+  /* Top-aligned, like the map's own rail. Centring the stack was tried and
+     is wrong here: the column can be shorter than ten controls at house
+     spacing, and `center` then overflows BOTH ends — measured with the first
+     control at y=-174, off the top of the screen. Starting at the header line
+     puts the same ten controls where the map puts them. */
   align-content: start;
   width: var(--poplur-feed-ctl);
 }

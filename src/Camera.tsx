@@ -1901,7 +1901,7 @@ export default function Camera({
           camera's jobs), so the two blocks share the feed's tile formula and
           land on the same bottom line. The reserve is the stepper's own
           block: four arrow tiles, two readouts, their gaps, and the seam. The
-          thirteen-row size is set at the camera root (.poplur-feed-rows-13). */}
+          ten-row size is set at the camera root (.poplur-camera-rail). */}
       <TabControlRail
         side={controlSide}
         label="Camera controls"
@@ -2211,7 +2211,7 @@ export default function Camera({
   )
 
   return (
-    <div className={`${styles.camPager} poplur-feed-rows-13`} data-poplur-screen="camera" aria-label="Camera">
+    <div className={`${styles.camPager} poplur-camera-rail`} data-poplur-screen="camera" aria-label="Camera">
       <div
         className={animated ? styles.camPagerTrack : `${styles.camPagerTrack} ${styles.camPagerSnap}`}
         style={{ transform: `translateY(${-pos * 25}%)` }}
