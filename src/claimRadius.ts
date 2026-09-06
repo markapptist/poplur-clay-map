@@ -2,8 +2,8 @@
  * One policy for every place a Pop can claim ground.
  *
  * The account's earned radius is the authority. A control may offer less than
- * the account owns (the product currently caps one drop at 25 km), but it may
- * never manufacture radius the account has not earned yet.
+ * the account owns, but it may never manufacture radius the account has not
+ * earned yet — with one deliberate exception below, the discovery seed.
  */
 export const CLAIM_RADIUS_STEP_KM = 0.5
 /**
@@ -14,13 +14,35 @@ export const CLAIM_RADIUS_STEP_KM = 0.5
  * takes the account's own total below it.
  */
 export const CLAIM_RADIUS_HARD_MAX_KM = 6_371
+/**
+ * The floor on one drop: every post is discoverable at 5 km, earned or not.
+ *
+ * A post nobody can find is not a post. Until 6 Sep 2026 an account with no
+ * earned radius was offered a picker whose limit was literally zero — slider
+ * disabled, "0 km available", "this post stays at 0 km" — so a new account's
+ * first posts went out invisible to everyone, including in the feed, which is
+ * the surface the whole product discovers through. Nobody could engage with
+ * them, so they earned nothing, so the picker stayed at zero: the account had
+ * no way out of the state by using the app.
+ *
+ * The seed is a FLOOR, not a bonus (user-ordered 6 Sep): earning your first
+ * 5 km subsumes it rather than stacking on it, so "the radius you earned is
+ * the radius you claim" stays literally true for every account past the floor.
+ *
+ * Server side this is POST_DISCOVERY_SEED_METERS in
+ * Poplur2025-iOS/functions/src/accountRadius.ts, and the create rule allows a
+ * seed of the account's earned total PLUS this — a strictly looser bound than
+ * the floor reading here, so the picker can never offer a claim the rule then
+ * refuses on upload.
+ */
+export const CLAIM_RADIUS_SEED_KM = 5
 
 function finiteNonNegative(value: number): number {
   return Number.isFinite(value) ? Math.max(0, value) : 0
 }
 
 /** Largest half-kilometre value this account can put on one post: what it has
- *  earned, and never more. */
+ *  earned, never more, and never less than the discovery seed. */
 export function claimRadiusLimitKm(accountRadiusKm: number): number {
   const available = Math.min(
     CLAIM_RADIUS_HARD_MAX_KM,
@@ -28,69 +50,43 @@ export function claimRadiusLimitKm(accountRadiusKm: number): number {
   )
   // Controls move in half-kilometre steps. Round the entitlement down so the
   // final step can never exceed the account total because of UI rounding.
-  return Math.floor((available + Number.EPSILON) / CLAIM_RADIUS_STEP_KM)
+  const earned = Math.floor((available + Number.EPSILON) / CLAIM_RADIUS_STEP_KM)
     * CLAIM_RADIUS_STEP_KM
+  return Math.max(CLAIM_RADIUS_SEED_KM, earned)
 }
 
 /**
  * Normalize an untrusted draft/message value against the current entitlement.
- * Invalid and negative values fail closed to zero; callers choose a friendly
- * default explicitly with preferredClaimRadiusKm().
+ *
+ * Invalid and negative values fail to the discovery seed rather than to zero.
+ * They used to fail to zero, which was safe when zero was a real state and is
+ * now just an unpublishable post: the account is entitled to the seed
+ * unconditionally, so the safe answer and the floor are the same number.
  */
 export function clampClaimRadiusKm(
   requestedRadiusKm: number,
   accountRadiusKm: number,
 ): number {
   const limit = claimRadiusLimitKm(accountRadiusKm)
-  if (limit === 0) return 0
   const requested = finiteNonNegative(requestedRadiusKm)
   const stepped = Math.round(requested / CLAIM_RADIUS_STEP_KM)
     * CLAIM_RADIUS_STEP_KM
-  return Math.min(limit, stepped)
-}
-
-/** Default shown by a fresh picker without weakening the entitlement cap. */
-export function preferredClaimRadiusKm(
-  accountRadiusKm: number,
-  preferredRadiusKm = 2,
-): number {
-  const limit = claimRadiusLimitKm(accountRadiusKm)
-  if (limit === 0) return 0
-  return Math.max(
-    CLAIM_RADIUS_STEP_KM,
-    clampClaimRadiusKm(preferredRadiusKm, accountRadiusKm),
-  )
+  return Math.min(limit, Math.max(CLAIM_RADIUS_SEED_KM, stepped))
 }
 
 /**
- * What a picker should show when the account's entitlement changes under it.
+ * What a fresh picker should open at.
  *
- * The authoritative total arrives from Firestore after the composer may
- * already be open, and until it lands the entitlement reads as zero. Clamping
- * alone can only ever lower a value, so a picker that opened at zero stayed at
- * zero for the whole session and published a post claiming no ground at all,
- * even for an account with plenty of earned radius. When the entitlement goes
- * from nothing to something, adopt the friendly default; otherwise keep the
- * chosen value, lowered if the account can no longer back it.
- *
- * `previousLimitKm` is what made this legitimate: a deliberate zero is only
- * reachable while an entitlement already existed, so keying off that
- * transition never overrides a real choice.
+ * A preference below the seed cannot be honoured — there is no such post — so
+ * the composers' old 2 km / 3 km / 3.5 km defaults all now open at the 5 km
+ * seed. A preference ABOVE it is still honoured for an account that can back
+ * it, which is the only reason this takes an argument at all.
  */
-export function claimRadiusAfterEntitlementChange(
-  currentRadiusKm: number,
+export function preferredClaimRadiusKm(
   accountRadiusKm: number,
-  previousLimitKm: number,
-  preferredRadiusKm?: number,
+  preferredRadiusKm = CLAIM_RADIUS_SEED_KM,
 ): number {
-  const limit = claimRadiusLimitKm(accountRadiusKm)
-  const entitlementJustArrived = finiteNonNegative(previousLimitKm) === 0 && limit > 0
-  if (entitlementJustArrived && finiteNonNegative(currentRadiusKm) === 0) {
-    return preferredRadiusKm === undefined
-      ? preferredClaimRadiusKm(accountRadiusKm)
-      : preferredClaimRadiusKm(accountRadiusKm, preferredRadiusKm)
-  }
-  return clampClaimRadiusKm(currentRadiusKm, accountRadiusKm)
+  return clampClaimRadiusKm(preferredRadiusKm, accountRadiusKm)
 }
 
 export function formatClaimRadiusKm(value: number): string {

@@ -17,20 +17,25 @@ describe('account claim-radius integration', () => {
     expect(css).toMatch(/\.searchShortcut,[\s\S]*?border:\s*2px solid #ef5ba8/)
   })
 
-  it('preserves zero and clamps again at every active publishing boundary', () => {
+  it('floors at the discovery seed and clamps again at every active publishing boundary', () => {
     const clayMap = source('ClayMap.tsx')
     const home = source('HomeTwin.tsx')
     const composer = source('PostComposer.tsx')
     const review = source('UploadFlowReview.tsx')
 
-    expect(clayMap).toContain('disabled={claimRadiusMaxKm === 0}')
+    // The rail is never disabled now: an account that has earned nothing is
+    // still entitled to the seed, so there is no zero state to lock out.
+    expect(clayMap).toContain('min={CLAIM_RADIUS_SEED_KM}')
+    expect(clayMap).not.toContain('disabled={claimRadiusMaxKm === 0}')
     expect(clayMap).toContain('const radiusKmAtDrop = clampClaimRadiusKm')
     expect(home).not.toContain('Number(event.data.radiusKm) || undefined')
     expect(home).toContain('authoritativeAccountRadiusKmRef.current')
     expect(composer).toContain('const publishedRadiusKm = clampClaimRadiusKm')
     expect(composer).toContain('radiusKm: publishedRadiusKm,')
     expect(review).toContain('const claimRadiusMaxKm = useClaimRadiusLimitKm()')
-    expect(review).toContain('aria-disabled={maxRadiusKm === 0}')
+    expect(review).toContain('const RADIUS_MIN = CLAIM_RADIUS_SEED_KM')
+    expect(review).not.toContain('aria-disabled={maxRadiusKm === 0}')
+    expect(composer).not.toContain('this post stays at 0 km')
   })
 
   it('uses the all-post Firestore total for the HUD and legacy reach readers', () => {

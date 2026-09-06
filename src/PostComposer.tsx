@@ -41,7 +41,7 @@ import {
   hidesPublicPostOrigin,
   onAccountPrivacyChange,
 } from './accountPrivacy'
-import { claimRadiusAfterEntitlementChange, clampClaimRadiusKm, formatClaimRadiusKm, preferredClaimRadiusKm } from './claimRadius'
+import { CLAIM_RADIUS_SEED_KM, clampClaimRadiusKm, formatClaimRadiusKm, preferredClaimRadiusKm } from './claimRadius'
 import { useClaimRadiusLimitKm } from './useClaimRadiusLimit'
 
 // Web twin of PostCaptureComposerOverlay.swift — the one composer every capture
@@ -207,7 +207,7 @@ export default function PostComposer({
   const [channelPickerOpen, setChannelPickerOpen] = useState(false)
   const claimRadiusMaxKm = useClaimRadiusLimitKm()
   const [radiusKm, setRadiusKm] = useState(() => target?.radiusKm === undefined
-    ? preferredClaimRadiusKm(claimRadiusMaxKm, 3)
+    ? preferredClaimRadiusKm(claimRadiusMaxKm)
     : clampClaimRadiusKm(target.radiusKm, claimRadiusMaxKm))
   const [accountPrivacy, setAccountPrivacy] = useState(accountPrivacySnapshot)
   const locationVisibility: PostLocationVisibility = hidesPublicPostOrigin(accountPrivacy)
@@ -252,18 +252,11 @@ export default function PostComposer({
   }, [claimRadiusMaxKm, reviewMode, target?.radiusKm])
 
   // The account total arrives from Firestore after this composer can already
-  // be open. Clamping alone only lowers, so a picker that opened before the
-  // total landed published a post claiming nothing.
-  const previousClaimLimitRef = useRef(claimRadiusMaxKm)
+  // be open. Clamping alone used to be unsafe here, because a picker that
+  // opened before the total landed opened at zero and clamping only lowers.
+  // The limit now floors at the discovery seed, so there is nothing to rescue.
   useEffect(() => {
-    const previousLimit = previousClaimLimitRef.current
-    previousClaimLimitRef.current = claimRadiusMaxKm
-    setRadiusKm(current => claimRadiusAfterEntitlementChange(
-      current,
-      claimRadiusMaxKm,
-      previousLimit,
-      3,
-    ))
+    setRadiusKm(current => clampClaimRadiusKm(current, claimRadiusMaxKm))
   }, [claimRadiusMaxKm])
 
   // The cube's back: one screen at a time, closing from the first. Matches
@@ -1137,7 +1130,8 @@ export default function PostComposer({
               <span>
                 <b>LOCATION</b>
                 <strong>{target ? `Selected spot · ${formatClaimRadiusKm(radiusKm)} km` : 'Choose a map spot'}</strong>
-                {target && claimRadiusMaxKm === 0 && <small>No claim radius yet; this post stays at 0 km.</small>}
+                {target && claimRadiusMaxKm === CLAIM_RADIUS_SEED_KM
+                  && <small>{formatClaimRadiusKm(CLAIM_RADIUS_SEED_KM)} km discovery seed; engagement earns more.</small>}
               </span>
               <em>{target ? 'Change' : 'Choose'}</em>
             </button>
