@@ -6290,6 +6290,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   // Persistent "you are here" marker: the Poplur pin always stands on the
   // validated live GPS point. Profile media enriches it when available, but a
   // new account without a selfie still needs a visible current-location stop.
+  // Your chosen pin colour, read here because the marker standing on you
+  // wears it (below) and a colour change has to rebuild that sprite.
+  const ownPinColor = useSyncExternalStore(onMyPinColor, myPinColor, () => null)
+  const youPinColor = ownPinColor ? PIN_COLOR_SWATCH[ownPinColor] : takeoverTint(PALETTE.pinkHot)
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
@@ -6328,7 +6332,13 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // must move the pending pin, not compose a second marker.
       if (buildStarted) { queuedCoords = coords; return }
       buildStarted = true
-      void pinWithFace({ avatar: null, color: takeoverFace, mode: '3d' })
+      // Your colour, not the takeover hue. There used to be a SECOND pin drawn
+      // on this same spot that carried the chosen colour while this one kept
+      // the transposed pink, so the map stood two pins on you and only one of
+      // them answered the colour wheel (user-ordered 6 Sep). This is the one
+      // pin now: it keeps the selfie video and ambient playback the other
+      // never had, and takes the colour the other was there for.
+      void pinWithFace({ avatar: null, color: youPinColor, pinColor: ownPinColor ?? null, mode: '3d' })
         .then(src => {
           if (cancelled || mapRef.current !== map) return
           const markerRoot = document.createElement('div')
@@ -6345,6 +6355,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           pinImage.draggable = false
           pin.appendChild(pinImage)
           markerRoot.appendChild(pin)
+          const youLabel = document.createElement('span')
+          youLabel.className = styles.dominationTerritoryLabel
+          youLabel.textContent = 'YOU'
+          markerRoot.appendChild(youLabel)
           if (usableVideo) {
             selfieVideo = document.createElement('video')
             selfieVideo.className = `${styles.popPinSelfie} ${styles.popPinSelfieVideo}`
@@ -6408,7 +6422,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       marker?.remove()
       marker = null
     }
-  }, [mapEpoch, mapRef, radiusPreviewLaunch, ownProfilePhoto, ownProfileSelfieVideo, takeoverFace])
+    // `youPinColor`/`ownPinColor` are dependencies on purpose: the marker is
+    // built once from a rendered sprite, so a colour change has to rebuild it
+    // or the pin standing on you keeps the colour it was born with while the
+    // rest of the board moves.
+  }, [mapEpoch, mapRef, radiusPreviewLaunch, ownProfilePhoto, ownProfileSelfieVideo, takeoverFace, youPinColor, ownPinColor])
 
   // ── Reach ring data: the account total, standing on the live fix ──────────
   // Same anchor contract as the you-are-here pin above — only a validated live
@@ -6456,62 +6474,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
 
   // Your chosen pin colour, read the same way the board reads it, so the
   // you-pin cannot drift from the pops it is standing among.
-  const ownPinColor = useSyncExternalStore(onMyPinColor, myPinColor, () => null)
-  const youPinColor = ownPinColor ? PIN_COLOR_SWATCH[ownPinColor] : takeoverTint(PALETTE.pinkHot)
 
-  // The pin standing where YOU are. Same clay pin the board uses for a pop, so
-  // your own ground reads in the map's own language instead of a bare dot, and
-  // it wears your profile face when you have one. Not pressable: it marks a
-  // place, it does not open a post.
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map || mapEpoch === 0 || radiusPreviewLaunch || !currentLocationPoint) return
-    let dropped = false
-    let marker: mapboxgl.Marker | null = null
-    // The pin standing on YOU wears your pin colour, like every other pop you
-    // hold. It was reading `takeoverTint(pinkHot)` — the house pink transposed
-    // by the takeover hue — which is NOT the swatch the board's pins take, so
-    // choosing a colour moved every pin except the one marking where you are.
-    // Falls back to that transposed pink when no colour has been chosen, which
-    // is what the takeover palette paints in that case anyway.
-    // `pinColor` is what picks the sprite — `color` only strokes its outline,
-    // which is why passing a hex here changed nothing. The board's own pins
-    // pass both; so does this one now.
-    void pinWithFace({ avatar: ownProfilePhoto, color: youPinColor, pinColor: ownPinColor ?? null, mode: '3d' })
-      .then(src => {
-        if (dropped || mapRef.current !== map) return
-        const root = document.createElement('div')
-        root.className = styles.popPinMarker
-        // Distinct from the selection highlight, which also marks current
-        // location — two markers sharing one id made them indistinguishable.
-        root.dataset.mapPointId = 'current:you'
-        root.dataset.mapPointKind = 'you'
-        root.style.pointerEvents = 'none'
-        const shell = document.createElement('div')
-        shell.className = styles.popPin
-        const img = document.createElement('img')
-        img.src = src
-        img.alt = ''
-        img.draggable = false
-        shell.appendChild(img)
-        root.appendChild(shell)
-        const label = document.createElement('span')
-        label.className = styles.dominationTerritoryLabel
-        label.textContent = 'YOU'
-        root.appendChild(label)
-        marker = new mapboxgl.Marker({ element: root, anchor: 'bottom' })
-          .setLngLat(currentLocationPoint)
-          .addTo(map)
-      })
-      .catch(() => { /* sprite unavailable: the map simply has no you-pin */ })
-    return () => {
-      dropped = true
-      marker?.remove()
-    }
-    // `youPinColor` is a dependency on purpose: the marker is built once from
-    // a rendered sprite, so a colour change has to rebuild it or the you-pin
-    // keeps the colour it was born with while the rest of the board moves.
-  }, [currentLocationPoint, mapEpoch, mapRef, ownProfilePhoto, radiusPreviewLaunch, youPinColor])
 
   // One universal selected-point marker. It deliberately does not depend on
   // the viewport pin budget or landmark zoom band, so an arrow can identify a
