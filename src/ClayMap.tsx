@@ -120,6 +120,7 @@ import surfaceStyles from './TransientPopupSurface.module.css'
 import { dropNewsMessage, MESSAGE_MAX } from './newsMessages'
 import {
   CLAIM_RADIUS_STEP_KM,
+  CLAIM_RADIUS_SEED_KM,
   clampClaimRadiusKm,
   formatClaimRadiusKm,
   preferredClaimRadiusKm,
@@ -2189,18 +2190,13 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   const [composeRadiusKm, setComposeRadiusKm] = useState(() =>
     preferredClaimRadiusKm(claimRadiusMaxKm),
   )
-  const previousClaimRadiusMaxKmRef = useRef(claimRadiusMaxKm)
   useEffect(() => {
-    const previousLimit = previousClaimRadiusMaxKmRef.current
-    previousClaimRadiusMaxKmRef.current = claimRadiusMaxKm
-    setComposeRadiusKm(current => {
-      // The first successful post unlocks the normal picker for the next drop,
-      // but never retroactively enlarges the zero-radius post just published.
-      if (previousLimit === 0 && claimRadiusMaxKm > 0 && !composeOpenRef.current) {
-        return preferredClaimRadiusKm(claimRadiusMaxKm)
-      }
-      return clampClaimRadiusKm(current, claimRadiusMaxKm)
-    })
+    // The account total arrives from Firestore after this picker can already
+    // be open. Clamping is all that is needed now that the limit has a floor:
+    // it can only lower a choice the account can no longer back, and the old
+    // "entitlement just arrived, adopt a default" branch existed purely to
+    // rescue a picker that had opened at zero. There is no zero to open at.
+    setComposeRadiusKm(current => clampClaimRadiusKm(current, claimRadiusMaxKm))
   }, [claimRadiusMaxKm])
   /** A hold has just opened the composer, so the click that same press also
    *  produces must not be read as an edge tap. */
@@ -7260,8 +7256,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
                       ? focusedPostLocationStatus === 'waiting'
                         ? 'Getting your location…'
                         : 'Tap the map to select a spot'
-                      : claimRadiusMaxKm === 0
-                        ? '0 km available · engagement earns radius'
+                      : claimRadiusMaxKm === CLAIM_RADIUS_SEED_KM
+                        ? `${formatClaimRadiusKm(CLAIM_RADIUS_SEED_KM * 2)} km discovery seed · engagement earns more`
                         : `${formatClaimRadiusKm(composeRadiusKm * 2)} km live coverage`}
                   </span>
                 </div>
@@ -7273,11 +7269,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
               <input
                 id="poplur-claim-radius"
                 type="range"
-                min={claimRadiusMaxKm === 0 ? 0 : CLAIM_RADIUS_STEP_KM}
+                min={CLAIM_RADIUS_SEED_KM}
                 max={claimRadiusMaxKm}
                 step={CLAIM_RADIUS_STEP_KM}
                 value={composeRadiusKm}
-                disabled={claimRadiusMaxKm === 0}
                 onInput={(e) => setComposeRadiusKm(clampClaimRadiusKm(
                   parseFloat(e.currentTarget.value),
                   claimRadiusMaxKm,
@@ -7289,12 +7284,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
                 onKeyDown={(e) => e.stopPropagation()}
                 className={styles.composeSlider}
                 aria-label="Claim radius"
-                aria-valuetext={claimRadiusMaxKm === 0
-                  ? '0 kilometres available'
-                  : `${formatClaimRadiusKm(composeRadiusKm)} kilometres, ${formatClaimRadiusKm(composeRadiusKm * 2)} kilometres across`}
+                aria-valuetext={`${formatClaimRadiusKm(composeRadiusKm)} kilometres, ${formatClaimRadiusKm(composeRadiusKm * 2)} kilometres across`}
               />
               <div className={styles.composeRadiusScale} aria-hidden="true">
-                <span>{claimRadiusMaxKm === 0 ? '0 KM' : `${formatClaimRadiusKm(CLAIM_RADIUS_STEP_KM)} KM`}</span>
+                <span>{formatClaimRadiusKm(CLAIM_RADIUS_SEED_KM)} KM</span>
                 <span>{formatClaimRadiusKm(claimRadiusMaxKm)} KM</span>
               </div>
             </section>

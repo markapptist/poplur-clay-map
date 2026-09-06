@@ -4,7 +4,7 @@ import UploadStatusView from './UploadStatusView'
 import { playPop } from './pop'
 import {
   CLAIM_RADIUS_STEP_KM,
-  claimRadiusAfterEntitlementChange,
+  CLAIM_RADIUS_SEED_KM,
   clampClaimRadiusKm,
   formatClaimRadiusKm,
   preferredClaimRadiusKm,
@@ -63,7 +63,7 @@ function LocationRadiusPreview({
   flow: UploadFlowId
   maxRadiusKm: number
 }) {
-  const RADIUS_MIN = maxRadiusKm === 0 ? 0 : CLAIM_RADIUS_STEP_KM
+  const RADIUS_MIN = CLAIM_RADIUS_SEED_KM
   const RADIUS_MAX = maxRadiusKm
   const RADIUS_ORB_SIZE = 28
   const [radiusPalette, setRadiusPalette] = useState({
@@ -97,7 +97,7 @@ function LocationRadiusPreview({
 
   const setRadiusFromPointer = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const rail = radiusRailRef.current
-    if (!rail || maxRadiusKm === 0) return
+    if (!rail) return
     const bounds = rail.getBoundingClientRect()
     const ratio = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width))
     commitRadius(RADIUS_MIN + ratio * (RADIUS_MAX - RADIUS_MIN))
@@ -131,7 +131,6 @@ function LocationRadiusPreview({
 
   const handleRadiusKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
     let nextRadius: number | null = null
-    if (maxRadiusKm === 0) return
     if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') nextRadius = safeRadius - CLAIM_RADIUS_STEP_KM
     if (event.key === 'ArrowRight' || event.key === 'ArrowUp') nextRadius = safeRadius + CLAIM_RADIUS_STEP_KM
     if (event.key === 'Home') nextRadius = RADIUS_MIN
@@ -174,18 +173,14 @@ function LocationRadiusPreview({
           <div
             className={styles.radiusControl}
             role="slider"
-            tabIndex={maxRadiusKm === 0 ? -1 : 0}
-            aria-disabled={maxRadiusKm === 0}
+            tabIndex={0}
             aria-label="Claim radius"
             aria-valuemin={RADIUS_MIN}
             aria-valuemax={RADIUS_MAX}
             aria-valuenow={safeRadius}
-            aria-valuetext={maxRadiusKm === 0
-              ? 'No claim radius available yet'
-              : `${formatClaimRadiusKm(safeRadius)} kilometres`}
+            aria-valuetext={`${formatClaimRadiusKm(safeRadius)} kilometres`}
             onKeyDown={handleRadiusKey}
             onPointerDown={event => {
-              if (maxRadiusKm === 0) return
               draggingRadiusRef.current = true
               event.currentTarget.setPointerCapture(event.pointerId)
               setRadiusFromPointer(event)
@@ -316,7 +311,7 @@ export default function UploadFlowReview() {
   const [motionLabOpen, setMotionLabOpen] = useState(false)
   const [radius, setRadius] = useState(() => preferredClaimRadiusKm(
     claimRadiusMaxKm,
-    SAMPLE_TARGET.radiusKm ?? 3.5,
+    SAMPLE_TARGET.radiusKm ?? CLAIM_RADIUS_SEED_KM,
   ))
   const [target, setTarget] = useState<ComposerTarget>(SAMPLE_TARGET)
   const [composerRouteStep, setComposerRouteStep] = useState<PostComposerStep>(
@@ -338,18 +333,11 @@ export default function UploadFlowReview() {
     if (currentComposerStep) setComposerRouteStep(currentComposerStep)
   }, [currentComposerStep])
 
-  // Same late-arriving entitlement as the shipping composer: adopt the default
-  // when the total lands, instead of staying stuck at the zero it opened with.
-  const previousClaimLimitRef = useRef(claimRadiusMaxKm)
+  // Same late-arriving entitlement as the shipping composer, and the same
+  // reason it is now a plain clamp: the limit floors at the discovery seed, so
+  // no picker can open at a value that has to be rescued upward.
   useEffect(() => {
-    const previousLimit = previousClaimLimitRef.current
-    previousClaimLimitRef.current = claimRadiusMaxKm
-    setRadius(currentRadius => claimRadiusAfterEntitlementChange(
-      currentRadius,
-      claimRadiusMaxKm,
-      previousLimit,
-      SAMPLE_TARGET.radiusKm ?? 3.5,
-    ))
+    setRadius(currentRadius => clampClaimRadiusKm(currentRadius, claimRadiusMaxKm))
   }, [claimRadiusMaxKm])
 
   const setAuthorizedRadius = useCallback((nextRadius: number) => {
@@ -361,7 +349,7 @@ export default function UploadFlowReview() {
     playPop(.18)
     setFlow(next)
     setScreen(first)
-    setRadius(preferredClaimRadiusKm(claimRadiusMaxKm, SAMPLE_TARGET.radiusKm ?? 3.5))
+    setRadius(preferredClaimRadiusKm(claimRadiusMaxKm, SAMPLE_TARGET.radiusKm ?? CLAIM_RADIUS_SEED_KM))
     setTarget(SAMPLE_TARGET)
     setComposerRouteStep('edit')
   }
