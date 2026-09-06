@@ -1593,6 +1593,15 @@ const ZOOM_MAX = 19.5 // full street depth — pinch all the way down to the doo
  *  Just short of 1 so a spring that settles a hair under the stop still
  *  counts as arrived; a user should never see an up arrow while the knob is
  *  visibly parked at the top. */
+/**
+ * Where "zoomed in" ends: the height at which the clay buildings stand up
+ * (BUILDING_3D_MIN_ZOOM, plus enough to be unmistakably among them). The
+ * travel button used to drive all the way to ZOOM_MAX, which is doorstep
+ * depth — past the city, with nothing left to see and a long way back
+ * (user-ordered 6 Sep). Landing on the buildings is the useful end of the
+ * rail, and the button flips to "out" the moment you are there.
+ */
+const ZOOM_TRAVEL_BUILDING_LEVEL = BUILDING_3D_MIN_ZOOM + 1.4
 const ZOOM_TRAVEL_FULL_IN = 0.995
 
 /** The chrome that overlaps the map. Mirrors the composer's radius framing so
@@ -7727,12 +7736,14 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             && Math.abs(live.getZoom() - frame.zoom) < 0.2
             && live.getCenter().distanceTo(new mapboxgl.LngLat(subject!.coords[0], subject!.coords[1]))
               < subject!.radiusKm * 1000 * 0.35
-          const goingOut = frame ? framed : zoomRatio >= ZOOM_TRAVEL_FULL_IN
+          // At (or past) building level the button turns around, so one control
+          // walks in to the buildings and back out to the globe.
+          const goingOut = frame ? framed : zoomValue >= ZOOM_TRAVEL_BUILDING_LEVEL - 0.05
           return (
             <button
               type="button"
               className={styles.zoomTravel}
-              aria-label={goingOut ? 'Zoom all the way out' : frame ? 'Frame this pop' : 'Zoom all the way in'}
+              aria-label={goingOut ? 'Zoom all the way out' : frame ? 'Frame this pop' : 'Zoom in to the buildings'}
               onPointerDown={event => {
                 // The wrap beneath turns any pointer into a rail grab; this must
                 // not double as one.
@@ -7744,7 +7755,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
                 if (live) { live.__cinematic = false; live.stop() }
                 playPop()
                 if (goingOut) { applyZoom(ZOOM_MIN); return }
-                if (!frame || !live || !subject) { applyZoom(ZOOM_MAX); return }
+                if (!frame || !live || !subject) { applyZoom(ZOOM_TRAVEL_BUILDING_LEVEL); return }
                 // The padding keeps the territory inside the chrome-free part
                 // of the screen; the slider knob follows through the map's own
                 // zoom events, so the spring is not needed here.
