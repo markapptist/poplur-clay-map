@@ -65,6 +65,42 @@ function RadiusBench({ onApply, onClear }: {
     { label: 'WORLD', km: EARTH_RADIUS_KM },
   ]
   const [km, setKm] = useState(5)
+  // Where the panel has been dragged to, in viewport px. Null means it is
+  // still parked at its authored corner, so the CSS keeps owning the position
+  // (and its safe-area insets) until the moment it is first moved.
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const dragRef = useRef<{ dx: number; dy: number } | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const onDragStart = (event: React.PointerEvent) => {
+    // Left button / touch only, and never from the clear button inside the bar.
+    if (event.button !== 0) return
+    const panel = panelRef.current
+    if (!panel) return
+    const box = panel.getBoundingClientRect()
+    dragRef.current = { dx: event.clientX - box.left, dy: event.clientY - box.top }
+    setPos({ x: box.left, y: box.top })
+    // Capture, so a fast drag that outruns the header does not drop the panel
+    // — and so the gesture never reaches the map underneath and pans it.
+    event.currentTarget.setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }
+  const onDragMove = (event: React.PointerEvent) => {
+    const grab = dragRef.current
+    const panel = panelRef.current
+    if (!grab || !panel) return
+    const box = panel.getBoundingClientRect()
+    // Keep a grabbable strip on screen whichever edge it is pushed toward.
+    const maxX = window.innerWidth - Math.min(box.width, 80)
+    const maxY = window.innerHeight - 34
+    setPos({
+      x: Math.max(8 - box.width + 80, Math.min(maxX, event.clientX - grab.dx)),
+      y: Math.max(0, Math.min(maxY, event.clientY - grab.dy)),
+    })
+  }
+  const onDragEnd = (event: React.PointerEvent) => {
+    dragRef.current = null
+    try { event.currentTarget.releasePointerCapture(event.pointerId) } catch { /* already released */ }
+  }
   const apply = (next: number) => {
     const bounded = clampRadiusKm(next)
     setKm(bounded)
@@ -75,8 +111,20 @@ function RadiusBench({ onApply, onClear }: {
     ? `${Math.round(areaKm2).toLocaleString()} km²`
     : `${areaKm2.toFixed(areaKm2 < 10 ? 2 : 1)} km²`
   return (
-    <div className={styles.radiusBench} data-radius-bench="">
-      <div className={styles.radiusBenchHead}>
+    <div
+      className={styles.radiusBench}
+      data-radius-bench=""
+      ref={panelRef}
+      style={pos ? { left: `${pos.x}px`, top: `${pos.y}px`, right: 'auto', bottom: 'auto' } : undefined}
+    >
+      <div
+        className={styles.radiusBenchHead}
+        data-radius-bench-grip=""
+        onPointerDown={onDragStart}
+        onPointerMove={onDragMove}
+        onPointerUp={onDragEnd}
+        onPointerCancel={onDragEnd}
+      >
         <span className={styles.radiusBenchLabel}>RADIUS BENCH</span>
         <button type="button" onClick={() => { onClear(); setKm(5) }}>clear</button>
       </div>
@@ -3970,6 +4018,26 @@ export default function MapApp() {
     showPinContentCard(pin)
   }, [accountPostCount, accountRadiusKm, focusMapPointForPin, liveMapPosts, showPinContentCard])
 
+  /** Where the radius bench has planted its pin, if it has. Dev-only; null in
+   *  every shipped build because the bench that sets it cannot render there. */
+  const [benchPin, setBenchPin] = useState<{ coords: [number, number]; radiusKm: number } | null>(null)
+  /** The bench's pin stands on the board like any other, so the claim it
+   *  paints has something to belong to — a radius with no pin reads as weather
+   *  rather than as somebody's ground. Appended only for the renderer, so
+   *  nothing that reasons about real pops (reach, cycling, counts) can see it. */
+  const pinsForRenderer = useMemo(() => {
+    if (!benchPin) return mapPins
+    return [...mapPins, {
+      id: 'radius-bench',
+      user: null,
+      name: 'Radius bench',
+      coords: benchPin.coords,
+      radiusKm: benchPin.radiusKm,
+      color: PALETTE.pinkHot,
+      avatar: null,
+      mine: true,
+    } as PopPin]
+  }, [mapPins, benchPin])
   const mapPinsRef = useRef(mapPins)
   mapPinsRef.current = mapPins
 
@@ -4624,7 +4692,7 @@ export default function MapApp() {
         token={TOKEN}
         pois={NO_USER_POIS}
         airportPoints={TOUR_AIRPORTS}
-        pins={tourOn ? NO_MAP_PINS : mapPins}
+        pins={tourOn ? NO_MAP_PINS : pinsForRenderer}
         onConquerSnapshot={isEmbedded ? undefined : setMapConquerSnapshot}
         onWorldCountryChange={handleWorldCountryChange}
         onPinOpen={openClickedMapPinContent}
@@ -5209,6 +5277,7 @@ export default function MapApp() {
               radiusKm,
             }
             setFocusedMapPoint(point)
+            setBenchPin({ coords: [centre.lng, centre.lat], radiusKm })
             // And the shell's RADIUS card reads the traversed point off this
             // message, not off the map's own state — the card lives in Home,
             // outside this document. Without it the bench, the striker and the
@@ -5231,6 +5300,7 @@ export default function MapApp() {
             const map = mapRef.current
             if (!map) return
             setClaimGroup(map, 'mine', [])
+            setBenchPin(null)
             setFocusedMapPoint(current => current?.key === 'radius-bench' ? null : current)
           }}
         />
