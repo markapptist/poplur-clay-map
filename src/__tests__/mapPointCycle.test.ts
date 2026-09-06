@@ -111,12 +111,11 @@ describe('unified Map point cycle', () => {
       mapAppSource.indexOf('const cycleMapPoint = useCallback'),
       mapAppSource.indexOf('// A delete or privacy change removes a post'),
     )
-    // Landing on a pop opens its card (5 Sep 2026): the arrival callback is
-    // the tap's preview window, guarded against a point already stepped past.
-    expect(cycle).toContain("flyToCenter(point.coords, TOUR_FLIGHT_MS, frame, 'map-point-cycle', pin ? () => {")
-    expect(cycle).toContain('if (focusedMapPointKeyRef.current !== point.key) return')
-    expect(cycle).toContain('showPinContentCard(pin)')
-    expect(cycle).toContain('} : undefined, point.kind)')
+    // Stepping to a pop must NOT open its card: a pop opens on a press of the
+    // pin or its username label, never on arrival. Walking the board with the
+    // arrows is a look around, not a stack of preview windows.
+    expect(cycle).toContain("flyToCenter(point.coords, TOUR_FLIGHT_MS, frame, 'map-point-cycle', undefined, point.kind)")
+    expect(cycle).not.toContain('showPinContentCard(pin)')
     expect(cycle).toContain('mapPointRadiusFrameZoom(point.radiusKm, point.coords[1], radiusViewport)')
     expect(cycle).toContain('landmarkTourCameraFrame(point.id)')
     expect(cycle).not.toContain("'landmark-tour'")

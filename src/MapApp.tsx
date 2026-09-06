@@ -3622,15 +3622,11 @@ export default function MapApp() {
           pitch: map.getPitch(),
         }
         : null
-    // Landing on a pop in SELECT MODE opens it the way a tap does — the
-    // preview window with the pop itself (5 Sep 2026). Landmarks and the
-    // current-location stop have no pop to show. The guard covers an arrow
-    // pressed again before the pan landed: the older flight's arrival must
-    // not open the card of a point the person has already stepped past.
-    flyToCenter(point.coords, TOUR_FLIGHT_MS, frame, 'map-point-cycle', pin ? () => {
-      if (focusedMapPointKeyRef.current !== point.key) return
-      showPinContentCard(pin)
-    } : undefined, point.kind)
+    // Stepping to a pop does NOT open it. A pop opens when it is pressed —
+    // the pin, or the username label above it — and nothing else. Arriving
+    // opened the card for a moment (5 Sep 2026), which made walking the board
+    // a sequence of preview windows to dismiss rather than a look around.
+    flyToCenter(point.coords, TOUR_FLIGHT_MS, frame, 'map-point-cycle', undefined, point.kind)
     try {
       window.parent?.postMessage({
         type: 'poplur-map-point',
@@ -3647,7 +3643,7 @@ export default function MapApp() {
         mine: point.mine,
       }, '*')
     } catch { /* standalone route has no separate shell consumer */ }
-  }, [closeSearchImmediately, flyToCenter, liveMapPosts, mapPins, showPinContentCard, stopTour, theme])
+  }, [closeSearchImmediately, flyToCenter, liveMapPosts, mapPins, stopTour, theme])
 
   // A tap on a pin's username label (ClayMap) arms "traverse this poster's
   // pops". Same label again releases it. The camera is left where the tap

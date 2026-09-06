@@ -6344,13 +6344,12 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         }
         event.stopPropagation()
         playPop()
-        // The pop card belongs to SELECT MODE. Tapping any pin used to open
-        // somebody's pop immediately, so panning across a busy board threw
-        // preview windows in your way. Selecting a poster is what asks to see
-        // their pops: tap the username label to arm the route (the label
-        // lights), and the pin then opens. An unselected pin stays a pin.
-        if (focusedLabelUserKeyRef.current == null
-          || pinOwnerKey(pin) !== focusedLabelUserKeyRef.current) return
+        // Pressing a pop opens it — the pin or the username label above it,
+        // which is the same marker and so the same press. This briefly
+        // required arming the poster first, to stop preview windows appearing
+        // while the camera panned across a busy board; the arrows flip now, so
+        // nothing opens a card except a press, and the press can go straight
+        // through.
         // The pop as it stands NOW, not as it stood when this marker was built:
         // a marker outlives changes that do not alter what it draws (view and
         // like counters above all), and the card must not open on stale numbers.
