@@ -783,19 +783,21 @@ describe('replacement controls preserve state and activation contracts', () => {
     expect(verticalMarkup).toContain('height="58"')
   })
 
-  it('keeps the embedded left/right pair at half the former cube gap', () => {
-    const css = readFileSync(new URL('../App.module.css', import.meta.url), 'utf8')
-    const embeddedStepper = css.slice(
-      css.indexOf('.popStepperAboveCube'),
-      css.indexOf('.popStepperNewsHidden'),
-    )
+  it('keeps the arrow cluster on the cube-clearance line, on every screen', () => {
+    // The formula did not change; its home did. Map, Camera and Feed all wear
+    // one four-way cluster now, and it carries its own dock rather than each
+    // screen positioning its arrows somewhere slightly different.
+    const css = readFileSync(new URL('../ClayArrowCluster.module.css', import.meta.url), 'utf8')
+    const dock = css.slice(0, css.indexOf('.row'))
 
-    expect(embeddedStepper).toContain(
+    expect(dock).toContain(
       '--shell-control-gap: clamp(4px, calc((100vw - 480px) / 5), 220px);',
     )
-    expect(embeddedStepper).toContain(
+    expect(dock).toContain(
       'bottom: calc(18px + var(--shell-cube-size) + var(--shell-control-gap));',
     )
+    // A surface with no cube under it must not reserve the cube's height.
+    expect(css).toContain('.clusterNoCube')
   })
 
   it('keeps the opposite zoom rail on the exact 44px/12px map-control span', () => {

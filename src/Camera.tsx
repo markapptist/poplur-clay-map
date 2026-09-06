@@ -31,9 +31,10 @@ import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
-import CameraStepControls from './CameraStepControls'
+import ClayArrowCluster from './ClayArrowCluster'
+import { responsiveChannelControlSize } from './channelControlSizing'
 import { AR_FILTERS } from './ARFilters'
-import { ZOOM_HOLD_PER_SECOND, ZOOM_HOLD_TICK_MS, filterOrdinal, nextZoomPreset, stepFilterId, zoomReadout, type StepDirection } from './cameraStepper'
+import { ZOOM_HOLD_DELAY_MS, ZOOM_HOLD_PER_SECOND, ZOOM_HOLD_TICK_MS, filterOrdinal, nextZoomPreset, stepFilterId, zoomReadout, type StepDirection } from './cameraStepper'
 import { isLive, onLiveStore, startBroadcast, stopBroadcast } from './liveStore'
 import { useClaimRadiusLimitKm } from './useClaimRadiusLimit'
 import { currentViewerCoords } from './viewerFix'
@@ -1173,7 +1174,7 @@ export default function Camera({
     applyZoomValue(zoomRef.current + direction * step, direction)
   }, [applyZoomValue])
 
-  // ── The stepper's jobs (CameraStepControls) ───────────────────────────────
+  // ── The stepper's jobs (the shared ClayArrowCluster) ──────────────────────
   const stepArFilter = useCallback((direction: StepDirection) => {
     const next = stepFilterId(AR_FILTERS.map(filter => filter.id), arFilterRef.current, direction)
     if (next === arFilterRef.current) return
@@ -1896,7 +1897,7 @@ export default function Camera({
       )}
 
       {/* Fill, as the feed's rail does: this column now carries the stepper
-          under it (CameraStepControls — the feed's inner arrows doing the
+          under it (the shared arrow cluster — the same four arrows doing the
           camera's jobs), so the two blocks share the feed's tile formula and
           land on the same bottom line. The reserve is the stepper's own
           block: four arrow tiles, two readouts, their gaps, and the seam. The
@@ -2033,22 +2034,85 @@ export default function Camera({
             <SideControlIconImage icon="camera.camera_roll" displaySize={44} />
           )}
         </button>
+        {/* Grid, timer and LIVE moved off the AR picker's shoulder and into
+            this rail: one column of buttons on this screen, with the filter
+            wheel opposite left to be only a wheel. */}
+        <SideControlIconButton
+          icon="camera.grid"
+          aria-label={gridOn ? 'Hide the composition grid' : 'Show the composition grid'}
+          aria-pressed={gridOn}
+          activation="pointerdown"
+          onActivate={() => { playPop(); setGridOn(on => !on) }}
+        />
+        {/* Photo only: the video camera has no single instant to wait
+            for, so the timer stays dark while the camcorder is up. */}
+        <SideControlIconButton
+          icon="camera.timer"
+          aria-label={timerLeft != null
+            ? `Cancel the timer, ${timerLeft} seconds left`
+            : 'Take the photo after a ten second countdown'}
+          aria-pressed={timerLeft != null}
+          disabled={captureMode !== 'photo'}
+          activation="pointerdown"
+          onActivate={armTimer}
+        />
+        {/* Video only, under the timer: the word rather than an icon,
+            because LIVE has no supplied art and the feed already says
+            it exactly this way — a blinking dot beside the word. */}
+        <button
+          type="button"
+          className={onAir ? `${styles.cameraLive} ${styles.cameraLiveOn}` : styles.cameraLive}
+          aria-label={onAir
+            ? 'End the live broadcast'
+            : canGoLive
+              ? 'Go live from this camera'
+              : 'Going live is not available from this camera yet'}
+          aria-pressed={onAir}
+          disabled={captureMode !== 'video' || !canGoLive}
+          data-camera-live={onAir ? 'on' : 'off'}
+          onPointerDown={event => event.stopPropagation()}
+          onClick={event => { event.stopPropagation(); playPop(); toggleLive() }}
+        >
+          <span className={styles.cameraLiveDot} aria-hidden="true" />
+          <span aria-hidden="true">LIVE</span>
+        </button>
       </TabControlRail>
-      {/* The feed's inner arrows, on the camera. ▲ ▼ step the AR filter the
-          wheel opposite is showing (up is the higher number, as channel-up is
-          the higher channel); ◀ ▶ step the lens presets 0.5× · 1× · 2× with
+      {/* The SAME four-way cluster the map and the feed wear, in the same
+          place, doing the camera's two stepping jobs. ▲ ▼ step the AR filter
+          the wheel opposite is showing (up is the higher number, as channel-up
+          is the higher channel); ◀ ▶ step the lens presets 0.5× · 1× · 2× with
           the current zoom read out between them, and held they are a zoom
-          rocker that keeps going until the finger lifts. */}
+          rocker that keeps going until the finger lifts.
+          It replaces the six-row column that used to hang under the left rail:
+          same two jobs, same artwork, but now a screen change never moves the
+          arrows. */}
       {real && (
-        <CameraStepControls
-          side={controlSide}
-          filterNumber={filterOrdinal(AR_FILTERS.map(filter => filter.id), arFilter)}
-          filterLabel={AR_FILTERS.find(filter => filter.id === arFilter)?.label ?? 'None'}
-          zoomLabel={zoomReadout(zoom)}
-          onFilterUp={() => stepArFilter(1)}
-          onFilterDown={() => stepArFilter(-1)}
-          onZoomStep={stepZoomPreset}
-          onZoomHold={direction => { if (direction) startZoomHold(direction); else stopZoomHold() }}
+        <ClayArrowCluster
+          size={responsiveChannelControlSize()}
+          aria-label="Filter and zoom controls"
+          data-camera-step=""
+          data-camera-step-filter={filterOrdinal(AR_FILTERS.map(filter => filter.id), arFilter)}
+          topLabel={String(filterOrdinal(AR_FILTERS.map(filter => filter.id), arFilter))}
+          topTitle={AR_FILTERS.find(filter => filter.id === arFilter)?.label ?? 'None'}
+          label={zoomReadout(zoom)}
+          upLabel="Next filter"
+          downLabel="Previous filter"
+          leftLabel="Zoom out — hold to keep zooming"
+          rightLabel="Zoom in — hold to keep zooming"
+          onUp={() => stepArFilter(1)}
+          onDown={() => stepArFilter(-1)}
+          onLeft={() => stepZoomPreset(-1)}
+          onRight={() => stepZoomPreset(1)}
+          onHorizontalHold={direction => {
+            if (direction === 'left') startZoomHold(-1)
+            else if (direction === 'right') startZoomHold(1)
+            else stopZoomHold()
+          }}
+          holdDelayMs={ZOOM_HOLD_DELAY_MS}
+          // The camera owns pinch and tap-to-focus on the surface beneath; a
+          // press on the cluster must never refocus the shot.
+          onPointerDown={event => event.stopPropagation()}
+          onClick={event => event.stopPropagation()}
         />
       )}
       {/* AR filters, standing opposite the camera's own controls and starting
@@ -2062,49 +2126,6 @@ export default function Camera({
           side={controlSide === 'left' ? 'right' : 'left'}
           active={arFilter}
           onPick={setArFilter}
-          head={(
-            <>
-              <SideControlIconButton
-                icon="camera.grid"
-                aria-label={gridOn ? 'Hide the composition grid' : 'Show the composition grid'}
-                aria-pressed={gridOn}
-                activation="pointerdown"
-                onActivate={() => { playPop(); setGridOn(on => !on) }}
-              />
-              {/* Photo only: the video camera has no single instant to wait
-                  for, so the timer stays dark while the camcorder is up. */}
-              <SideControlIconButton
-                icon="camera.timer"
-                aria-label={timerLeft != null
-                  ? `Cancel the timer, ${timerLeft} seconds left`
-                  : 'Take the photo after a ten second countdown'}
-                aria-pressed={timerLeft != null}
-                disabled={captureMode !== 'photo'}
-                activation="pointerdown"
-                onActivate={armTimer}
-              />
-              {/* Video only, under the timer: the word rather than an icon,
-                  because LIVE has no supplied art and the feed already says
-                  it exactly this way — a blinking dot beside the word. */}
-              <button
-                type="button"
-                className={onAir ? `${styles.cameraLive} ${styles.cameraLiveOn}` : styles.cameraLive}
-                aria-label={onAir
-                  ? 'End the live broadcast'
-                  : canGoLive
-                    ? 'Go live from this camera'
-                    : 'Going live is not available from this camera yet'}
-                aria-pressed={onAir}
-                disabled={captureMode !== 'video' || !canGoLive}
-                data-camera-live={onAir ? 'on' : 'off'}
-                onPointerDown={event => event.stopPropagation()}
-                onClick={event => { event.stopPropagation(); playPop(); toggleLive() }}
-              >
-                <span className={styles.cameraLiveDot} aria-hidden="true" />
-                <span aria-hidden="true">LIVE</span>
-              </button>
-            </>
-          )}
         />
       )}
       {/* ONE persistent AI line. Keep the latest real reading between the

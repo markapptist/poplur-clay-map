@@ -7006,6 +7006,79 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     runZoomSpring()
   }
 
+  // Read through refs inside travelCamera: the cluster calls it through a handle
+  // installed on the map object, which is captured once, so reading the props
+  // directly would freeze whichever pop was selected at install time.
+  const focusedMapPointRef = useRef(focusedMapPoint)
+  focusedMapPointRef.current = focusedMapPoint
+  const pinsRef = useRef(pins)
+  pinsRef.current = pins
+  const accountRadiusKmRef = useRef(accountRadiusKm)
+  accountRadiusKmRef.current = accountRadiusKm
+
+  /**
+   * The camera's vertical travel, as one call the arrow cluster can make.
+   *
+   * This used to be a button bolted to the foot of the zoom rail that changed
+   * its own job depending on where the camera already was — in to the
+   * buildings, or, once there, all the way back out. With a cluster there are
+   * two arrows and no need for a control that turns around: ▲ always goes IN
+   * and ▼ always goes OUT, which is the only reading of an up and a down arrow
+   * anybody has to be taught.
+   *
+   * Going in still prefers the SUBJECT. When the ◀ ▶ arrows have landed on a
+   * pop, ▲ frames that pop — centres it and zooms until its territory fills
+   * the viewport — rather than diving to a fixed zoom beside it. That is the
+   * behaviour the rail's button grew, and it is the whole reason the vertical
+   * axis is worth having next to the traverse.
+   */
+  const travelCamera = useCallback((direction: 'in' | 'out') => {
+    const live = mapRef.current as (mapboxgl.Map & { __cinematic?: boolean }) | null
+    initialCameraInteractionRef.current = true
+    stopOrbitRef.current()
+    if (live) { live.__cinematic = false; live.stop() }
+    if (direction === 'out') { applyZoom(ZOOM_MIN); return }
+
+    const point = focusedMapPointRef.current
+    const subject = point?.kind === 'pin'
+      ? (pinsRef.current ?? []).find(candidate => candidate.id === point.id) ?? null
+      : point?.kind === 'current' && (accountRadiusKmRef.current ?? 0) > 0
+        ? { coords: point.coords, radiusKm: accountRadiusKmRef.current as number }
+        : null
+    if (!subject || !live || subject.radiusKm <= 0) {
+      applyZoom(ZOOM_TRAVEL_BUILDING_LEVEL)
+      return
+    }
+    const box = live.getContainer()
+    const pad = framePaddingFor(box)
+    const usable = Math.max(120, Math.min(
+      box.clientWidth - pad.left - pad.right,
+      box.clientHeight - pad.top - pad.bottom,
+    ))
+    const zoom = fitZoomForRadius(subject.radiusKm, subject.coords[1], usable, ZOOM_MIN, ZOOM_MAX)
+    // The padding keeps the territory inside the chrome-free part of the
+    // screen; the rail's knob follows through the map's own zoom events, so
+    // the spring is not needed here.
+    wakeManagedRendering(900 + MANAGED_CAMERA_SETTLE_MS)
+    live.easeTo({
+      center: [subject.coords[0], subject.coords[1]],
+      zoom,
+      padding: pad,
+      duration: 900,
+      essential: true,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapRef])
+
+  // The cluster that calls it lives in the owning document (MapApp), not here.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || mapEpoch === 0) return
+    const holder = map as mapboxgl.Map & { __poplurZoomTravel?: (direction: 'in' | 'out') => void }
+    holder.__poplurZoomTravel = travelCamera
+    return () => { delete holder.__poplurZoomTravel }
+  }, [mapEpoch, mapRef, travelCamera])
+
   // Screen Y → zoom. The rail runs globe (bottom) to street (top), so the
   // ratio is inverted against the usual top-down reading.
   const zoomForClientY = (clientY: number) => {
@@ -7717,78 +7790,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             style={{ bottom: `${(strikerLevel != null ? strikerLevel : zoomRatio) * zoomTravel}px` }}
           />
         </div>
-        {/* One button, one job, in a fixed slot below the rail. When a pop is
-            the subject (the point the < > arrows have landed on) it FRAMES
-            that pop: centre on it and zoom until its territory fills the
-            viewport 1:1, so the ground it holds is the thing on screen rather
-            than a speck from space or one wall of colour at the doorstep.
-            Press again from that framing and it zooms all the way out. With
-            no subject it keeps its old job: all the way in, then its opposite.
-            Either way it stops any orbit or cinematic move first, exactly as
-            grabbing the knob does — a camera someone is already driving must
-            not fight the request. */}
-        {(() => {
-          const subject = focusedMapPoint?.kind === 'pin'
-            ? (pins ?? []).find(candidate => candidate.id === focusedMapPoint.id) ?? null
-            : focusedMapPoint?.kind === 'current' && (accountRadiusKm ?? 0) > 0
-              ? { coords: focusedMapPoint.coords, radiusKm: accountRadiusKm as number }
-              : null
-          const live = mapRef.current as (mapboxgl.Map & { __cinematic?: boolean }) | null
-          const frame = subject && live && subject.radiusKm > 0
-            ? (() => {
-              const box = live.getContainer()
-              const pad = framePaddingFor(box)
-              const usable = Math.max(120, Math.min(
-                box.clientWidth - pad.left - pad.right,
-                box.clientHeight - pad.top - pad.bottom,
-              ))
-              return { zoom: fitZoomForRadius(subject.radiusKm, subject.coords[1], usable, ZOOM_MIN, ZOOM_MAX), pad }
-            })()
-            : null
-          const framed = frame !== null && live !== null
-            && Math.abs(live.getZoom() - frame.zoom) < 0.2
-            && live.getCenter().distanceTo(new mapboxgl.LngLat(subject!.coords[0], subject!.coords[1]))
-              < subject!.radiusKm * 1000 * 0.35
-          // At (or past) building level the button turns around, so one control
-          // walks in to the buildings and back out to the globe.
-          const goingOut = frame ? framed : zoomValue >= ZOOM_TRAVEL_BUILDING_LEVEL - 0.05
-          return (
-            <button
-              type="button"
-              className={styles.zoomTravel}
-              aria-label={goingOut ? 'Zoom all the way out' : frame ? 'Frame this pop' : 'Zoom in to the buildings'}
-              onPointerDown={event => {
-                // The wrap beneath turns any pointer into a rail grab; this must
-                // not double as one.
-                event.stopPropagation()
-                event.preventDefault()
-                if (!event.isPrimary || event.button !== 0) return
-                initialCameraInteractionRef.current = true
-                stopOrbitRef.current()
-                if (live) { live.__cinematic = false; live.stop() }
-                playPop()
-                if (goingOut) { applyZoom(ZOOM_MIN); return }
-                if (!frame || !live || !subject) { applyZoom(ZOOM_TRAVEL_BUILDING_LEVEL); return }
-                // The padding keeps the territory inside the chrome-free part
-                // of the screen; the slider knob follows through the map's own
-                // zoom events, so the spring is not needed here.
-                wakeManagedRendering(900 + MANAGED_CAMERA_SETTLE_MS)
-                live.easeTo({
-                  center: [subject.coords[0], subject.coords[1]],
-                  zoom: frame.zoom,
-                  padding: frame.pad,
-                  duration: 900,
-                  essential: true,
-                })
-              }}
-            >
-              <SideControlIconImage
-                icon={goingOut ? 'global.channel_down' : 'global.channel_up'}
-                displaySize={40}
-              />
-            </button>
-          )
-        })()}
+        {/* The button that used to stand in a fixed slot below this rail is
+            gone: it is the ▲ of the arrow cluster now (see travelCamera), which
+            is where every other stepping control on every other screen lives.
+            The rail takes back the height it was reserving — see .zoomRail. */}
       </div>
 
       {/* The takeover colour, worn as a clay circle under the zoom slider.

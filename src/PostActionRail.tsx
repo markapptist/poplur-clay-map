@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import SideControlIconButton from './SideControlIcon'
 import TabControlRail from './TabControlRail'
 import type { ControlSide } from './controlPlacement'
@@ -35,6 +36,7 @@ export default function PostActionRail({
   onDelete,
   deletePending = false,
   reserveBelow,
+  head,
 }: {
   side: ControlSide
   label: string
@@ -64,6 +66,11 @@ export default function PostActionRail({
    *  four inner arrows instead, which are a shorter block, and reserving the
    *  feed's there left the rail overflowing its own box. */
   reserveBelow?: string
+  /** Controls that belong to THIS post but are not rail actions — the feed's
+   *  block button and its media timer, which used to ride on the shoulder of
+   *  the channel dial opposite. Rendered above the actions so the rail reads
+   *  top-down: what this post is, then what you can do with it. */
+  head?: ReactNode
 }) {
   return (
     // Fill, because this rail is one of the feed's PAIRED columns: it has to
@@ -79,6 +86,7 @@ export default function PostActionRail({
       fill
       fillReserveBelow={reserveBelow ?? FEED_STEPPER_RESERVE}
     >
+      {head}
       <SideControlIconButton
         fluid
         icon="feed.mute"

@@ -1169,33 +1169,9 @@
    avatar and pin without reaching the bottom chrome. pointer-events is on the
    control itself (the component sets it), so this wrapper never eats a drag
    meant for the map. */
-.popStepper {
-  position: absolute;
-  left: 50%;
-  top: 60%;
-  transform: translateX(-50%);
-  z-index: 24;
-  pointer-events: none;
-  filter: drop-shadow(0 6px 14px rgba(60, 0, 30, 0.45));
-}
-
-/* In the real app the navigator cube belongs to the parent Home shell. Keep
-   this existing (single-renderer) horizontal stepper close to that cube; the
-   standalone map keeps its landmark-centred position. */
-.popStepperAboveCube {
-  --shell-cube-size: clamp(124px, 37vw, 176px);
-  --shell-control-gap: clamp(4px, calc((100vw - 480px) / 5), 220px);
-  top: auto;
-  bottom: calc(18px + var(--shell-cube-size) + var(--shell-control-gap));
-}
-
-/* The story card owns navigation while it is visible. Keep the shared clay
-   renderer mounted but inert so each stop does not destroy and recreate a
-   WebGL context merely to swap control locations. */
-.popStepperNewsHidden {
-  visibility: hidden;
-  pointer-events: none;
-}
+/* The map's stepper rules lived here. The arrows are a four-way cluster now,
+   shared with Camera and Feed, and it carries its own dock — see
+   ClayArrowCluster.module.css, which keeps this exact cube-clearance formula. */
 
 /* The country-flag pop: the real national flag (a rippled sprite baked from
    the supplied standard-flag GLB) stands up centred over the map for a beat

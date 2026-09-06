@@ -588,10 +588,9 @@
   left: auto;
   /* Match the opposite 44px/12px side-control stack exactly. Preview mode has
      one extra dice control, so ClayMap receives the corresponding larger span. */
-  /* Stays on the opposite side-control stack's exact line. The travel button
-     moving below the rail already takes its room out of the column — the rail
-     simply gets shorter — so lifting the whole thing would have broken the
-     left/right symmetry for space it did not need. */
+  /* Stays on the opposite side-control stack's exact line, and now the rail
+     spans all of it: with the travel button gone to the cluster, the slider is
+     as long as the column it lives in. */
   top: var(--poplur-map-control-top, max(154px, calc(env(safe-area-inset-top, 0px) + 112px)));
   bottom: auto;
   transform: none;
@@ -605,36 +604,18 @@
      wrapper's far edge, so half of the oversized thumb extended beyond the
      screen and the visible target did not match the draggable target. */
   padding: 0;
-  /* A column: the rail fills what is left and the travel button sits in a
-     fixed slot BELOW it, under the thumb's own resting end rather than above
-     the track it drives. The rail measures its own height for the knob's
-     travel, so giving it less does not skew the zoom the thumb reports. */
+  /* A column holding one thing: the rail, filling it. The travel button that
+     used to take a fixed 40px slot at the foot (plus its 6px gap) is now the
+     ▲ of the arrow cluster, so the rail simply grows into the 46px it was
+     reserving and runs the full height of the opposite side-control stack. */
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 0;
   cursor: ns-resize;
   -webkit-tap-highlight-color: transparent;
 }
-
-/* Zoom all the way in / all the way out. Same boxless clay chevron the channel
-   controls wear, so it reads as one of the map's own controls and not a
-   scrollbar end-cap. */
-.zoomTravel {
-  flex: none;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.45));
-  transition: transform 120ms ease;
-}
-
-.zoomTravel:active { transform: scale(0.9); }
 
 .mapControlsObscured {
   opacity: 0;
@@ -651,7 +632,7 @@
 .zoomRail {
   position: relative;
   width: var(--zoom-track-size);
-  /* Fills the column under the travel button (see .zoomWrap). */
+  /* Fills the whole column now that nothing shares it (see .zoomWrap). */
   flex: 1 1 auto;
   min-height: 0;
   height: auto;

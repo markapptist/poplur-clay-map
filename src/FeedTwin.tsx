@@ -44,7 +44,8 @@ import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import PoplurDialog from './PoplurDialog'
 import PoplurStatusToast from './PoplurStatusToast'
 import FeedChannelRail from './FeedChannelRail'
-import FeedChannelStep from './FeedChannelStep'
+import ClayArrowCluster from './ClayArrowCluster'
+import { responsiveChannelControlSize } from './channelControlSizing'
 import { nextFilledChannelIndex } from './feedChannelSelection'
 import { VERIFIED_CHECK_SRC, verifiedKindForHandle, type VerifiedCheckKind } from './verifiedCheck'
 import { businessDirectorySnapshot, subscribeBusinessDirectory } from './businessDirectory'
@@ -2317,23 +2318,49 @@ export default function FeedTwin({
             Channel UP goes to the HIGHER number, like a television: the dial
             opposite runs upward (101 at the bottom), so up on the stepper and
             up on the dial are the same direction. */}
-        <FeedChannelStep
-          side={feedRailSide}
-          channelNumber={ch.number}
-          postActionsAvailable={Boolean(post)}
-          onChannelUp={() => change(1)}
-          onChannelDown={() => change(-1)}
-          onPostPrevious={() => handleEdgeTap('left')}
-          onPostNext={() => handleEdgeTap('right')}
-          postIndex={posts.length ? (contentIdxRef.current[ch.id] ?? 0) % posts.length : 0}
-          postCount={posts.length}
-        />
+        {/* The SAME four-way cluster the map and the camera wear, in the same
+            place. ▲ ▼ change channel — UP goes to the HIGHER number, like a
+            television, so up on the cluster and up on the dial opposite are
+            the same direction — and ◀ ▶ step through the people posting on
+            this channel. It replaces the six-row column that used to hang
+            under the left rail. */}
+        {!playerMode && (
+          <ClayArrowCluster
+            size={responsiveChannelControlSize()}
+            aria-label="Channel and post controls"
+            data-feed-channel-step=""
+            topLabel={String(ch.number)}
+            topTitle={ch.name}
+            label={posts.length
+              ? `${((contentIdxRef.current[ch.id] ?? 0) % posts.length) + 1}/${posts.length}`
+              : '0/0'}
+            upLabel="Channel up"
+            downLabel="Channel down"
+            leftLabel="Previous post"
+            rightLabel="Next post"
+            onUp={() => change(1)}
+            onDown={() => change(-1)}
+            onLeft={() => handleEdgeTap('left')}
+            onRight={() => handleEdgeTap('right')}
+          />
+        )}
         <FeedChannelRail
           activeIndex={index}
           onPick={goToChannel}
           side={controlSide === 'left' ? 'right' : 'left'}
           hidden={playerMode}
           newChannelIds={newChannelIds}
+        />
+        <PostActionRail
+          side={feedRailSide}
+          label="Feed controls"
+          // Nothing shares this column any more — the stepper that used to sit
+          // under it is the bottom-centre cluster now — so the rail runs the
+          // full height instead of reserving room for a block that left.
+          reserveBelow="0px"
+          // Block and the media timer came off the channel dial's shoulder
+          // into this rail; delete uses the rail's own onDelete, which was
+          // always there. The dial opposite is only a dial now.
           head={post ? (
             <>
               {/* Block wears the supplied clay art (global.block) through the
@@ -2361,21 +2388,10 @@ export default function FeedTwin({
                   {post.live ? 'LIVE' : mediaTimeLabel(remainingSeconds)}
                 </output>
               )}
-              {canDeletePost && (
-                <SideControlIconButton
-                  icon="profile.delete"
-                  aria-label={deletePending ? 'Deleting this post' : 'Delete this post'}
-                  disabled={Boolean(deletePending)}
-                  loading={Boolean(deletePending)}
-                  onActivate={() => { playPop(); if (post && !deletePending) setDeletePromptPost(post) }}
-                />
-              )}
             </>
           ) : undefined}
-        />
-        <PostActionRail
-          side={feedRailSide}
-          label="Feed controls"
+          onDelete={canDeletePost && post ? () => { playPop(); if (!deletePending) setDeletePromptPost(post) } : undefined}
+          deletePending={Boolean(deletePending)}
           muted={muted}
           captionsOn={captionsOn}
           commentsOpen={commentOpen}

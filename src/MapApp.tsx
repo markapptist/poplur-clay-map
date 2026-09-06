@@ -210,6 +210,8 @@ import {
 import ClayNav from './ClayNav'
 import TopChrome from './TopChrome'
 import ClayChannelArrows from './ClayChannelArrows'
+import ClayArrowCluster from './ClayArrowCluster'
+import clusterStyles from './ClayArrowCluster.module.css'
 import { responsiveChannelControlSize } from './channelControlSizing'
 import WeatherFX, { modeForCode } from './WeatherFX'
 import type { WeatherMode } from './WeatherFX'
@@ -3710,6 +3712,17 @@ export default function MapApp() {
     })
   }, [])
 
+  /** The cluster's ▲ ▼. ClayMap owns the camera and installs this handle on
+   *  the map object; the arrows live in this document, so they reach it the
+   *  same way every other cross-component camera request here does. */
+  const zoomTravel = useCallback((direction: 'in' | 'out') => {
+    playPop(0.25)
+    const live = mapRef.current as unknown as {
+      __poplurZoomTravel?: (direction: 'in' | 'out') => void
+    } | null
+    live?.__poplurZoomTravel?.(direction)
+  }, [mapRef])
+
   const cycleMapPoint = useCallback((direction: -1 | 1) => {
     const route = mapPointRouteRef.current
     const step = stepMapPointCycle(route, focusedMapPointKeyRef.current, direction)
@@ -5329,31 +5342,35 @@ export default function MapApp() {
           }}
         />
       )}
-      <div
-        className={`${styles.popStepper}${isEmbedded ? ` ${styles.popStepperAboveCube}` : ''}${activeNewsStop ? ` ${styles.popStepperNewsHidden}` : ''}`}
-        data-map-tour-step=""
-        data-map-point-stepper=""
-        data-map-point-index={mapPointPosition?.n ?? 0}
-        data-map-point-total={mapPointRoute.length}
-        aria-hidden={activeNewsStop ? true : undefined}
-      >
-        <ClayChannelArrows
-          orientation="horizontal"
+      {/* No positioning wrapper any more: the cluster docks itself, and it is
+          the same dock on Camera and Feed. A wrapper that also positioned
+          absolutely simply fought it. */}
+        {/* ◀ ▶ traverse the pops, exactly as they always did. ▲ ▼ are the
+            camera's vertical travel, which used to be a single button bolted
+            to the foot of the zoom rail on the far side of the screen — the
+            one control on this map that was nowhere near the others. */}
+      <ClayArrowCluster
+          className={[
+            isEmbedded ? '' : clusterStyles.clusterNoCube,
+            activeNewsStop ? clusterStyles.clusterHidden : '',
+          ].filter(Boolean).join(' ') || undefined}
+          data-map-tour-step=""
+          data-map-point-stepper=""
+          data-map-point-index={mapPointPosition?.n ?? 0}
+          data-map-point-total={mapPointRoute.length}
+          aria-hidden={activeNewsStop ? true : undefined}
           size={channelControlSize}
-          number={newsTourPosition >= 0
-            ? newsTourPosition + 1
-            : mapPointPosition?.n ?? 0}
           label={newsTourPosition >= 0
             ? `${newsTourPosition + 1}/${newsTourDisplayCount}`
             : mapPointPosition
               ? `${mapPointPosition.n}/${mapPointPosition.of}`
               : `0/${mapPointRoute.length}`}
-          upLabel={tourMode === 'news' ? 'Previous news story' : 'Previous map point'}
-          downLabel={tourMode === 'news' ? 'Next news story' : 'Next map point'}
-          onUp={() => {
-            // Every arrow press answers with a pop, like every other clay
-            // control — pressed is pressed, whether or not a step follows.
-            playPop(0.25)
+          aria-label="Map point and zoom controls"
+          leftLabel={tourMode === 'news' ? 'Previous news story' : 'Previous map point'}
+          rightLabel={tourMode === 'news' ? 'Next news story' : 'Next map point'}
+          upLabel={mapPointPosition ? 'Frame this pop' : 'Zoom in to the buildings'}
+          downLabel="Zoom all the way out"
+          onLeft={() => {
             // These arrows already live in this map document. Invoke the news
             // step synchronously instead of round-tripping through a same-page
             // postMessage whose delivery can trail a camera/idle transition.
@@ -5364,8 +5381,7 @@ export default function MapApp() {
               dir: -1,
             }, '*')
           }}
-          onDown={() => {
-            playPop(0.25)
+          onRight={() => {
             if (tourMode === 'news') { stepNewsTour(1); return }
             window.postMessage({
               type: 'poplur-map-action',
@@ -5373,8 +5389,9 @@ export default function MapApp() {
               dir: 1,
             }, '*')
           }}
+          onUp={() => zoomTravel('in')}
+          onDown={() => zoomTravel('out')}
         />
-      </div>
 
       {/* The home cube lives in the app shell now (it's the post-login cube),
           so the map no longer renders one of its own. */}

@@ -1,0 +1,95 @@
+/* The four-way cluster, on the bottom centre line, above the navigator cube.
+   Map, Camera and Feed all sit here now, so moving between the three screens
+   never moves the arrows. The map's own copy lives in the map document and
+   the other two in the home shell, but both documents resolve these same
+   custom properties, so the three land on the same pixel. */
+.cluster {
+  position: absolute;
+  left: 50%;
+  z-index: 46;
+  --shell-cube-size: clamp(124px, 37vw, 176px);
+  --shell-control-gap: clamp(4px, calc((100vw - 480px) / 5), 220px);
+  bottom: calc(18px + var(--shell-cube-size) + var(--shell-control-gap));
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  align-items: center;
+  /* The vertical arrows are half the pair's long axis, so the cluster is one
+     pair wide and three half-pairs tall — a square-ish D-pad rather than a
+     cross with long thin arms. */
+  gap: 0;
+  pointer-events: none;
+  filter: drop-shadow(0 6px 14px rgba(60, 0, 30, 0.45));
+}
+
+.row {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  align-items: center;
+  justify-items: center;
+  width: var(--clusterSize);
+}
+
+.arrow {
+  width: calc(var(--clusterSize) * 0.44);
+  height: calc(var(--clusterSize) * 0.44);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+  display: grid;
+  place-items: center;
+}
+
+/* The horizontal pair is the vertical one on its side: the SAME art, turned.
+   Rotating here rather than shipping a second pair of sprites is what keeps
+   all four arrows identical in weight and lighting. */
+.left img,
+.left picture,
+.left > * { transform: rotate(-90deg); }
+.right img,
+.right picture,
+.right > * { transform: rotate(-90deg); }
+
+/* A held rocker reads as pressed for as long as the finger is down. */
+.arrow[data-held='true'] { transform: translateY(2px) scale(0.94); }
+
+/* Both readouts wear the map stepper's green LED type, because that is what
+   the number between < and > has always looked like on this map. */
+.number,
+.topNumber {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-weight: 900;
+  color: #4dff69;
+  text-shadow: 0 0 8px rgba(77, 255, 105, 0.5), 0 2px 4px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+  line-height: 1;
+}
+
+.number {
+  font-size: calc(var(--clusterSize) * 0.085);
+  min-width: calc(var(--clusterSize) * 0.12);
+  text-align: center;
+}
+
+/* The vertical axis's readout sits above its arrow rather than inside the
+   cluster's middle, which the horizontal readout already owns. */
+.topNumber {
+  font-size: calc(var(--clusterSize) * 0.075);
+  margin-bottom: calc(var(--clusterSize) * 0.02);
+}
+
+/* Standalone surfaces (no home cube beneath) keep the cluster clear of the
+   bottom edge without reserving the cube's height. */
+.clusterNoCube {
+  bottom: max(18px, env(safe-area-inset-bottom, 0px));
+}
+
+/* While a modal owns the screen the cluster stays mounted but inert, the same
+   contract the map stepper had: never destroy a control just to hide it. */
+.clusterHidden {
+  visibility: hidden;
+  pointer-events: none;
+}

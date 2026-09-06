@@ -1,8 +1,9 @@
+// @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement } from 'react'
 import { filterOrdinal, nextZoomPreset, stepFilterId, zoomReadout } from '../cameraStepper'
-import CameraStepControls from '../CameraStepControls'
+import ClayArrowCluster from '../ClayArrowCluster'
 
 const PRESETS = [0.5, 1, 2] as const
 
@@ -38,26 +39,38 @@ describe("the camera's stepper", () => {
     expect(zoomReadout(Number.NaN)).toBe('1×')
   })
 
-  it('renders the feed-shaped block: filter up, the number, filter down, zoom out, the zoom, zoom in', () => {
-    const html = renderToStaticMarkup(createElement(CameraStepControls, {
-      side: 'left',
-      filterNumber: 3,
-      filterLabel: 'Anaglyph',
-      zoomLabel: '1.4×',
-      onFilterUp: () => {},
-      onFilterDown: () => {},
-      onZoomStep: () => {},
-      onZoomHold: () => {},
-    }))
+  it('renders the cluster: the filter above and below, the lens left and right', () => {
+    // The six-row column this used to be is the shared four-way cluster now.
+    // The camera's two jobs and both readouts survived the move: the filter is
+    // the vertical axis with its number above it, the lens the horizontal one
+    // with the zoom between the arrows that change it.
+    // JSX permits data-* on any element; createElement's typed props do not,
+    // so the fixture is cast exactly where the screens use plain JSX.
+    const html = renderToStaticMarkup(createElement(ClayArrowCluster, {
+      size: 176,
+      'data-camera-step': '',
+      'data-camera-step-filter': 3,
+      topLabel: '3',
+      topTitle: 'Anaglyph',
+      label: '1.4×',
+      upLabel: 'Next filter',
+      downLabel: 'Previous filter',
+      leftLabel: 'Zoom out — hold to keep zooming',
+      rightLabel: 'Zoom in — hold to keep zooming',
+      onUp: () => {},
+      onDown: () => {},
+      onLeft: () => {},
+      onRight: () => {},
+    } as unknown as Parameters<typeof ClayArrowCluster>[0]))
     expect(html).toContain('data-camera-step=""')
     expect(html).toContain('data-camera-step-filter="3"')
     expect(html).toContain('aria-label="Next filter"')
     expect(html).toContain('aria-label="Previous filter"')
-    expect(html).toContain('data-camera-step-zoom="out"')
-    expect(html).toContain('data-camera-step-zoom="in"')
-    expect(html.indexOf('data-camera-step-zoom="out"')).toBeLessThan(html.indexOf('data-camera-step-zoom-label=""'))
-    expect(html.indexOf('data-camera-step-zoom-label=""')).toBeLessThan(html.indexOf('data-camera-step-zoom="in"'))
+    expect(html).toContain('data-cluster-arrow="left"')
+    expect(html).toContain('data-cluster-arrow="right"')
+    // The zoom reads BETWEEN the two arrows that change it.
+    expect(html.indexOf('data-cluster-arrow="left"')).toBeLessThan(html.indexOf('>1.4×</span>'))
+    expect(html.indexOf('>1.4×</span>')).toBeLessThan(html.indexOf('data-cluster-arrow="right"'))
     expect(html).toContain('>3</span>')
-    expect(html).toContain('>1.4×</span>')
   })
 })

@@ -101,8 +101,11 @@ describe('unified Map point cycle', () => {
 
   it('routes both horizontal controls and map edge lanes through one point action', () => {
     expect(mapAppSource).toContain("action: 'cycleMapPoint'")
-    expect(mapAppSource).toContain("upLabel={tourMode === 'news' ? 'Previous news story' : 'Previous map point'}")
-    expect(mapAppSource).toContain("downLabel={tourMode === 'news' ? 'Next news story' : 'Next map point'}")
+    // The traverse is the HORIZONTAL axis of the shared arrow cluster now, so
+    // these read left/right rather than up/down — which is what they always
+    // were on screen. Up and down belong to the camera's travel.
+    expect(mapAppSource).toContain("leftLabel={tourMode === 'news' ? 'Previous news story' : 'Previous map point'}")
+    expect(mapAppSource).toContain("rightLabel={tourMode === 'news' ? 'Next news story' : 'Next map point'}")
     expect(clayMapSource).toContain("action: 'cycleMapPoint', dir")
   })
 

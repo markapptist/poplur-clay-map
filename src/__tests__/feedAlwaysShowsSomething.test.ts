@@ -24,31 +24,44 @@ describe('the feed always tries to show something', () => {
 })
 
 describe('the inner post arrows carry a readout', () => {
-  const source = readFileSync(new URL('../FeedChannelStep.tsx', import.meta.url), 'utf8')
-  const css = readFileSync(new URL('../FeedChannelStep.module.css', import.meta.url), 'utf8')
+  // The feed's six-row stepper column is gone: its two jobs are the vertical
+  // and horizontal axes of the arrow cluster that Map, Camera and Feed now
+  // share, on one bottom-centre line. The readout contract is unchanged — a
+  // number between Previous and Next — it just lives in the cluster.
+  const source = readFileSync(new URL('../ClayArrowCluster.tsx', import.meta.url), 'utf8')
   const rootCss = readFileSync(new URL('../index.css', import.meta.url), 'utf8')
   const feed = readFileSync(new URL('../FeedTwin.tsx', import.meta.url), 'utf8')
 
   it('shows the current index within the channel between Previous and Next', () => {
-    const previous = source.indexOf('aria-label="Previous post"')
-    const readout = source.indexOf('data-feed-post-readout')
-    const next = source.indexOf('aria-label="Next post"')
+    const previous = source.indexOf("arrow('left', leftLabel)")
+    const readout = source.indexOf('styles.number')
+    const next = source.indexOf("arrow('right', rightLabel)")
     expect(previous).toBeGreaterThan(-1)
     expect(readout).toBeGreaterThan(previous)
     expect(next).toBeGreaterThan(readout)
-    expect(source).toContain('${postIndex + 1}/${postCount}')
-    expect(feed).toContain("onPostPrevious={() => handleEdgeTap('left')}")
+    expect(feed).toContain('${((contentIdxRef.current[ch.id] ?? 0) % posts.length) + 1}/${posts.length}')
+    expect(feed).toContain("onLeft={() => handleEdgeTap('left')}")
+    expect(feed).toContain("onRight={() => handleEdgeTap('right')}")
   })
 
-  it('budgets a sixth row for it, and the column formula counts twelve (thirteen with DM)', () => {
-    const rows = css.match(/grid-template-rows:([^;]*);/)?.[1] ?? ''
-    expect((rows.match(/--poplur-feed-number/g) ?? []).length).toBe(2)
-    expect((rows.match(/--poplur-feed-ctl/g) ?? []).length).toBe(4)
-    expect(rootCss).toContain('- 11 * 2px) / 12)')
+  it('gives the rail back the column the stepper used to share', () => {
+    // The stepper block that hung under this rail — and that the twelve/
+    // thirteen-row column formula existed to budget — is the bottom-centre
+    // cluster now. Nothing shares the column, so the rail reserves nothing
+    // below itself and runs the full height.
+    expect(feed).toContain('reserveBelow="0px"')
+    // The tile formula itself stays: the rail's own buttons are still sized
+    // by it, and Profile's opened-post column still budgets against it.
     expect(rootCss).toContain('12 * var(--poplur-feed-ctl)) / 11)')
-    expect(rootCss).toContain('.poplur-feed-rows-13 {')
-    expect(rootCss).toContain('- 12 * 2px) / 13)')
-    expect(feed).toContain('poplur-feed-rows-13')
+  })
+
+  it('carries both of the feed\'s numbers, on the axis each belongs to', () => {
+    // Channel is the vertical axis (up is the higher channel, like a
+    // television); the post index is the horizontal one, between the arrows
+    // that step it.
+    expect(feed).toContain('topLabel={String(ch.number)}')
+    expect(feed).toContain('upLabel="Channel up"')
+    expect(feed).toContain('downLabel="Channel down"')
   })
 
   it('starts the column at the header line, not the generic rail line', () => {
