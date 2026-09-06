@@ -11,6 +11,7 @@ import App from './App'
 import { isNativeShell, isIOSNativeShell } from './nativeBridge'
 import { initAnalytics } from './analytics'
 import { applyProfileThemeToDocument, readSelectedProfileTheme } from './profileThemes'
+import { applyMyPinColor } from './myPinColor'
 
 // Resolve the asset manifest before first paint. Anything that builds a pack
 // path synchronously falls back to the in-bundle copy until this lands, so a
@@ -24,6 +25,8 @@ void loadManifest(`${import.meta.env.BASE_URL}${MANIFEST_URL}`).catch(() => {
 // document before first paint — a themed user must never see the default
 // cream flash under Settings or a page.
 applyProfileThemeToDocument(readSelectedProfileTheme())
+// The zoom rail and the ground start on the same colour as your pins.
+applyMyPinColor()
 
 const params =
   typeof window !== 'undefined'

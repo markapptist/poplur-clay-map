@@ -255,6 +255,7 @@ import { publishAccountRadiusKm } from './accountRadius'
 import { subscribeAccountRadiusPosts } from './accountRadiusPosts'
 import { distinctOwnerColor, liveMapPinGhost, nativeFeedPostsToMapPins, subscribeLiveMapPosts, type LiveMapPostPin } from './mapLivePosts'
 import { otherOwnerPinColor, PIN_COLOR_SWATCH, type PinColorId } from './pinColors'
+import { myPinColor, onMyPinColor } from './myPinColor'
 import { normalizeNativeFeedPosts } from './nativeFeedPosts'
 import { currentUid, onUser } from './webFirebase'
 import { dominanceFameScore, effectiveDominanceLevel } from './mapDominance'
@@ -3410,6 +3411,7 @@ export default function MapApp() {
   // old rim would be the one thing on the map still wearing the old palette.
   // Other users keep their own colour: it is their identity, not your setting.
   const [myColor, setMyColor] = useState(() => takeoverTint(PALETTE.pinkHot))
+  const ownPinColor = useSyncExternalStore(onMyPinColor, myPinColor, () => null)
   useEffect(() => onTakeoverColor(() => setMyColor(takeoverTint(PALETTE.pinkHot))), [])
   const liveSimulation = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
   // Someone you blocked leaves the board at once (blockedUsers.ts).
@@ -3455,7 +3457,10 @@ export default function MapApp() {
         // document arrives with is re-picked against the viewer's current one,
         // and it re-runs when that changes.
         const pinColor: PinColorId | undefined = pin.mine
-          ? pin.pinColor
+          // Your pins wear YOUR colour, not the one each pop happened to be
+          // posted with — a board of your own pops in four different colours
+          // says nothing about whose they are. Other people keep theirs.
+          ? (ownPinColor ?? pin.pinColor)
           : (pin.pinColor && !myPinColours.has(pin.pinColor))
             ? pin.pinColor
             : otherOwnerPinColor(pin.ownerId ?? pin.id, myPinColours)
@@ -3475,7 +3480,7 @@ export default function MapApp() {
         pinColor,
       })
       })
-  }, [blockedUsers, currentLocation, liveMapPosts, liveSimulation, myColor, ownAvatar, ownSelfieVideo, pinRadiusPulse, popLevel])
+  }, [blockedUsers, currentLocation, liveMapPosts, liveSimulation, myColor, ownAvatar, ownPinColor, ownSelfieVideo, pinRadiusPulse, popLevel])
 
   // One route powers the horizontal arrows at every zoom. It comes from the
   // authoritative data, not the handful of DOM markers ClayMap keeps mounted

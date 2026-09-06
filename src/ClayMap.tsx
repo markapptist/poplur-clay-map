@@ -98,7 +98,8 @@ import {
 import { createMapConquerSnapshot, type MapConquerSnapshot } from './mapConquer'
 import { localSunriseToNoon, skyShadeAt, type SkyShade } from './skyCycle'
 import { mapDaypart } from './contextCubeModels'
-import { takeoverTint, takeoverBaseColor, onTakeoverColor, randomizeTakeoverColor, setTakeoverColor, takeoverSwatches } from './takeoverColor'
+import { takeoverTint, takeoverBaseColor, onTakeoverColor, setTakeoverColor, takeoverSwatches } from './takeoverColor'
+import { randomizeMyPinColor } from './myPinColor'
 import {
   fetchRoute,
   installRouteLayers,
@@ -7405,7 +7406,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           '--mapControlSpan': `${mapSideControlSpan}px`,
         } as React.CSSProperties}
         data-poplur-color-side-control=""
-        aria-label="Change your takeover colour. Hold to choose a colour"
+        aria-label="Change your pin colour. The ground and the zoom rail follow it. Hold to choose a colour"
         aria-haspopup="dialog"
         aria-expanded={colorPaletteOpen}
         aria-hidden={controlsObscured ? true : undefined}
@@ -7458,7 +7459,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             setColorPaletteOpen(true)
             return
           }
-          randomizeTakeoverColor()
+          // The badge changes YOUR PIN, and the ground and rail follow it —
+          // one of the other supplied pins, never the one already worn. It
+          // used to spin an arbitrary hue, which moved the terrain and the
+          // rail while the pins stayed the colour they were.
+          randomizeMyPinColor()
         }}
       >
         <SideControlIconImage icon="map.color" displaySize={44} loading="eager" />
