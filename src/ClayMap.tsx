@@ -126,6 +126,16 @@ import {
 } from './claimRadius'
 import { useClaimRadiusLimitKm } from './useClaimRadiusLimit'
 import {
+  rankPostSpots,
+  spotDistanceMeters,
+  spotProbePoints,
+  spotSearchBoundingBox,
+  spotSearchQueries,
+  spotSearchRadiusKm,
+  type SpotCandidate,
+  type SpotSuggestion,
+} from './postSpotSuggestions'
+import {
   countryNameForCode,
   nearestCountryCode,
   transitionWorldCountryCode,
@@ -226,6 +236,15 @@ export interface ClayMapProps {
    *  same number MapApp publishes to the HUD, so the drop picker cannot drift
    *  from the account total shown around it. */
   accountRadiusKm?: number
+  /** Every live pop of the signed-in poster's, uncapped by the marker budget
+   *  the board renders under. The post picker's shortlist is mostly a question
+   *  about these: ground you already reach is ground a new pop cannot win. */
+  ownClaims?: readonly { coords: [number, number]; radiusKm: number }[]
+  /** Opens the map's own place-search panel, which lives in the owning
+   *  document (MapApp) rather than here. The post picker needs it: pinching
+   *  from a street to another city is not a realistic amount of travel, and
+   *  the picker used to offer no other way to get there. */
+  onRequestSearch?: () => void
 }
 
 /** A pop standing on the map: whose it is, where, and how much it holds. */
@@ -1592,6 +1611,59 @@ function framePaddingFor(container: HTMLElement): { top: number; right: number; 
 // 17.4 floor the street-reveal ease already uses, so the two agree instead of
 // fighting. Well under ZOOM_MAX, so pinching further is still available.
 const INTRO_LANDING_ZOOM = 17.6
+// The post-location picker lands WIDER than the browse map deliberately.
+// 17.6 is a doorstep: from there another neighbourhood is a dozen pinches away
+// and another city is unreachable, which is exactly what "I cannot zoom out to
+// post somewhere else" felt like. 15.4 still names streets and still stands the
+// clay massing up, but one pinch reaches the whole city -- and the search and
+// my-location controls on the picker card cover the distances a pinch cannot.
+const FOCUSED_PICK_LANDING_ZOOM = 15.4
+/** How far the pick point has to travel before the shortlist asks the geocoder
+ *  again. Roughly a neighbourhood: nudging the pin across a street does not
+ *  change which places are near it, and every refresh is a network call. */
+const SPOT_REFRESH_DISTANCE_M = 2_500
+/** Let a pan or a flight finish before spending a request on where it landed. */
+const SPOT_REFRESH_DEBOUNCE_MS = 700
+
+interface MapboxCategoryFeature {
+  geometry?: { coordinates?: unknown }
+  properties?: {
+    name?: unknown
+    mapbox_id?: unknown
+    poi_category?: unknown
+  }
+}
+
+/** Mapbox's category answer, reduced to the shape the ranker judges.
+ *
+ *  Deliberately the POI's own `name` and nothing else: a suggestion has to
+ *  READ as a place ("Trinity Bellwoods"), and `full_address` would put a
+ *  postcode in a button the size of a stamp. */
+export function mapboxFeaturesToCandidates(payload: unknown, query: string): SpotCandidate[] {
+  const features = (payload as { features?: unknown } | null)?.features
+  if (!Array.isArray(features)) return []
+  return features.flatMap((raw: MapboxCategoryFeature, index): SpotCandidate[] => {
+    const coordinates = raw?.geometry?.coordinates
+    if (!Array.isArray(coordinates) || coordinates.length < 2) return []
+    const longitude = Number(coordinates[0])
+    const latitude = Number(coordinates[1])
+    if (!Number.isFinite(longitude) || Math.abs(longitude) > 180) return []
+    if (!Number.isFinite(latitude) || Math.abs(latitude) > 90) return []
+    const name = typeof raw.properties?.name === 'string' ? raw.properties.name.trim() : ''
+    if (!name) return []
+    const categories = Array.isArray(raw.properties?.poi_category)
+      ? raw.properties.poi_category.filter((term): term is string => typeof term === 'string')
+      : []
+    return [{
+      id: typeof raw.properties?.mapbox_id === 'string' ? raw.properties.mapbox_id : `${query}:${index}`,
+      name,
+      center: [longitude, latitude],
+      // The searched category is itself a term: a POI returned for `coffee` is
+      // a coffee place even when Mapbox files it only under "café".
+      terms: [...categories, query].map(term => term.trim().toLowerCase()).filter(Boolean),
+    }]
+  })
+}
 // Ordinary Map launches begin at the zoom rail's true world end-stop. Keep
 // this separate from the Mapbox constructor's close zoom: constructing the
 // Standard style at world scale can prevent its load event, so the camera
@@ -1676,7 +1748,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIconId, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, focusedLabelUserKey = null, focusedMapPoint = null, onCurrentLocationChange, ownProfilePhoto = null, ownProfileSelfieVideo = null, accountRadiusKm }: ClayMapProps) {
+function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIconId, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, focusedLabelUserKey = null, focusedMapPoint = null, onCurrentLocationChange, ownProfilePhoto = null, ownProfileSelfieVideo = null, accountRadiusKm, ownClaims, onRequestSearch }: ClayMapProps) {
   const launchParams = typeof window === 'undefined'
     ? new URLSearchParams()
     : new URLSearchParams(window.location.search)
@@ -1690,6 +1762,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   // rail spans the complete stack, including this control.
   const mapSideControlSpan = mapSideControlRailWithColorSpan(mapBaseSideControlCount)
   const focusedPostLaunch = launchParams.get('pickSpot') === '1' || radiusPreviewLaunch
+  // The two focused launches share a composer but not a job. Radius review is a
+  // preview of one claim and keeps its close, task-specific framing; the post
+  // picker is asked "where should this go?" and has to be able to travel.
+  const focusedPickerLaunch = focusedPostLaunch && !radiusPreviewLaunch
   const adaptiveIOSLaunch = !focusedPostLaunch && (
     SHARED_ADAPTIVE_MAP || launchParams.get('iosTier') === '1'
     || (isIOSNativeShell() && launchParams.get('iosTier') !== '0')
@@ -2207,15 +2283,16 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     camera.__cinematic = false
     map.stop()
     wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
+    const landingZoom = focusedPickerLaunch ? FOCUSED_PICK_LANDING_ZOOM : INTRO_LANDING_ZOOM
     map.jumpTo({
       center,
-      zoom: INTRO_LANDING_ZOOM,
+      zoom: landingZoom,
       pitch: MAP_2D ? 0 : MAP_BROWSE_3D_PITCH,
       bearing: MAP_2D ? 0 : MAP_BROWSE_3D_BEARING,
     })
-    zoomValueRef.current = INTRO_LANDING_ZOOM
-    zoomTargetRef.current = INTRO_LANDING_ZOOM
-    setZoomValue(INTRO_LANDING_ZOOM)
+    zoomValueRef.current = landingZoom
+    zoomTargetRef.current = landingZoom
+    setZoomValue(landingZoom)
     if (radiusPreviewLaunch) {
       composeOpenRef.current = false
       const point = composeScreenPoint(map, map.project(center))
@@ -2226,7 +2303,194 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     composeOpenRef.current = true
     setComposeAt({ lng: center[0], lat: center[1], x: point.x, y: point.y })
     return true
-  }, [composeScreenPoint, focusedPostLaunch, mapRef, radiusPreviewLaunch])
+  }, [composeScreenPoint, focusedPickerLaunch, focusedPostLaunch, mapRef, radiusPreviewLaunch])
+
+  /** Re-anchor the picker's pending post onto a point the user deliberately
+   *  travelled to -- a search hit, the my-location control, a suggested place.
+   *  The camera move alone is not enough: composeAt keeps a GROUND coordinate,
+   *  so flying to Paris while it still held a Toronto point left "Use this
+   *  spot" quietly pointing at the city you had just left, off the edge of the
+   *  screen. Plain panning and pinching are not travel and never call this --
+   *  a point chosen by hand stays chosen, which is the whole contract of
+   *  focusedPostManualSelectionRef. */
+  const anchorPickerAt = useCallback((center: [number, number]) => {
+    if (!focusedPickerLaunch) return false
+    const map = mapRef.current
+    if (!map) return false
+    focusedPostManualSelectionRef.current = true
+    focusedPostResolvedLocationRef.current = true
+    setFocusedPostLocationStatus('ready')
+    composeOpenRef.current = true
+    const point = composeScreenPoint(map, map.project(center))
+    setComposeAt({ lng: center[0], lat: center[1], x: point.x, y: point.y })
+    return true
+  }, [composeScreenPoint, focusedPickerLaunch, mapRef])
+
+  /** The way back. Travelling to another city has to be reversible in one
+   *  press, or "search" is a trap rather than a tool. Uses the fix the picker
+   *  was launched with (native relay, then browser geolocation) rather than
+   *  asking for permission a second time mid-task. */
+  const returnPickerToCurrentLocation = useCallback(() => {
+    const center = currentLocationPoint ?? nativeLocationRef.current
+    const map = mapRef.current
+    if (!center || !map) return
+    playPop(0.25)
+    initialCameraInteractionRef.current = true
+    stopOrbitRef.current()
+    const camera = map as mapboxgl.Map & { __cinematic?: boolean }
+    camera.__cinematic = false
+    map.stop()
+    wakeManagedRendering(900 + MANAGED_CAMERA_SETTLE_MS)
+    map.easeTo({ center, zoom: FOCUSED_PICK_LANDING_ZOOM, duration: 900 })
+    anchorPickerAt(center)
+  }, [anchorPickerAt, currentLocationPoint, mapRef])
+
+  // ── Where should this go? ───────────────────────────────────────────────
+  // The shortlist the owner asked for. Candidates come from the map's existing
+  // Mapbox geocoder, aimed by the draft's channel and by what the camera read;
+  // the ranking (postSpotSuggestions) is local, deterministic and explainable,
+  // which is what lets every row carry a real reason instead of a vibe.
+  //
+  // It never places the pop. Tapping a row travels there and re-anchors, the
+  // same as a search hit; "Use this spot" is still a separate, deliberate
+  // press, and a point chosen by hand on the map always wins.
+  // Read ONCE. `launchParams` is rebuilt on every render of this component, so
+  // deriving these inline gave them a new identity every render, re-ran the
+  // effect below every render, and its cleanup aborted the in-flight geocoder
+  // request before it could ever answer — the shortlist sat on "Looking around
+  // this area…" forever. The picker's URL cannot change while it is up.
+  const [pickDraft] = useState<{ channelId: string | null; sceneTerms: readonly string[] }>(() => {
+    const params = typeof window === 'undefined'
+      ? new URLSearchParams()
+      : new URLSearchParams(window.location.search)
+    return {
+      channelId: params.get('pickChannel')?.trim().toLowerCase() || null,
+      sceneTerms: (params.get('pickScene') ?? '')
+        .split(',')
+        .map(term => term.trim().toLowerCase())
+        .filter(term => term.length > 1 && term.length <= 24)
+        .slice(0, 3),
+    }
+  })
+  const pickChannelId = pickDraft.channelId
+  const pickSceneTerms = pickDraft.sceneTerms
+  const [spotCandidates, setSpotCandidates] = useState<readonly SpotCandidate[]>([])
+  const [spotStatus, setSpotStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  // Where the current candidate set was gathered around. Candidates are a
+  // geography question and the geocoder is a network call, so they are re-read
+  // only once the pick point has genuinely moved on — the RANKING below is
+  // pure and re-runs for free on every radius nudge.
+  const spotOriginRef = useRef<[number, number] | null>(null)
+  // Read through a ref inside the fetch: where the poster's ground lies is
+  // what aims the second probe, but a live snapshot arriving with the same
+  // coverage must not spend a fresh round of requests on the same answer.
+  const ownClaimsRef = useRef(ownClaims)
+  ownClaimsRef.current = ownClaims
+  const composePoint = composeAt ? ([composeAt.lng, composeAt.lat] as [number, number]) : null
+  const composePointKey = composePoint ? `${composePoint[0].toFixed(3)},${composePoint[1].toFixed(3)}` : ''
+
+  useEffect(() => {
+    if (!focusedPickerLaunch || !composePointKey) return
+    const origin = composePointKey.split(',').map(Number) as [number, number]
+    const previous = spotOriginRef.current
+    if (previous && spotDistanceMeters(previous, origin) < SPOT_REFRESH_DISTANCE_M) return
+    let cancelled = false
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      spotOriginRef.current = origin
+      setSpotStatus('loading')
+      const queries = spotSearchQueries({ channelId: pickChannelId, sceneTerms: pickSceneTerms })
+      // BBOX, not only proximity. Proximity is a tiebreak and the geocoder
+      // will happily rank a distant hamlet whose NAME contains the search word
+      // above the cafe across the road — that is how a search for "coffee"
+      // came back with Coffee Hill. The box is sized off the account's whole
+      // earned radius, not the slider, so growing the claim never needs a
+      // second request. Suggestions are local by construction; the picker's
+      // search is the way to go genuinely far.
+      const bandKm = spotSearchRadiusKm(claimRadiusMaxKm)
+      // Each probe carries its OWN box: the far one is asking about a
+      // different neighbourhood, and a box centred back here would drag its
+      // answers home again.
+      const probes = spotProbePoints(origin, ownClaimsRef.current ?? [], claimRadiusMaxKm)
+      const requests = probes.flatMap(probe => queries.map(query => ({ probe, query })))
+      // The SEARCH BOX category endpoint, not the v5 forward geocoder. Same
+      // Mapbox account and token — no new provider — but a different question:
+      // v5 indexes place NAMES, so it answers "restaurant" with nothing nearby
+      // and "coffee" with a distant hamlet called Coffee Hill. This endpoint
+      // answers "cafes around this point", which is what is being asked.
+      void Promise.all(requests.map(({ probe, query }) => fetch(
+        `https://api.mapbox.com/search/searchbox/v1/category/${encodeURIComponent(query)}`
+        + `?access_token=${token}&limit=10`
+        + `&proximity=${probe[0]},${probe[1]}`
+        + `&bbox=${spotSearchBoundingBox(probe, bandKm).map(value => value.toFixed(5)).join(',')}`,
+        { signal: controller.signal },
+      ).then(response => response.ok ? response.json() : Promise.reject(new Error(String(response.status))))
+        .catch(() => null)))
+        .then(payloads => {
+          if (cancelled) return
+          // Two probes can see the same place. Keep one of it.
+          const byId = new Map<string, SpotCandidate>()
+          payloads.forEach((payload, index) => {
+            for (const candidate of mapboxFeaturesToCandidates(payload, requests[index].query)) {
+              if (!byId.has(candidate.id)) byId.set(candidate.id, candidate)
+            }
+          })
+          const gathered = [...byId.values()]
+          setSpotCandidates(gathered)
+          setSpotStatus(gathered.length ? 'ready' : 'error')
+        })
+        .catch(() => { if (!cancelled) setSpotStatus('error') })
+    }, SPOT_REFRESH_DEBOUNCE_MS)
+    return () => {
+      cancelled = true
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+    // claimRadiusMaxKm only sizes the search box, which is deliberately
+    // generous; re-fetching every candidate because the account total ticked
+    // would spend a request for the same answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composePointKey, focusedPickerLaunch, pickChannelId, pickSceneTerms, token])
+
+  const spotSuggestions = useMemo(() => {
+    if (!focusedPickerLaunch || !composePoint || !spotCandidates.length) return []
+    return rankPostSpots(spotCandidates, {
+      origin: composePoint,
+      claimRadiusKm: composeRadiusKm,
+      ownClaims: ownClaims ?? [],
+      channelId: pickChannelId,
+      sceneTerms: pickSceneTerms,
+    })
+    // composePointKey, not composePoint: a new array identity every render
+    // would re-rank on every frame of a pan for no change in the answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composePointKey, composeRadiusKm, focusedPickerLaunch, ownClaims, pickChannelId, pickSceneTerms, spotCandidates])
+
+  /** Take a suggestion: fly there and move the pending post with the camera.
+   *  Still not a placement — the user presses "Use this spot" themselves. */
+  const travelToSuggestion = useCallback((suggestion: SpotSuggestion) => {
+    const map = mapRef.current
+    if (!map) return
+    playPop(0.25)
+    initialCameraInteractionRef.current = true
+    stopOrbitRef.current()
+    const camera = map as mapboxgl.Map & { __cinematic?: boolean }
+    camera.__cinematic = false
+    map.stop()
+    wakeManagedRendering(1200 + MANAGED_CAMERA_SETTLE_MS)
+    map.easeTo({ center: suggestion.center, zoom: FOCUSED_PICK_LANDING_ZOOM, duration: 1200 })
+    anchorPickerAt(suggestion.center)
+  }, [anchorPickerAt, mapRef])
+
+  /** MapApp owns the search panel and its flight; the picker owns where the
+   *  post is going. Hand it a way to tell us it landed somewhere. */
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || mapEpoch === 0 || !focusedPickerLaunch) return
+    const holder = map as mapboxgl.Map & { __poplurPickerAnchor?: (center: [number, number]) => void }
+    holder.__poplurPickerAnchor = center => { anchorPickerAt(center) }
+    return () => { delete holder.__poplurPickerAnchor }
+  }, [anchorPickerAt, focusedPickerLaunch, mapEpoch, mapRef])
 
   useEffect(() => {
     const apply = (value: unknown) => {
@@ -3914,9 +4178,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // to space and back, while the existing zoom policy still brings in the
       // clay flyover close-up. A focused post launch remains a direct task.
       const focusedCenter = nativeLocationRef.current ?? HOME_CENTER
-      const launchZoom = focusedPostLaunch
-        ? INTRO_LANDING_ZOOM
-        : adaptiveIOSLaunch ? DEFAULT_MAP_LAUNCH_ZOOM : 0.85
+      const launchZoom = focusedPickerLaunch
+        ? FOCUSED_PICK_LANDING_ZOOM
+        : focusedPostLaunch
+          ? INTRO_LANDING_ZOOM
+          : adaptiveIOSLaunch ? DEFAULT_MAP_LAUNCH_ZOOM : 0.85
       if (focusedPostLaunch) initialCameraInteractionRef.current = true
       wakeManagedRendering(MANAGED_CAMERA_JUMP_MS)
       map.jumpTo({
@@ -6871,29 +7137,31 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       {/* Tap-to-post composer: a centered safe-lane control dock over the
           selected ground. Choose the claim radius, then Drop → the territory
           disc pops out and grows to that many km. */}
-      {composeAt && !radiusPreviewLaunch && (
+      {/* THE PICKER MUST NOT BE COVERED BY A BUTTON.
+          Everywhere else this scrim is right: the composer was opened by a
+          deliberate hold, and tapping out of it puts it away. In the post
+          picker the composer is open from launch and never closes, so an
+          inset:0 <button> sat over the entire canvas for the whole task and
+          swallowed every drag, pinch, double-tap and rotate before Mapbox
+          could see them. dragPan/scrollZoom/touchZoomRotate all reported
+          `enabled` throughout — nothing was locked; the gestures simply never
+          arrived. That is the whole of "I cannot zoom out of my current
+          location to post somewhere else". The picker keeps the veil for depth
+          and gives up its click: the canvas's own handler below already
+          answers a picker tap with exactly the same re-pick. */}
+      {composeAt && focusedPickerLaunch && (
+        <div aria-hidden="true" className={`${styles.composeDismissLayer} ${styles.composePickerVeil}`} />
+      )}
+      {composeAt && !radiusPreviewLaunch && !focusedPickerLaunch && (
         <button
           type="button"
           className={styles.composeDismissLayer}
-          aria-label={focusedPostLaunch ? 'Move the post to another spot' : 'Close post composer'}
-          onClick={(event) => {
+          aria-label="Close post composer"
+          onClick={() => {
             playPop()
-            if (!focusedPostLaunch) {
-              composeOpenRef.current = false
-              setComposeMessage('')
-              setComposeAt(null)
-              return
-            }
-            const map = mapRef.current
-            if (!map) return
-            const rect = map.getContainer().getBoundingClientRect()
-            const rawPoint = { x: event.clientX - rect.left, y: event.clientY - rect.top }
-            const next = map.unproject([rawPoint.x, rawPoint.y])
-            const point = composeScreenPoint(map, rawPoint)
-            focusedPostManualSelectionRef.current = true
-            setFocusedPostLocationStatus('ready')
-            composeOpenRef.current = true
-            setComposeAt({ lng: next.lng, lat: next.lat, x: point.x, y: point.y })
+            composeOpenRef.current = false
+            setComposeMessage('')
+            setComposeAt(null)
           }}
         />
       )}
@@ -6945,6 +7213,41 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             </button>
           </div>
           <div className={styles.composeBody}>
+            {/* Reach anywhere. The map's own search lives in the owning
+                document and its rail button is easy to miss with a card in the
+                middle of the screen, so the picker carries the two travel
+                controls that answer "somewhere else": a place search, and the
+                way back. Both re-anchor the pending post (anchorPickerAt), so
+                arriving somewhere is also choosing it -- and the map is now
+                draggable underneath, which is the other half of the answer. */}
+            {focusedPickerLaunch && (
+              <section className={styles.composeTravel} aria-label="Go somewhere else to post">
+                <button
+                  type="button"
+                  className={styles.composeTravelButton}
+                  disabled={!onRequestSearch}
+                  onClick={() => { playPop(0.25); onRequestSearch?.() }}
+                >
+                  <SideControlIconImage icon="map.search" displaySize={36} />
+                  <span>
+                    <strong>Search a place</strong>
+                    <small>Post in another area</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={styles.composeTravelButton}
+                  disabled={!(currentLocationPoint ?? nativeLocationRef.current)}
+                  onClick={returnPickerToCurrentLocation}
+                >
+                  <SideControlIconImage icon="map.locate" displaySize={36} />
+                  <span>
+                    <strong>My location</strong>
+                    <small>Back to where you are</small>
+                  </span>
+                </button>
+              </section>
+            )}
             <section className={styles.composeRadiusPanel} aria-labelledby="poplur-claim-radius-label">
               <div className={styles.composeSectionHeader}>
                 <span className={styles.composeSectionIcon} aria-hidden="true">
@@ -6995,6 +7298,55 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
                 <span>{formatClaimRadiusKm(claimRadiusMaxKm)} KM</span>
               </div>
             </section>
+            {/* WHERE SHOULD THIS GO? A shortlist, never a placement. Each row
+                names a real place and says why it earned the row — mostly how
+                much of this claim would land on ground no pop of yours already
+                reaches, because that is what a radius is for. Tapping one
+                travels there; pressing "Use this spot" is still yours. */}
+            {focusedPickerLaunch && (
+              <section className={styles.composeSpots} aria-labelledby="poplur-spot-suggestions-label">
+                <div className={styles.composeSectionHeader}>
+                  <span className={styles.composeSectionIcon} aria-hidden="true">
+                    <SideControlIconImage icon="map.search" displaySize={44} />
+                  </span>
+                  <div className={styles.composeSectionCopy}>
+                    <span className={styles.composeSectionLabel} id="poplur-spot-suggestions-label">
+                      Where should this go?
+                    </span>
+                    <span className={styles.composeCoverage}>
+                      {spotStatus === 'loading'
+                        ? 'Looking around this area…'
+                        : spotSuggestions.length
+                          ? 'Suggestions — you still choose'
+                          : spotStatus === 'ready'
+                            ? 'Your pops already cover everything near here'
+                            : spotStatus === 'error'
+                              ? 'No places found around here'
+                              : 'Pick a point to see suggestions'}
+                    </span>
+                  </div>
+                </div>
+                {spotSuggestions.length > 0 && (
+                  <ul className={styles.composeSpotList}>
+                    {spotSuggestions.map(suggestion => (
+                      <li key={suggestion.id}>
+                        <button
+                          type="button"
+                          className={styles.composeSpotButton}
+                          onClick={() => travelToSuggestion(suggestion)}
+                        >
+                          <strong>
+                            {suggestion.name}
+                            <em>{suggestion.distanceLabel}</em>
+                          </strong>
+                          <small>{suggestion.reason}</small>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            )}
             {/* Say it in words. A written pop is a pop: it claims the same
                 ground, and it is what the Times sets as a MESSAGE inside this
                 radius. Leave it blank and Open Camera takes you to the visual

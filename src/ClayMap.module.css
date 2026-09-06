@@ -864,6 +864,16 @@
   cursor: default;
 }
 
+/* The picker's veil, not its lid. Pointer-events off so drag/pinch/rotate
+   reach the canvas, and far lighter than the dismiss scrim: choosing where a
+   post goes means READING the map, and a 50% wash over it made the streets
+   you are choosing between hard to tell apart. */
+.composePickerVeil {
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 46%, rgba(246, 59, 154, 0.05), rgba(9, 3, 9, 0.16) 78%);
+}
+
 .composeBubble {
   position: absolute;
   left: 50%;
@@ -1402,6 +1412,125 @@
 }
 
 .composeDirections:disabled { opacity: 0.6; cursor: default; }
+
+/* Two travel controls, side by side above the radius. Same molded shell as
+   "Route here instead" so the picker gains a row rather than a new language. */
+.composeTravel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.composeTravelButton {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 52px;
+  padding: 5px 8px 5px 5px;
+  border: 2px solid #f76bb5;
+  border-radius: 16px;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(150deg, #44112e, #170811);
+  box-shadow: 0 4px 0 #8c104e, inset 0 1px 0 rgba(255, 255, 255, .22);
+  transition: transform 130ms cubic-bezier(.2, 1.25, .4, 1), filter 130ms ease;
+  text-align: left;
+}
+
+.composeTravelButton:active { transform: translateY(2px) scale(.94); }
+.composeTravelButton:disabled { opacity: .45; cursor: default; }
+
+.composeTravelButton:focus-visible {
+  outline: 3px solid #38cfff;
+  outline-offset: 3px;
+}
+
+.composeTravelButton strong,
+.composeTravelButton small {
+  display: block;
+}
+
+.composeTravelButton strong {
+  font-size: 10px;
+  font-weight: 1000;
+  line-height: 1.05;
+  text-transform: uppercase;
+}
+
+.composeTravelButton small {
+  margin-top: 3px;
+  color: #ffbddd;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+/* The shortlist. Same molded section as Claim radius so it reads as another
+   part of the picker rather than a recommendation panel bolted on top. */
+.composeSpots {
+  margin-top: 12px;
+}
+
+.composeSpotList {
+  display: grid;
+  gap: 6px;
+  margin: 9px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.composeSpotButton {
+  appearance: none;
+  width: 100%;
+  min-height: 46px;
+  padding: 7px 10px;
+  border: 2px solid #f76bb5;
+  border-radius: 15px;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(150deg, #44112e, #170811);
+  box-shadow: 0 3px 0 #8c104e, inset 0 1px 0 rgba(255, 255, 255, .2);
+  transition: transform 130ms cubic-bezier(.2, 1.25, .4, 1), filter 130ms ease;
+  text-align: left;
+}
+
+.composeSpotButton:active { transform: translateY(2px) scale(.97); }
+
+.composeSpotButton:focus-visible {
+  outline: 3px solid #38cfff;
+  outline-offset: 3px;
+}
+
+.composeSpotButton strong {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 1000;
+  line-height: 1.1;
+}
+
+/* How far it actually is, beside the name. A suggestion that reads as "just
+   there" when it is 18 km away is worse than no suggestion. */
+.composeSpotButton strong em {
+  flex: none;
+  color: #ffbddd;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.composeSpotButton small {
+  display: block;
+  margin-top: 3px;
+  color: #ffbddd;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1.25;
+}
 
 .composeBubble[data-focused-picker='true'] .composeActions {
   grid-template-columns: 1fr 1.35fr;

@@ -7,7 +7,7 @@ import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
-import { addCapture, isDetectOn, setDetectOn, onCameraStore, listCaptures, getLibraryNewest, takePendingMapPost, type PendingMapPost } from './cameraStore'
+import { addCapture, isDetectOn, setDetectOn, onCameraStore, listCaptures, getLibraryNewest, setLastSceneTerms, takePendingMapPost, type PendingMapPost } from './cameraStore'
 import RecognitionAura from './RecognitionAura'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
 import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
@@ -545,6 +545,14 @@ export default function Camera({
     // timer. When a fresh sample explicitly has no meaningful answer, clear it
     // instead of carrying the previous room/object into a different scene.
     setLastCameraReads(currentCameraReads)
+    // The same reading, kept where the MAP can find it. "Suggest where to post
+    // what I just made" is half a content question, and the detector standing
+    // in front of the scene has already answered it — a second scan of the
+    // capture would pay twice for the same fact. Identity reads are the
+    // poster, not the scene, so they never travel.
+    setLastSceneTerms(currentCameraReads
+      .filter(read => !read.user && !read.isUser)
+      .map(read => read.label))
   }, [currentCameraReads, detectOn, effectiveLiveSurfaceVisible])
   const webCaptureRequired = captureRequested && captureGranted
   const [nativeCameraBudget, setNativeCameraBudget] = useState<NativeCameraBudget | null>(null)

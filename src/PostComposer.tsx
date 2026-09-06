@@ -15,7 +15,7 @@ import {
 } from './aiGeneration'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { track } from './analytics'
-import { setPendingMapPost, type PendingMapPost } from './cameraStore'
+import { getLastSceneTerms, setPendingMapPost, type PendingMapPost } from './cameraStore'
 import { dropNewsMessage, type NewsMediaAttachment } from './newsMessages'
 import VideoEditor from './VideoEditor'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
@@ -326,6 +326,9 @@ export default function PostComposer({
       rightsAttested,
       aiPrompt,
       pinColor,
+      // What the lens read, carried to the map so its shortlist can weigh the
+      // capture's own content and not only the channel it was filed under.
+      sceneTerms: getLastSceneTerms(),
     })
     // CustomEvent, NOT postMessage: HomeTwin's message handler accepts only
     // messages from the map iframe. This same-document signal deliberately

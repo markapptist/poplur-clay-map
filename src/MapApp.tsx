@@ -1552,6 +1552,13 @@ export default function MapApp() {
         essential: true,
       })
     }
+    // A search hit inside the post picker is TRAVEL, not sightseeing: the
+    // person is telling us where they want the post to go. Move the pending
+    // point with the camera, or "Use this spot" would still be aimed at the
+    // area they just left, now off the edge of the screen. ClayMap installs
+    // this only while the picker is up, so the browse map is untouched.
+    ;(map as unknown as { __poplurPickerAnchor?: (target: [number, number]) => void })
+      .__poplurPickerAnchor?.(landmarkFrame?.center ?? center)
   }, [beginProgrammaticCameraMotion, closeSearch, mapRef])
 
   // Keep the place half of the status truthful after a manual pan as well as
@@ -3121,6 +3128,10 @@ export default function MapApp() {
   const [liveMapPosts, setLiveMapPosts] = useState<LiveMapPostPin[]>([])
   const liveMapPostsRef = useRef(liveMapPosts)
   liveMapPostsRef.current = liveMapPosts
+  // The poster's OWN ground, unfiltered by the board's marker budget. The pins
+  // ClayMap renders are capped and viewport-ranked; a coverage question has to
+  // see every pop, including the ones no marker is standing on right now.
+  const ownLiveClaims = useMemo(() => accountPostedClaims(liveMapPosts), [liveMapPosts])
   const [liveMapPostsReady, setLiveMapPostsReady] = useState(false)
   const [accountRadiusSnapshot, setAccountRadiusSnapshot] = useState({
     radiusKm: 0,
@@ -4712,6 +4723,8 @@ export default function MapApp() {
         ownProfilePhoto={ownAvatar}
         ownProfileSelfieVideo={ownSelfieVideo}
         accountRadiusKm={accountRadiusKm}
+        ownClaims={ownLiveClaims}
+        onRequestSearch={openSearch}
         weatherMode={weatherMode}
         weatherIconId={weatherIconId}
         weatherOpen={weatherOpen}

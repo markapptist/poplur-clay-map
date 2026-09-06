@@ -133,9 +133,32 @@ export interface PendingMapPost {
   aiPrompt?: string
   /** The poster's chosen pin model colour, kept across the location detour. */
   pinColor?: 'red' | 'purple' | 'blue' | 'green' | 'orange' | null
+  /** What the camera read in this scene, most confident first. Carried so the
+   *  map's "where should this go?" shortlist can weigh the capture's own
+   *  content alongside the channel — see postSpotSuggestions. */
+  sceneTerms?: readonly string[]
 }
 
 let pendingMapPost: PendingMapPost | null = null
+
+/** The last meaningful thing the live camera read, as short lowercase labels
+ *  from the on-device detector that has already run (mlDetect). Module-level
+ *  because Camera unmounts on the way to the composer, and deliberately NOT
+ *  cleared when Scan is switched off: it is a memory of what was in front of
+ *  the lens, and it stays true until the lens reads something else. */
+let lastSceneTerms: readonly string[] = []
+
+export function setLastSceneTerms(terms: readonly string[]): void {
+  const cleaned = terms
+    .map(term => term.trim().toLowerCase().replace(/[_\s]+/g, ' '))
+    .filter(term => term.length > 1 && term.length <= 24 && /^[a-z0-9 -]+$/.test(term))
+  if (!cleaned.length) return
+  lastSceneTerms = [...new Set(cleaned)].slice(0, 3)
+}
+
+export function getLastSceneTerms(): readonly string[] { return lastSceneTerms }
+
+export function clearLastSceneTerms(): void { lastSceneTerms = [] }
 
 export function setPendingMapPost(draft: PendingMapPost): void { pendingMapPost = draft }
 
@@ -145,6 +168,12 @@ export function takePendingMapPost(): PendingMapPost | null {
   pendingMapPost = null
   return draft
 }
+
+/** Read the parked draft WITHOUT consuming it. The location picker needs the
+ *  channel and scene of the post it is finding ground for, and it runs while
+ *  the draft is still mid-detour — takePendingMapPost would hand the map the
+ *  only copy and the camera would come back to nothing. */
+export function peekPendingMapPost(): PendingMapPost | null { return pendingMapPost }
 
 /** Abandoning the location-picker trip must release its retained media draft. */
 export function clearPendingMapPost(): void { pendingMapPost = null }

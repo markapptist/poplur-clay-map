@@ -91,7 +91,7 @@ import { playPop, popHaptic } from './pop'
 import { startRingtone, stopRingtone } from './phoneRingtones'
 import IncomingCallPopup from './IncomingCallPopup'
 import { recordCallEnd, recordCallStart } from './callLog'
-import { clearPendingMapPost, onCameraStore, selectedCount } from './cameraStore'
+import { clearPendingMapPost, onCameraStore, peekPendingMapPost, selectedCount } from './cameraStore'
 import {
   clearPodcastMapPick,
   completePodcastMapPick,
@@ -2473,6 +2473,11 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const [mapPickSpotLaunch, setMapPickSpotLaunch] = useState<{
     latitude?: number
     longitude?: number
+    /** The parked draft's channel and what the camera read in the scene. The
+     *  picker's "where should this go?" shortlist needs to know what it is
+     *  finding ground FOR; without these it can only rank by territory. */
+    channelId?: string
+    sceneTerms?: readonly string[]
   } | null>(null)
   // iOS sends its real ProcessInfo thermal state to the main document. The map
   // lives in a child document with its own frame governor, so forward every
@@ -3436,7 +3441,14 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       const longitude = Number(cached?.longitude)
       const valid = Number.isFinite(latitude) && Math.abs(latitude) <= 90
         && Number.isFinite(longitude) && Math.abs(longitude) <= 180
-      setMapPickSpotLaunch(valid ? { latitude, longitude } : {})
+      // PEEK, never take: the composer still owns this draft and comes back
+      // for it. The picker only wants to know what it is finding ground for.
+      const draft = peekPendingMapPost()
+      const context = {
+        channelId: draft?.channelId,
+        sceneTerms: draft?.sceneTerms,
+      }
+      setMapPickSpotLaunch(valid ? { latitude, longitude, ...context } : context)
       if (NATIVE_ADAPTIVE_MAP) beginNativeMapWebFallback()
       // This is an explicit location action, so it is the right moment to ask
       // the native shell for a fresh fix. iOS replays it into the newly mounted
@@ -5491,6 +5503,17 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                   typeof mapPickSpotLaunch.latitude === 'number'
                     && typeof mapPickSpotLaunch.longitude === 'number'
                     ? `&pickLat=${encodeURIComponent(mapPickSpotLaunch.latitude)}&pickLng=${encodeURIComponent(mapPickSpotLaunch.longitude)}`
+                    : ''
+                }${
+                  // On the URL, exactly like pickLat/pickLng: the picker needs
+                  // this before its first frame, and a postMessage would race
+                  // the iframe's own boot.
+                  mapPickSpotLaunch.channelId
+                    ? `&pickChannel=${encodeURIComponent(mapPickSpotLaunch.channelId)}`
+                    : ''
+                }${
+                  mapPickSpotLaunch.sceneTerms?.length
+                    ? `&pickScene=${encodeURIComponent(mapPickSpotLaunch.sceneTerms.slice(0, 3).join(','))}`
                     : ''
                 }`
               : CLAY_MAP_SRC}
