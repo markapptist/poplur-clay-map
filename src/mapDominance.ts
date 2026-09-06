@@ -8,9 +8,30 @@ export const DOMINANCE_OVERVIEW_MAX_ZOOM = 7.25
  * Mapbox only honours `beforeId` ordering between layers in the same slot. */
 export const DOMINANCE_GROUND_SLOT = 'bottom' as const
 
-/** Local material details start after the fully opaque overview scoreboard. */
+/** Local material details start after the scoreboard zooms. */
 export const DOMINANCE_DETAIL_MIN_ZOOM = 7.5
 const DOMINANCE_DETAIL_FILL_OPACITY = 0.78
+
+/**
+ * At and below this zoom, held ground is drawn as an OUTLINE and nothing else.
+ *
+ * The fill used to be fully opaque out here, so that the largest holder,
+ * painted last, replaced every smaller one in an overlap — a clean rule that
+ * produced an unusable picture. Opaque neighbours merge with no seam, so a
+ * city's worth of claims becomes one shape and a continent's worth becomes one
+ * colour. Measured 6 Sep: 22 claims in view at z5 painted the whole of eastern
+ * North America a single flat pink. That is the "it's just a blob when I zoom
+ * out" report, and killing the overview wash did not fix it because the wash
+ * was only ever the second of two flat fills.
+ *
+ * Dropping the fill to nothing out here leaves the cased boundary to say who
+ * holds what. Outlines cannot merge: two overlapping territories read as two
+ * shapes, twenty read as twenty, and the map underneath — roads, coast, water,
+ * the land itself — stays legible at every density. The fill fades back in by
+ * the detail zoom, where claims are far enough apart on screen to be ground
+ * again rather than a mass.
+ */
+export const DOMINANCE_SCOREBOARD_OUTLINE_ZOOM = 6.5
 
 // There was an overview WASH here — an opacity ramp for a second claim fill
 // drawn above the street web at scoreboard zooms. Both are gone. A flat fill
@@ -188,19 +209,19 @@ export function dominanceInsertBefore(
 export function dominanceFillOpacityExpression(): unknown[] {
   return [
     'interpolate', ['linear'], ['zoom'],
-    DOMINANCE_OVERVIEW_MAX_ZOOM, 1,
+    DOMINANCE_SCOREBOARD_OUTLINE_ZOOM, 0,
     DOMINANCE_DETAIL_MIN_ZOOM, DOMINANCE_DETAIL_FILL_OPACITY,
   ]
 }
 
-/** Pure mirror of the Mapbox expression, used to lock the overlap contract in
- * tests without spinning up a renderer. */
+/** Pure mirror of the Mapbox expression, used to lock the contract in tests
+ * without spinning up a renderer. */
 export function dominanceFillOpacityAtZoom(zoom: number): number {
-  if (zoom <= DOMINANCE_OVERVIEW_MAX_ZOOM) return 1
+  if (zoom <= DOMINANCE_SCOREBOARD_OUTLINE_ZOOM) return 0
   if (zoom >= DOMINANCE_DETAIL_MIN_ZOOM) return DOMINANCE_DETAIL_FILL_OPACITY
-  const progress = (zoom - DOMINANCE_OVERVIEW_MAX_ZOOM)
-    / (DOMINANCE_DETAIL_MIN_ZOOM - DOMINANCE_OVERVIEW_MAX_ZOOM)
-  return 1 + (DOMINANCE_DETAIL_FILL_OPACITY - 1) * progress
+  const progress = (zoom - DOMINANCE_SCOREBOARD_OUTLINE_ZOOM)
+    / (DOMINANCE_DETAIL_MIN_ZOOM - DOMINANCE_SCOREBOARD_OUTLINE_ZOOM)
+  return DOMINANCE_DETAIL_FILL_OPACITY * progress
 }
 
 /**

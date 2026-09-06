@@ -3,6 +3,7 @@ import {
   DOMINANCE_DETAIL_MIN_ZOOM,
   DOMINANCE_GROUND_SLOT,
   DOMINANCE_OVERVIEW_MAX_ZOOM,
+  DOMINANCE_SCOREBOARD_OUTLINE_ZOOM,
   dominanceFillOpacityAtZoom,
   dominanceFillOpacityExpression,
   dominanceFameScore,
@@ -56,19 +57,30 @@ describe('map dominance overview', () => {
     ])).toBe('regional-lakes')
   })
 
-  it('makes the larger-radius overview winner visually exclusive', () => {
+  it('draws held ground as an OUTLINE at scoreboard zooms, never a fill', () => {
+    // This used to assert the opposite: a fully opaque fill out here, so the
+    // largest holder painted last and replaced every smaller one in an
+    // overlap. Clean rule, unusable picture — opaque neighbours merge with no
+    // seam, so a city's claims become one shape and a continent's become one
+    // colour. Measured 6 Sep: 22 claims in view at z5 painted the whole of
+    // eastern North America a single flat pink, which is the "just a blob when
+    // I zoom out" report. Outlines cannot merge, so they carry it instead.
     const ordered = dominancePaintOrder([
       { id: 'small-pink', radiusKm: 8 },
       { id: 'large-blue', radiusKm: 30 },
     ])
-
+    // Paint order still resolves overlaps wherever there IS a fill.
     expect(ordered[ordered.length - 1]?.id).toBe('large-blue')
-    expect(dominanceFillOpacityAtZoom(0)).toBe(1)
-    expect(dominanceFillOpacityAtZoom(DOMINANCE_OVERVIEW_MAX_ZOOM)).toBe(1)
+
+    expect(dominanceFillOpacityAtZoom(0)).toBe(0)
+    expect(dominanceFillOpacityAtZoom(DOMINANCE_SCOREBOARD_OUTLINE_ZOOM)).toBe(0)
+    // And it comes back as ground by the detail zoom.
     expect(dominanceFillOpacityAtZoom(DOMINANCE_DETAIL_MIN_ZOOM)).toBe(0.78)
+    expect(dominanceFillOpacityAtZoom(7)).toBeGreaterThan(0)
+    expect(dominanceFillOpacityAtZoom(7)).toBeLessThan(0.78)
     expect(dominanceFillOpacityExpression()).toEqual([
       'interpolate', ['linear'], ['zoom'],
-      DOMINANCE_OVERVIEW_MAX_ZOOM, 1,
+      DOMINANCE_SCOREBOARD_OUTLINE_ZOOM, 0,
       DOMINANCE_DETAIL_MIN_ZOOM, 0.78,
     ])
   })
