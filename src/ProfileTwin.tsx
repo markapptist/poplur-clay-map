@@ -9,8 +9,9 @@ import { OTHER_POPS } from './data'
 import { feedUrl } from './assetPacks'
 import { playPop } from './pop'
 import RadiusStrikerRail from './RadiusStrikerRail'
-import ProfilePostStep from './ProfilePostStep'
-import { profilePostStepAvailability, stepProfilePostIndex, type ProfilePostStepDirection } from './profilePostSteps'
+import ClayArrowCluster from './ClayArrowCluster'
+import { responsiveChannelControlSize } from './channelControlSizing'
+import { stepProfilePostIndex, type ProfilePostStepDirection } from './profilePostSteps'
 import { ACCOUNT_RADIUS_CHANGE_EVENT, readAccountRadiusKm } from './accountRadius'
 import { playCubeNavigationPop } from './cubeNavigationSound'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
@@ -261,14 +262,12 @@ function postPoster(post: Post): string {
 }
 const postTileKey = (post: Post, index: number) => `${post.id ?? post.video}-${index}`
 
-/** What shares the opened post's column beneath its action rail: the four
- *  inner arrows (ProfilePostStep — four rows and the three gaps between them),
- *  plus the seam between the two groups. Reserving exactly this is what puts
- *  the rail's last button one seam above the first chevron rather than on it,
- *  and it leaves the rail's own box holding its buttons at the column's even
- *  pitch instead of overflowing past the bottom of it. */
-const PROFILE_POST_STEP_RESERVE =
-  'calc(4 * var(--poplur-feed-ctl) + 3 * var(--poplur-feed-gap) + var(--poplur-feed-seam))'
+/* The opened post's column used to reserve room beneath its action rail for
+   four inner chevrons (PROFILE_POST_STEP_RESERVE). Those arrows are the shared
+   D-pad now, docked at the bottom centre with every other screen's, so nothing
+   shares this column any more and the rail runs its full length — the same
+   height the map's zoom rail got back when its travel button became the
+   cluster's up arrow. */
 function releaseViewerMedia(video: HTMLVideoElement): void {
   video.pause()
   video.removeAttribute('src')
@@ -1461,10 +1460,18 @@ export default function ProfileTwin({
     if (Math.abs(dy) > 48 && Math.abs(dy) >= Math.abs(dx)) direction = dy < 0 ? 'down' : 'up'
     else if (Math.abs(dx) > 48) direction = dx < 0 ? 'right' : 'left'
     if (!direction) return
+    stepViewerPost(direction)
+  }
+  // One walk of the grid, whatever asked for it: the D-pad, a swipe, or the
+  // shell's cube arrows. A sheet over the post owns the arrows, as it does the
+  // cube's, and an edge press is inert rather than wrapping.
+  const stepViewerPost = (direction: ProfilePostStepDirection) => {
+    if (viewerCoveredRef.current) return false
     const next = stepProfilePostIndex(viewerSlotRef.current, postsCountRef.current, direction)
-    if (next == null) return
+    if (next == null) return false
     playPop()
     setViewerIdx(next)
+    return true
   }
   const viewerIdxRef = useRef(viewerIdx)
   viewerIdxRef.current = viewerIdx
@@ -3020,7 +3027,6 @@ export default function ProfileTwin({
           <PostActionRail
             side={controlSide}
             label="Profile post controls"
-            reserveBelow={PROFILE_POST_STEP_RESERVE}
             muted={viewerMuted}
             captionsOn={viewerCaptionsOn}
             commentsOpen={viewerCommentOpen}
@@ -3034,20 +3040,31 @@ export default function ProfileTwin({
             deletePending={deletePending != null}
             onShowOnMap={viewerPost.origin ? () => showPostOnMap(viewerPost) : undefined}
           />
-          {/* Under the rail: the four inner arrows that walk the grid this
-              post was opened from — above, below, previous, next — each
-              disabled at the grid's edge. */}
-          <ProfilePostStep
-            side={controlSide}
-            availability={profilePostStepAvailability(viewerSlot, posts.length)}
-            onStep={direction => {
-              // A sheet over the post owns the arrows, as it does the cube's.
-              if (viewerCovered) return
-              const next = stepProfilePostIndex(viewerSlot, posts.length, direction)
-              if (next == null) return
-              playPop()
-              setViewerIdx(next)
-            }}
+          {/* The D-pad, the same one the map, camera and feed step with
+              (ClayArrowCluster) — an opened pop is a screen that steps through
+              something, so it steps on the shared cluster in the shared place
+              rather than on four chevrons of its own under the rail. The axes
+              keep this grid's meaning: ▲▼ is the tile above and below (one row,
+              same column), ◀▶ the previous and next in reading order.
+
+              No arrow is greyed at the grid's edge the way the old inner
+              chevrons were: the cluster has no per-arrow disabled state, and
+              adding one reaches into a component three other screens draw. A
+              press with nowhere to go is simply inert — stepProfilePostIndex
+              returns null and nothing moves. */}
+          <ClayArrowCluster
+            size={responsiveChannelControlSize()}
+            aria-label="Browse this profile's posts"
+            data-profile-post-step=""
+            label={posts.length ? `${viewerSlot + 1}/${posts.length}` : '0/0'}
+            upLabel="Post above"
+            downLabel="Post below"
+            leftLabel="Previous post"
+            rightLabel="Next post"
+            onUp={() => stepViewerPost('up')}
+            onDown={() => stepViewerPost('down')}
+            onLeft={() => stepViewerPost('left')}
+            onRight={() => stepViewerPost('right')}
           />
           <div className={styles.viewerTop}>
             <span className={styles.viewerCh}>{viewerPost.ch}</span>

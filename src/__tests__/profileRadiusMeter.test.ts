@@ -8,8 +8,6 @@ const profile = read('../ProfileTwin.tsx')
 const rail = read('../RadiusStrikerRail.tsx')
 const railCss = read('../RadiusStrikerRail.module.css')
 const mapCss = read('../ClayMap.module.css')
-const step = read('../ProfilePostStep.tsx')
-const stepCss = read('../ProfilePostStep.module.css')
 const home = read('../HomeTwin.tsx')
 
 describe('the profile radius meter is the map’s striker, in sync with the radius', () => {
@@ -117,36 +115,50 @@ describe('the block control wears the supplied clay art', () => {
   })
 })
 
-describe('the opened post’s inner arrows', () => {
-  it('sit under the action rail on the control side, four chevrons from the feed’s own art', () => {
-    expect(profile).toContain('<ProfilePostStep')
-    expect(profile).toContain('availability={profilePostStepAvailability(viewerSlot, posts.length)}')
-    expect(profile).toContain('stepProfilePostIndex(viewerSlot, posts.length, direction)')
-    expect(step).toContain('icon="global.channel_up"')
-    expect(step).toContain('icon="global.channel_down"')
-    expect(step).toContain("transform: 'rotate(-90deg)'")
-    expect(step).toContain("transform: 'rotate(90deg)'")
-    for (const label of ['Post above', 'Post below', 'Previous post', 'Next post']) {
-      expect(step, label).toContain(`aria-label="${label}"`)
+describe('an opened post steps on the shared D-pad', () => {
+  it('uses ClayArrowCluster — the same one the map, camera and feed step with', () => {
+    expect(profile).toContain("import ClayArrowCluster from './ClayArrowCluster'")
+    expect(profile).toContain('<ClayArrowCluster')
+    expect(profile).not.toContain('<ProfilePostStep')
+  })
+
+  it('keeps this grid’s meaning on the cluster’s two axes', () => {
+    // ▲▼ = the tile above and below (one row, same column);
+    // ◀▶ = previous and next in reading order. profilePostSteps.ts owns both.
+    for (const wiring of [
+      "onUp={() => stepViewerPost('up')}",
+      "onDown={() => stepViewerPost('down')}",
+      "onLeft={() => stepViewerPost('left')}",
+      "onRight={() => stepViewerPost('right')}",
+    ]) {
+      expect(profile, wiring).toContain(wiring)
     }
-    expect(stepCss).toContain('bottom: var(--poplur-home-clearance);')
+    for (const label of ['Post above', 'Post below', 'Previous post', 'Next post']) {
+      expect(profile, label).toContain(label)
+    }
+  })
+
+  it('walks the grid through ONE stepper, whatever asked — D-pad or swipe', () => {
+    // The swipe gesture used to duplicate the index arithmetic; both go through
+    // stepViewerPost now, so the two can never disagree about an edge.
+    expect(profile.match(/stepProfilePostIndex\(/g) ?? []).toHaveLength(1)
+    expect(profile).toContain('stepViewerPost(direction)')
   })
 
   it('does not switch the post under a sheet the user is deciding on', () => {
-    expect(profile).toMatch(/onStep=\{direction => \{\s*\/\/[^\n]*\n\s*if \(viewerCovered\) return/)
+    expect(profile).toMatch(/const stepViewerPost = \(direction: ProfilePostStepDirection\) => \{\s*if \(viewerCoveredRef\.current\) return false/)
   })
 
-  it('reserves the arrows own block, so the last button cannot land on a chevron', () => {
-    // The rail used to reserve the FEED's channel stepper (six rows) while the
-    // block actually under it is four chevrons, so it overflowed its own box.
-    expect(profile).toContain("const PROFILE_POST_STEP_RESERVE =")
-    expect(profile).toContain("'calc(4 * var(--poplur-feed-ctl) + 3 * var(--poplur-feed-gap) + var(--poplur-feed-seam))'")
-    expect(profile).toContain('reserveBelow={PROFILE_POST_STEP_RESERVE}')
-    const railSource = read('../PostActionRail.tsx')
-    expect(railSource).toContain('fillReserveBelow={reserveBelow ?? FEED_STEPPER_RESERVE}')
-    // Both blocks are written in the column's own variables, never in pixels:
-    // the controls grow with the column and a literal would misreserve.
-    expect(railSource).not.toMatch(/fillReserveBelow="[^"]*\d+px/)
+  it('gives the rail back the column the chevrons were holding', () => {
+    // The same move the map made when its travel button became the cluster's
+    // up arrow: nothing shares this column now, so nothing is reserved below.
+    // The declaration and the prop, not the word — the comment that explains
+    // why the reserve went still names it, and should.
+    expect(profile).not.toContain('const PROFILE_POST_STEP_RESERVE =')
+    expect(profile).not.toContain('reserveBelow=')
+    // The rail still has its default reserve for the FEED, which does have a
+    // stepper under it — removing that would break the feed's column.
+    expect(read('../PostActionRail.tsx')).toContain('fillReserveBelow={reserveBelow ?? FEED_STEPPER_RESERVE}')
   })
 })
 
