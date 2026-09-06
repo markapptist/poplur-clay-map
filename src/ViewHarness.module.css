@@ -1357,4 +1357,3 @@
 @media (prefers-reduced-motion: reduce) {
   .cameraLiveOn .cameraLiveDot { animation: none; }
 }
-}
