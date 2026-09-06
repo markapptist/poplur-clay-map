@@ -69,3 +69,31 @@ describe('only your own pins say YOU', () => {
     expect(src('ClayMap.tsx')).toContain("pin.mine ? 'YOU' : (pin.user ?? '')")
   })
 })
+
+describe('the corner card reports the person on screen', () => {
+  const home = src('HomeTwin.tsx')
+  const profile = src('ProfileTwin.tsx')
+
+  it("reads a visited profile's own totals instead of your account", () => {
+    // Standing on somebody else's grid, the card used to fall through to
+    // earnedRadiusKm and print YOUR radius over THEIR posts.
+    expect(profile).toContain('onVisitedTotals?.(visiting ? { radiusKm: visitedRadiusKm, posts: visitedPostCount } : null)')
+    expect(home).toContain('onVisitedTotals={setVisitedTotals}')
+    expect(home).toContain("activeTab === 'profile' && visitedTotals != null\n              ? visitedTotals.radiusKm")
+  })
+
+  it('names whose total it is, and counts their pops not yours', () => {
+    expect(home).toContain('`${viewingUser} ◆`')
+    expect(home).toContain('${visitedTotals != null ? visitedTotals.posts : profilePostCount} posts')
+  })
+
+  it('hands the card back when the visit ends', () => {
+    // Both the leave-effect and the null branch, so a closed profile cannot
+    // strand somebody else's number in the corner.
+    expect(profile).toContain('useEffect(() => () => { onVisitedTotals?.(null) }, [onVisitedTotals])')
+  })
+
+  it("re-tallies per person so one profile's climb does not drift into the next", () => {
+    expect(home).toContain('`profile-visited:${viewingUser}`')
+  })
+})

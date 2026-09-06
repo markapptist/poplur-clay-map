@@ -571,6 +571,7 @@ export default function ProfileTwin({
   highlightPops = null,
   onPostCountChange,
   onPostReach,
+  onVisitedTotals,
 }: {
   bindArrows?: (fn: ((dir: 1 | -1) => boolean) | null) => void
   /** a handle when you opened someone else's profile from the feed */
@@ -592,6 +593,12 @@ export default function ProfileTwin({
    *  instead of the account total. null on close, which is what lets the card
    *  fall back without the grid needing a branch of its own. */
   onPostReach?: (km: number | null) => void
+  /** Whose profile the shell is looking at, when it is not yours: their
+   *  overall radius and how many pops it is made of. The corner card reports
+   *  the person on screen, so standing on someone else's profile it must stop
+   *  reading your account. null when the profile is your own, which hands the
+   *  card back to your totals. */
+  onVisitedTotals?: (totals: { radiusKm: number; posts: number } | null) => void
 } = {}) {
   const controlSide = useControlSide()
   const [selectedProfileTheme, setSelectedProfileTheme] = useState<ProfileTheme>(readSelectedProfileTheme)
@@ -2354,6 +2361,17 @@ export default function ProfileTwin({
   const meterLabel = viewerPost
     ? "This pop's radius"
     : visiting ? `${viewUser}'s overall radius` : 'Your overall radius'
+  // The same fact this meter reads, handed to the shell so the corner card can
+  // agree with it instead of reporting your account over someone else's grid.
+  // Declared here, below `visiting` and `visitedRadiusKm`: a dependency array
+  // is evaluated during render, so reading either above its own declaration
+  // would throw before the effect ever ran.
+  const visitedPostCount = profilePosts.length
+  useEffect(() => {
+    onVisitedTotals?.(visiting ? { radiusKm: visitedRadiusKm, posts: visitedPostCount } : null)
+  }, [visiting, visitedRadiusKm, visitedPostCount, onVisitedTotals])
+  // Leaving the profile hands the card back to your own totals.
+  useEffect(() => () => { onVisitedTotals?.(null) }, [onVisitedTotals])
   // Profile controls span the 200px avatar, with space-between gaps.
   // Match that authored column rather than TabControlRail's default spacing.
   const profileRailSpan = 200

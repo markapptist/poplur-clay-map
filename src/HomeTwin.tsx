@@ -4516,6 +4516,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // this; the profile never did, so opening a pop there showed the account
   // total instead of that pop's radius — 0.0mi over a 6.5km pop.
   const [profileReachKm, setProfileReachKm] = useState<number | null>(null)
+  /** Whose profile is on screen when it is not yours — their overall radius
+   *  and pop count, reported by ProfileTwin. The corner card reports the
+   *  person you are looking at; null means the profile is your own. */
+  const [visitedTotals, setVisitedTotals] = useState<{ radiusKm: number; posts: number } | null>(null)
   const onFeedPostReach = useCallback((km: number | null) => setFeedReachKm(km), [])
   /** The Times reports the story the reader is currently dwelling on. */
   const [newsReachKm, setNewsReachKm] = useState<number | null>(null)
@@ -4568,6 +4572,11 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             // feed. Closing it reports null and the card falls back below.
             : activeTab === 'profile' && profileReachKm != null
               ? profileReachKm
+            // Standing on somebody else's profile, the card reports THEM.
+            // Without this it fell through to your own account total and put
+            // your radius over their grid.
+            : activeTab === 'profile' && visitedTotals != null
+              ? visitedTotals.radiusKm
             : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : earnedRadiusKm)
 
   if (import.meta.env.DEV && typeof window !== 'undefined') {
@@ -5822,6 +5831,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             highlightPops={profilePopFlash}
             onPostCountChange={setProfilePostCount}
             onPostReach={setProfileReachKm}
+            onVisitedTotals={setVisitedTotals}
             onBackToOwn={() => {
               // Closing someone else's profile — the cube, or leaving after a
               // block — takes you back to where you came from: the feed or
@@ -5949,6 +5959,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                 ? 'POP RADIUS ◆'
               : profileHasPopSubject
                 ? 'POST RADIUS ◆'
+                : activeTab === 'profile' && visitedTotals != null && viewingUser
+                  // Whose total this is, said out loud. "TOTAL RADIUS" over
+                  // someone else's grid reads as yours.
+                  ? `${viewingUser} ◆`
                 : mapHasAccumulatedRadius || activeTab === 'profile'
                   ? 'TOTAL RADIUS ◆'
                   : 'RADIUS ◆'}</span>
@@ -5971,10 +5985,17 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                 // profile, opening a pop, closing it — so the number
                 // re-tallies with it and the two arrive together.
                 : activeTab === 'profile'
-                  ? (profileReachKm != null ? `profile-pop:${profileReachKm}` : 'profile-total')
+                  ? (profileReachKm != null
+                    ? `profile-pop:${profileReachKm}`
+                    // Each visited profile is its own subject, so the counter
+                    // climbs from the foot rather than drifting from the last
+                    // person's number.
+                    : visitedTotals != null && viewingUser
+                      ? `profile-visited:${viewingUser}`
+                      : 'profile-total')
                   : null}
             />
-            <span className={styles.statTrend}>{activeTab === 'map' ? mapRadiusTrend : activeTab === 'profile' ? (profileHasPopSubject ? 'this pop' : `${profilePostCount} posts`) : cubeScreen === 'feed-news' ? 'current story' : `${POST_COUNT} nearby`}</span>
+            <span className={styles.statTrend}>{activeTab === 'map' ? mapRadiusTrend : activeTab === 'profile' ? (profileHasPopSubject ? 'this pop' : `${visitedTotals != null ? visitedTotals.posts : profilePostCount} posts`) : cubeScreen === 'feed-news' ? 'current story' : `${POST_COUNT} nearby`}</span>
           </div>
         </div>
       </div>
