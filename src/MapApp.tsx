@@ -184,7 +184,7 @@ function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; ra
   return claims
 }
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
-import { setClaimGroup, onClaimsSettled } from './mapClaims'
+import { setClaimGroup, onClaimsSettled, setClaim } from './mapClaims'
 import { EARTH_RADIUS_KM, clampRadiusKm } from './worldRadius'
 import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin, installPinSpotlight, updatePinSpotlight, pulsePinSpotlight } from './ClayMap'
 import WeatherMark from './WeatherMark'
@@ -5259,12 +5259,18 @@ export default function MapApp() {
             // so it was being evicted outright. That is why the disc drew and
             // the ground underneath never changed: the paint pass genuinely
             // could not see it.
-            setClaimGroup(map, 'mine', [{
+            // NOT through setClaimGroup('mine'): the live pipeline owns that
+            // group and re-pushes it on every snapshot, so signed out with no
+            // posts it pushed an empty array and wiped the bench's claim
+            // moments after each press. A loose, untagged, uncoloured claim
+            // still counts as yours to claimsWithinCollection (`!c.color`),
+            // so the ground tests against it without the pipeline owning it.
+            setClaim(map, {
               id: 'radius-bench',
               center: [centre.lng, centre.lat],
               radiusKm,
               user: '@bench',
-            }])
+            }, false)
             // The zoom rail is a radius METER whenever a pin is focused, so
             // the striker rings up to the same number the ground just took.
             const point = {
@@ -5299,7 +5305,7 @@ export default function MapApp() {
           onClear={() => {
             const map = mapRef.current
             if (!map) return
-            setClaimGroup(map, 'mine', [])
+            setClaim(map, { id: 'radius-bench', center: [0, 0], radiusKm: 0 }, false)
             setBenchPin(null)
             setFocusedMapPoint(current => current?.key === 'radius-bench' ? null : current)
           }}

@@ -1074,6 +1074,11 @@ function takeoverInsertBefore(map: mapboxgl.Map): string | undefined {
   return lines[lines.length - 1]?.id
 }
 
+/** How long the claim repaint waits on a frame before advancing anyway. Long
+ *  enough that a live map still walks on real frames, short enough that a
+ *  parked one lands the whole pass well inside a second. */
+const CLAIM_PAINT_STALL_MS = 60
+
 const PIN_SPOTLIGHT_SOURCE = 'poplur-pin-spotlight'
 const PIN_SPOTLIGHT_FILL = 'poplur-pin-spotlight-fill'
 const PIN_SPOTLIGHT_EDGE = 'poplur-pin-spotlight-edge'
@@ -5079,6 +5084,30 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       let claimPaintQueue = 0
       let fullClaimPaintActive = false
       let pendingCameraBuildingPaint = false
+      /**
+       * Walk to the next layer of the claim repaint.
+       *
+       * The pass deliberately spends one layer per frame, but a raw rAF is not
+       * a promise of progress: it is starved in a hidden document, and while
+       * the renderer is parked there may be no frames for seconds. A pass that
+       * stalls half-walked is worse than a slow one — roads and grass keep
+       * testing against the PREVIOUS claim's polygon, so the ground quietly
+       * disagrees with the disc drawn over it until something unrelated
+       * happens to repaint. Measured: after stepping the radius bench the
+       * grass expression still carried a whole-world polygon from several
+       * steps earlier.
+       *
+       * So the frame gets a safety clock beside it, the same shape the claim
+       * transitions already use: whichever arrives first advances the walk,
+       * once. A parked map can delay the truth by a beat; it can no longer
+       * withhold it.
+       */
+      const advanceClaimPaint = (fn: () => void) => {
+        let advanced = false
+        const once = () => { if (advanced) return; advanced = true; fn() }
+        nextFrame(once)
+        later(once, CLAIM_PAINT_STALL_MS)
+      }
       const applyClaimRoadPaint = (buildingsOnly = false) => {
         // A move can settle while the seven-layer claim-settle sequence is
         // still walking one layer per frame. Never let that camera refresh
@@ -5155,7 +5184,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
               }
             }
           } catch { /* style/layer changed between readiness and the write */ }
-          nextFrame(() => step(i + 1))
+          advanceClaimPaint(() => step(i + 1))
         }
         step(0)
       }
