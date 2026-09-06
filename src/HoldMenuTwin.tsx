@@ -1195,7 +1195,17 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'map-conquer') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Conquer Board">
-          <ConquerScreen snapshot={mapConquerSnapshot ?? null} />
+          {/* Closes like every other subscreen. Without this the board was a
+              dead end: ConquerScreen only draws its × when it is given an
+              onClose, bindGoBack returns false while any subscreen is open, and
+              its Escape handler is gated on the same prop — so the only way out
+              it advertised was "TAP THE CUBE TO RETURN TO MAP", and the cube
+              lives in the app shell, not on this stage. A phone that reached
+              this screen could not leave it. */}
+          <ConquerScreen
+            snapshot={mapConquerSnapshot ?? null}
+            onClose={() => { playSubscreenNavigationPop(); onClose() }}
+          />
         </div>
       )
     }

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
@@ -125,6 +126,32 @@ describe('map Conquer screen snapshot', () => {
     expect(board).toContain('data-poplur-screen="map-conquer"')
     expect(board).toContain('aria-label="Close Conquer Board"')
     expect(board).not.toContain('TAP THE CUBE TO RETURN TO MAP')
+  })
+
+  // A board with no way off it is worse than no board. ConquerScreen draws its
+  // × ONLY when it is handed an onClose, so a caller that forgets one ships a
+  // dead end: bindGoBack returns false while any subscreen is open, the Escape
+  // handler is gated on the same prop, and the "TAP THE CUBE" fallback names a
+  // cube that lives in the app shell rather than on the subscreen stage. That
+  // is exactly what shipped — the hold menu was the one caller without it.
+  it('leaves no caller able to open the board without a way out of it', () => {
+    const board = renderToStaticMarkup(createElement(ConquerScreen, { snapshot: null }))
+    expect(board).not.toContain('aria-label="Close Conquer Board"')
+    expect(board).toContain('TAP THE CUBE TO RETURN TO MAP')
+
+    // Both render sites must therefore pass one. Read as source: the hold
+    // menu's stage is far too large to mount here, and the defect was in the
+    // wiring, not in either component.
+    const holdMenu = readFileSync(new URL('../HoldMenuTwin.tsx', import.meta.url), 'utf8')
+    const conquerCall = holdMenu.slice(
+      holdMenu.indexOf("aria-label=\"Conquer Board\""),
+      holdMenu.indexOf("activeScreen.screen === 'map-show-me'"),
+    )
+    expect(conquerCall).toContain('<ConquerScreen')
+    expect(conquerCall).toContain('onClose={() => { playSubscreenNavigationPop(); onClose() }}')
+
+    const mapApp = readFileSync(new URL('../MapApp.tsx', import.meta.url), 'utf8')
+    expect(mapApp).toMatch(/<ConquerScreen[\s\S]{0,200}onClose=\{/)
   })
 })
 
