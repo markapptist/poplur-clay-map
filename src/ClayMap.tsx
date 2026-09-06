@@ -1400,8 +1400,21 @@ export function updateComposeRadiusPreview(
       // each half-kilometre step snap visibly.
       duration: options?.duration ?? 0,
       maxZoom: options?.maxZoom ?? 15.5,
-      pitch: options?.pitch,
-      bearing: options?.bearing,
+      // OMIT these keys when the caller has no opinion. Passing an explicit
+      // `bearing: undefined` is not the same as not passing one: Mapbox
+      // assigns it through to `set bearing`, the transform's rotation becomes
+      // NaN, and _calcMatrices throws "failed to invert matrix" on every
+      // subsequent frame. The map then never paints its launch frame, and 12
+      // seconds later the picker replaces itself with "The map renderer is
+      // unavailable on this browser" — on a machine whose renderer is fine.
+      //
+      // Only radius review supplies these, so only radius review was ever
+      // safe. The composer path was shielded by accident: an account with no
+      // earned radius sized a 0 km claim, which returns above before reaching
+      // this call. Flooring the picker at the 5 km discovery seed (75630d6)
+      // removed the shield and broke the camera-first picker outright.
+      ...(options?.pitch === undefined ? {} : { pitch: options.pitch }),
+      ...(options?.bearing === undefined ? {} : { bearing: options.bearing }),
     },
   )
 }

@@ -51,6 +51,28 @@ describe('the post picker can be moved', () => {
   })
 })
 
+describe('the claim preview never hands the camera an undefined angle', () => {
+  // This one cost a whole afternoon. updateComposeRadiusPreview passed
+  // `pitch: options?.pitch, bearing: options?.bearing` straight into
+  // fitBounds. Only radius review supplies them, so in the post picker both
+  // were `undefined` — and an explicit `bearing: undefined` is NOT the same as
+  // omitting it. Mapbox assigns it through to `set bearing`, rotation becomes
+  // NaN, _calcMatrices throws "failed to invert matrix" on every later frame,
+  // the launch frame never paints, and twelve seconds later the picker
+  // replaces itself with "The map renderer is unavailable on this browser".
+  //
+  // The composer path was shielded only by accident: an unearned account sized
+  // a 0 km claim, which returns before the fitBounds. Flooring the picker at
+  // the 5 km discovery seed removed the shield and broke the picker outright.
+  it('omits pitch and bearing rather than passing undefined', () => {
+    expect(clayMapSource).toContain("...(options?.pitch === undefined ? {} : { pitch: options.pitch })")
+    expect(clayMapSource).toContain("...(options?.bearing === undefined ? {} : { bearing: options.bearing })")
+    // The literal shape that caused it must not come back.
+    expect(clayMapSource).not.toContain('pitch: options?.pitch,')
+    expect(clayMapSource).not.toContain('bearing: options?.bearing,')
+  })
+})
+
 describe('the picker knows what it is finding ground for', () => {
   it('carries the draft channel and the scene onto the picker URL', () => {
     expect(homeTwinSource).toContain('&pickChannel=')
