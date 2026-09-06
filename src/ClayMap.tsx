@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import mapboxgl, { type PointLike } from 'mapbox-gl'
 import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
 import { onFrame, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
@@ -59,7 +59,7 @@ export {
 import { installMapIdleSnapshot, type MapIdleSnapshotController } from './mapIdleSnapshot'
 import { CLAY_ROUTES, PALETTE } from './data'
 import { pinWithFace, warmPinSprites , composedSpriteCount } from './popPins'
-import type { PinColorId } from './pinColors'
+import { PIN_COLOR_SWATCH, type PinColorId } from './pinColors'
 import type { POI, MapTheme } from './data'
 import { mapPinRenderKey, pinMarkerNeedsRebuild } from './mapPinRenderKey'
 import { pinOwnerKey, type MapCyclePoint } from './mapPointCycle'
@@ -101,7 +101,7 @@ import { mapDaypart } from './contextCubeModels'
 import { takeoverTint, takeoverBaseColor, onTakeoverColor, setTakeoverColor, takeoverSwatches } from './takeoverColor'
 import { claimSurfaces, type ClaimSurfacePalette } from './claimTerrainShades'
 import { claimSurfaceColorExpression } from './buildingClaimDominance'
-import { randomizeMyPinColor } from './myPinColor'
+import { myPinColor, onMyPinColor, randomizeMyPinColor } from './myPinColor'
 import {
   fetchRoute,
   installRouteLayers,
@@ -6423,6 +6423,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     }
   }, [accountRadiusKm, mapEpoch, mapRef, radiusPreviewLaunch])
 
+  // Your chosen pin colour, read the same way the board reads it, so the
+  // you-pin cannot drift from the pops it is standing among.
+  const ownPinColor = useSyncExternalStore(onMyPinColor, myPinColor, () => null)
+  const youPinColor = ownPinColor ? PIN_COLOR_SWATCH[ownPinColor] : takeoverTint(PALETTE.pinkHot)
+
   // The pin standing where YOU are. Same clay pin the board uses for a pop, so
   // your own ground reads in the map's own language instead of a bare dot, and
   // it wears your profile face when you have one. Not pressable: it marks a
@@ -6432,7 +6437,16 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     if (!map || mapEpoch === 0 || radiusPreviewLaunch || !currentLocationPoint) return
     let dropped = false
     let marker: mapboxgl.Marker | null = null
-    void pinWithFace({ avatar: ownProfilePhoto, color: takeoverTint(PALETTE.pinkHot), mode: '3d' })
+    // The pin standing on YOU wears your pin colour, like every other pop you
+    // hold. It was reading `takeoverTint(pinkHot)` — the house pink transposed
+    // by the takeover hue — which is NOT the swatch the board's pins take, so
+    // choosing a colour moved every pin except the one marking where you are.
+    // Falls back to that transposed pink when no colour has been chosen, which
+    // is what the takeover palette paints in that case anyway.
+    // `pinColor` is what picks the sprite — `color` only strokes its outline,
+    // which is why passing a hex here changed nothing. The board's own pins
+    // pass both; so does this one now.
+    void pinWithFace({ avatar: ownProfilePhoto, color: youPinColor, pinColor: ownPinColor ?? null, mode: '3d' })
       .then(src => {
         if (dropped || mapRef.current !== map) return
         const root = document.createElement('div')
@@ -6463,7 +6477,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       dropped = true
       marker?.remove()
     }
-  }, [currentLocationPoint, mapEpoch, mapRef, ownProfilePhoto, radiusPreviewLaunch])
+    // `youPinColor` is a dependency on purpose: the marker is built once from
+    // a rendered sprite, so a colour change has to rebuild it or the you-pin
+    // keeps the colour it was born with while the rest of the board moves.
+  }, [currentLocationPoint, mapEpoch, mapRef, ownProfilePhoto, radiusPreviewLaunch, youPinColor])
 
   // One universal selected-point marker. It deliberately does not depend on
   // the viewport pin budget or landmark zoom band, so an arrow can identify a
