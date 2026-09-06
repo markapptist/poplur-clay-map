@@ -14,11 +14,17 @@ describe('claim radius entitlement', () => {
     expect(clampClaimRadiusKm(25, 0)).toBe(0)
   })
 
-  it('never offers more than the account owns or the per-post hard cap', () => {
+  it('offers everything the account has earned, and never more', () => {
     expect(claimRadiusLimitKm(12.3)).toBe(12)
     expect(clampClaimRadiusKm(25, 12.3)).toBe(12)
-    expect(claimRadiusLimitKm(41.8)).toBe(25)
-    expect(clampClaimRadiusKm(99, 41.8)).toBe(25)
+    // The per-drop ceiling was 25 km, so an owner holding 72.8 km was offered
+    // 25 (user-ordered 6 Sep). What you earned is what you may claim.
+    expect(claimRadiusLimitKm(41.8)).toBe(41.5)
+    expect(clampClaimRadiusKm(99, 41.8)).toBe(41.5)
+    expect(claimRadiusLimitKm(72.8)).toBe(72.5)
+    expect(clampClaimRadiusKm(75, 72.8)).toBe(72.5)
+    // The planet is still the ceiling: no account claims past the world.
+    expect(claimRadiusLimitKm(99_999)).toBe(6_371)
   })
 
   it('fails closed for invalid requests and keeps half-kilometre controls', () => {

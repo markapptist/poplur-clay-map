@@ -25,6 +25,7 @@ import {
   setFeedDiscoveryMode,
   type FeedDiscoverySnapshot,
 } from './feedDiscovery'
+import { interceptingLive, onLiveStore, type Broadcast } from './liveStore'
 import type { MapFeedHandoff, MapFeedHandoffRequest } from './mapFeedHandoff'
 import { canonicalFeedPostId, withHandoffPost } from './feedHandoffInjection'
 import {
@@ -183,6 +184,11 @@ function shouldUnlockFeedAudioOnMount(explicitNavigation: boolean): boolean {
   return explicitNavigation
 }
 
+/** The channels a recorded pop may be published to. LIVE is excluded: it
+ *  carries broadcasts, not uploads, so a post filed there would be published
+ *  into a channel that never shows it. */
+export const POSTABLE_CHANNELS = () => CHANNELS.filter(channel => channel.id !== 'live')
+
 export interface ChannelPost {
   id: string
   ownerId?: string
@@ -266,6 +272,24 @@ export function feedPostsForChannel(
 // shell, so a pin standing on the map means the same post stands in the feed.
 const currentViewerCoords = viewerCoordsFromFix
 
+/** A broadcast, as the player already knows how to show one: `stream` for your
+ *  own camera, `live` for the blinking flag, `viewers` for the count. */
+function livePostFromBroadcast(broadcast: Broadcast): ChannelPost {
+  return {
+    id: broadcast.id,
+    user: broadcast.user,
+    video: broadcast.video ?? '',
+    poster: broadcast.poster,
+    mediaType: 'video',
+    stream: broadcast.stream,
+    live: true,
+    caption: broadcast.caption,
+    viewers: broadcast.viewers,
+    reachKm: broadcast.radiusKm,
+    createdAtMillis: broadcast.startedAt,
+  }
+}
+
 function rankedPostsFor(
   channel: Channel,
   published: NativeFeedPost[],
@@ -273,6 +297,15 @@ function rankedPostsFor(
   focusedContent?: MapFeedHandoff,
 ): ChannelPost[] {
   const viewer = currentViewerCoords()
+  // LIVE is a state, not a genre. It carries whoever is broadcasting into your
+  // radius right now and nothing else — no recorded upload, however it was
+  // tagged. It used to be an ordinary channel fed by published posts, so an
+  // untagged photo from 31 August was still sitting there as "live" content
+  // (user-ordered 6 Sep). Empty when nobody is on air, which is the honest
+  // answer and what the no-signal card is for.
+  if (channel.id === 'live') {
+    return interceptingLive(viewer ?? undefined).map(livePostFromBroadcast)
+  }
   const candidates = feedPostsForChannel(channel.id, published).map(post => {
     if (post.distanceMeters != null || post.locationVisibility !== 'approximate' || !viewer
       || !Number.isFinite(post.originLatitude) || !Number.isFinite(post.originLongitude)) return post
@@ -595,6 +628,11 @@ export default function FeedTwin({
     if (storedDiscovery.mode !== 'radius') setFeedDiscoveryMode('radius')
   }, [storedDiscovery.mode])
   const [, setLocationRevision] = useState(0)
+  // Going on or off air changes what the LIVE channel holds, and that state
+  // lives outside React (liveStore). Same shape as the location revision
+  // below: bump, and the channel re-reads.
+  const [, setLiveRevision] = useState(0)
+  useEffect(() => onLiveStore(() => setLiveRevision(value => value + 1)), [])
   const contentIdxRef = useRef<Record<string, number>>({})
   // Which way the person last stepped the dial, so steering past an empty
   // channel keeps going the way they were going.

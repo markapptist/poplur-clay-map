@@ -1292,3 +1292,58 @@
   from { transform: translate(-50%, -50%) scale(1.18); opacity: 1; }
   to { transform: translate(-50%, -50%) scale(1); opacity: 0.92; }
 }
+
+/* ── Going live, from the camera's own rail ──────────────────────────────────
+   Under the timer, in the column the grid and timer already stand in. The
+   word rather than an icon: LIVE has no supplied art, and the feed says it
+   exactly this way — a blinking dot beside the word — so the two surfaces
+   agree about what being on air looks like. Sized to the 44px control lane. */
+.cameraLive {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 44px;
+  min-height: 30px;
+  padding: 0 4px;
+  border: 1px solid rgba(255, 45, 85, 0.55);
+  border-radius: 11px;
+  background: rgba(28, 4, 14, 0.72);
+  color: #ff2d55;
+  font: 900 9px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.12em;
+  text-shadow: 0 1px 0 rgba(40, 0, 12, 0.7);
+  transition: transform 120ms ease, background 160ms ease;
+}
+.cameraLive:active { transform: scale(0.94); }
+.cameraLive:disabled { opacity: 0.32; }
+
+/* On air: the button fills, so the state is unmistakable from across a room. */
+.cameraLiveOn {
+  border-color: #ff2d55;
+  background: linear-gradient(180deg, #ff2d55, #c40f34);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(255, 45, 85, 0.6);
+}
+
+.cameraLiveDot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff2d55;
+  box-shadow: 0 0 6px rgba(255, 45, 85, 0.9);
+}
+/* Only the live one blinks; at rest the dot is a quiet marker, not an alarm. */
+.cameraLiveOn .cameraLiveDot {
+  background: #fff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.9);
+  animation: cameraLiveBlink 1.15s steps(1, end) infinite;
+}
+@keyframes cameraLiveBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.2; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cameraLiveOn .cameraLiveDot { animation: none; }
+}

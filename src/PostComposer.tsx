@@ -3,7 +3,7 @@ import styles from './PostComposer.module.css'
 import { photoViewSeconds } from './mediaTiming'
 import { awaitNativeUpload, NativeUploadError, type UploadPhase } from './nativeUpload'
 import { AR_FILTERS } from './ARFilters'
-import { CHANNELS } from './FeedTwin'
+import { CHANNELS, POSTABLE_CHANNELS } from './FeedTwin'
 import { channelUrl } from './assetPacks'
 import { playPop } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
@@ -198,7 +198,11 @@ export default function PostComposer({
   const [usedAI, setUsedAI] = useState(draft?.usedAI ?? false)
   const usedAIRef = useRef(usedAI)
   usedAIRef.current = usedAI
-  const [channelId, setChannelId] = useState(draft?.channelId ?? CHANNELS[0]?.id ?? 'food')
+  // Every channel a recording can go to. LIVE is not one of them — it carries
+  // whoever is broadcasting right now, so a photo filed there would be
+  // published into a channel that never shows it.
+  const channelChoices = POSTABLE_CHANNELS()
+  const [channelId, setChannelId] = useState(draft?.channelId ?? channelChoices[0]?.id ?? 'food')
   const [pinColor, setPinColor] = useState<PinColorId | null>(draft?.pinColor ?? null)
   const [channelPickerOpen, setChannelPickerOpen] = useState(false)
   const claimRadiusMaxKm = useClaimRadiusLimitKm()
@@ -565,8 +569,8 @@ export default function PostComposer({
     bindArrows((dir: 1 | -1) => {
       if (stepRef.current === 'channel') {
         setChannelId(current => {
-          const i = CHANNELS.findIndex(c => c.id === current)
-          return CHANNELS[((i + dir) % CHANNELS.length + CHANNELS.length) % CHANNELS.length].id
+          const i = channelChoices.findIndex(c => c.id === current)
+          return channelChoices[((i + dir) % channelChoices.length + channelChoices.length) % channelChoices.length].id
         })
         return
       }
@@ -1109,7 +1113,7 @@ export default function PostComposer({
             </button>
             {channelPickerOpen && (
               <div className={styles.channels} aria-label="Choose a channel">
-                {CHANNELS.map(c => (
+                {channelChoices.map(c => (
                   <button
                     type="button"
                     key={c.id}

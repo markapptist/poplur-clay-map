@@ -4,7 +4,6 @@
 // reaches you only if you are standing inside it. The LIVE channel is not a
 // list of everyone streaming — it is the list of people streaming AT you.
 
-import { feedUrl } from './assetPacks'
 
 export interface Broadcast {
   id: string
@@ -28,44 +27,17 @@ const HOME: [number, number] = [-79.3832, 43.6532]
 const near = (dLngKm: number, dLatKm: number): [number, number] =>
   [HOME[0] + dLngKm / 82, HOME[1] + dLatKm / 111]
 
-// Other people, already live. Two reach across the city; one is a long way
-// out with a small radius, so it does NOT reach you — the channel has to be
-// able to leave someone out, or interception means nothing.
-const OTHERS: Broadcast[] = [
-  {
-    id: 'live-basement',
-    user: '@basement.set',
-    caption: 'warehouse set, going until the neighbours call',
-    coords: near(2, -1.5),
-    radiusKm: 18,
-    startedAt: 0,
-    video: feedUrl('ad-music.mp4'),
-    poster: feedUrl('posters/ad-music.jpg'),
-    viewers: 1240,
-  },
-  {
-    id: 'live-pitchside',
-    user: '@pitchside',
-    caption: 'extra time from the north stand',
-    coords: near(-4, 3),
-    radiusKm: 26,
-    startedAt: 0,
-    video: feedUrl('ad-sports.mp4'),
-    poster: feedUrl('posters/ad-sports.jpg'),
-    viewers: 6120,
-  },
-  {
-    id: 'live-faraway',
-    user: '@paris.pov',
-    caption: 'terrasse, golden hour',
-    coords: [2.3522, 48.8566],   // Paris
-    radiusKm: 12,
-    startedAt: 0,
-    video: feedUrl('ad-french.mp4'),
-    poster: feedUrl('posters/ad-french.jpg'),
-    viewers: 880,
-  },
-]
+// Other people's live broadcasts. Empty, and honestly so: a broadcast only
+// reaches another phone once a media server is fanning it out, and Poplur has
+// none yet — the WebRTC transport it does have is 1:1 calling. Until then this
+// list stays empty rather than standing three bundled ad clips in it, which is
+// what it used to do: the LIVE channel showed "@basement.set" and
+// "@pitchside" broadcasting around the clock, for viewers who could not have
+// been reached by anything and by people who were not live at all.
+//
+// Fill this from the server when broadcasts become real. Nothing else has to
+// change: the channel already renders whatever interceptingLive() returns.
+const OTHERS: Broadcast[] = []
 
 let own: Broadcast | null = null
 const listeners = new Set<() => void>()

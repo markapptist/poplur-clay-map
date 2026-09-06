@@ -7,10 +7,28 @@ describe('production Feed realtime policy', () => {
   it('renders channel content only from the shared Firestore snapshot', () => {
     expect(source).toContain('feedPostsForChannel(channel.id, published)')
     expect(source).toContain('useSyncExternalStore(\n    onNativeFeedPosts,')
-    expect(source).not.toContain('interceptingLive(')
     expect(source).not.toContain('fallbackPhoto')
     expect(source).not.toContain('CHANNEL_USERS')
     expect(source).not.toContain('COMMENT_ROLL')
+  })
+
+  it('gives the LIVE channel broadcasts, and keeps a bundled cast out of it', () => {
+    // LIVE reads from liveStore rather than the post snapshot, because a
+    // broadcast is not a document — the player already takes `stream`. That
+    // was banned outright while liveStore shipped three hardcoded broadcasts
+    // playing bundled ad clips, which is the same defect as `fallbackPhoto`:
+    // the channel claimed two strangers were live around the clock. The ban
+    // now sits where the risk actually is — on the store's contents.
+    expect(source).toContain("if (channel.id === 'live')")
+    expect(source).toContain('interceptingLive(viewer ?? undefined).map(livePostFromBroadcast)')
+    const store = readFileSync(new URL('../liveStore.ts', import.meta.url), 'utf8')
+    expect(store).toContain('const OTHERS: Broadcast[] = []')
+    expect(store).not.toContain('feedUrl(')
+    // And a recording can never be filed into it.
+    expect(source).toContain("CHANNELS.filter(channel => channel.id !== 'live')")
+    const composer = readFileSync(new URL('../PostComposer.tsx', import.meta.url), 'utf8')
+    expect(composer).toContain('const channelChoices = POSTABLE_CHANNELS()')
+    expect(composer).not.toContain('{CHANNELS.map(c => (')
   })
 
   it('does not replace a missing or deleted post with bundled media or identity', () => {

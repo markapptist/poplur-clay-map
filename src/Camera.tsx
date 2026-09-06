@@ -34,6 +34,9 @@ import { PoplurPerformanceManager } from './poplurPerformanceManager'
 import CameraStepControls from './CameraStepControls'
 import { AR_FILTERS } from './ARFilters'
 import { ZOOM_HOLD_PER_SECOND, ZOOM_HOLD_TICK_MS, filterOrdinal, nextZoomPreset, stepFilterId, zoomReadout, type StepDirection } from './cameraStepper'
+import { isLive, onLiveStore, startBroadcast, stopBroadcast } from './liveStore'
+import { useClaimRadiusLimitKm } from './useClaimRadiusLimit'
+import { currentViewerCoords } from './viewerFix'
 
 // Native shells: the REAL camera (AVCapture + ML detection, the previous
 // versions' pipeline) renders BEHIND this WebView; this pane punches a
@@ -323,6 +326,35 @@ export default function Camera({
   useEffect(() => { onZoomChange?.(zoom) }, [onZoomChange, zoom])
 
   const recorderRef = useRef<MediaRecorder | null>(null)
+
+  // ── Going live ────────────────────────────────────────────────────────────
+  // The camcorder records a clip; this puts the same camera on air. A live
+  // broadcast is a pop like any other — it stands where you stand and reaches
+  // as far as your radius does — so it takes the account's earned radius, and
+  // the LIVE channel shows whoever is broadcasting into yours.
+  //
+  // The broadcast gets a CLONE of the viewfinder's stream: ending it stops the
+  // tracks it was handed (that is what finally releases a camera), and handing
+  // it the original would take the viewfinder down with it.
+  const onAirRadiusKm = useClaimRadiusLimitKm()
+  const [onAir, setOnAir] = useState(() => isLive())
+  useEffect(() => onLiveStore(() => setOnAir(isLive())), [])
+  const onAirRadiusRef = useRef(onAirRadiusKm)
+  onAirRadiusRef.current = onAirRadiusKm
+  const toggleLive = useCallback(() => {
+    if (isLive()) { stopBroadcast(); return }
+    const source = streamRef.current
+    const viewer = currentViewerCoords()
+    startBroadcast(
+      source ? source.clone() : undefined,
+      viewer ?? undefined,
+      onAirRadiusRef.current,
+    )
+  }, [])
+  // Leaving the camera comes off air. The alternative is a broadcast running
+  // on a stream this screen is about to stop, which is a live tile showing
+  // nothing and a camera light nobody can turn off.
+  useEffect(() => () => { if (isLive()) stopBroadcast() }, [])
   const nativeRecordingRef = useRef(false)
   const [recStart, setRecStart] = useState<number | null>(null)
 
@@ -2038,6 +2070,22 @@ export default function Camera({
                 activation="pointerdown"
                 onActivate={armTimer}
               />
+              {/* Video only, under the timer: the word rather than an icon,
+                  because LIVE has no supplied art and the feed already says
+                  it exactly this way — a blinking dot beside the word. */}
+              <button
+                type="button"
+                className={onAir ? `${styles.cameraLive} ${styles.cameraLiveOn}` : styles.cameraLive}
+                aria-label={onAir ? 'End the live broadcast' : 'Go live from this camera'}
+                aria-pressed={onAir}
+                disabled={captureMode !== 'video'}
+                data-camera-live={onAir ? 'on' : 'off'}
+                onPointerDown={event => event.stopPropagation()}
+                onClick={event => { event.stopPropagation(); playPop(); toggleLive() }}
+              >
+                <span className={styles.cameraLiveDot} aria-hidden="true" />
+                <span aria-hidden="true">LIVE</span>
+              </button>
             </>
           )}
         />

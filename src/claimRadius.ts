@@ -6,13 +6,21 @@
  * never manufacture radius the account has not earned yet.
  */
 export const CLAIM_RADIUS_STEP_KM = 0.5
-export const CLAIM_RADIUS_HARD_MAX_KM = 25
+/**
+ * The ceiling on ONE drop. It used to be 25 km, which is less than an active
+ * account earns in a few days: an owner holding 72.8 km opened the picker and
+ * was offered 25 (user-ordered 6 Sep). The radius you earned is the radius you
+ * may claim, so the only ceiling left is the planet — `claimRadiusLimitKm`
+ * takes the account's own total below it.
+ */
+export const CLAIM_RADIUS_HARD_MAX_KM = 6_371
 
 function finiteNonNegative(value: number): number {
   return Number.isFinite(value) ? Math.max(0, value) : 0
 }
 
-/** Largest half-kilometre value this account can put on one post. */
+/** Largest half-kilometre value this account can put on one post: what it has
+ *  earned, and never more. */
 export function claimRadiusLimitKm(accountRadiusKm: number): number {
   const available = Math.min(
     CLAIM_RADIUS_HARD_MAX_KM,

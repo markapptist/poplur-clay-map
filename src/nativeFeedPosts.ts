@@ -62,6 +62,9 @@ export interface LiveFeedPostDocument {
 }
 
 let snapshot: NativeFeedPost[] = []
+/** Where a pop with no channel of its own goes. Never 'live' — see below. */
+export const DEFAULT_FEED_CHANNEL = 'news'
+
 let realtimeState: 'idle' | 'connecting' | 'live' | 'fallback' = 'idle'
 let unsubscribeRealtime: Unsubscribe | null = null
 let nativeFallbackListening = false
@@ -150,7 +153,14 @@ function normalizeFeedPost(
   const ownerId = boundedText(row.ownerId ?? row.userID ?? row.userId, 128)
   const usernameValue = boundedText(row.username ?? row.handle ?? row.displayName, 40)
     ?? (ownerId ? ownerId.slice(0, 8) : 'Poplur user')
-  const channelId = boundedText(row.channelId, 40) ?? 'live'
+  // A post that names no channel is NOT live. This defaulted to 'live', so
+  // every untagged upload — an old post, one published before the composer
+  // asked for a channel, anything the native path wrote without one — landed
+  // in the LIVE channel and sat there as permanent "live" content (an owner's
+  // 31 Aug photo was still showing as CH 116 on 6 Sep). LIVE is a state, not
+  // a bucket: only something actually broadcasting belongs there, so an
+  // untagged pop goes to the general channel instead.
+  const channelId = boundedText(row.channelId, 40) ?? DEFAULT_FEED_CHANNEL
   const radiusMeters = finite(row.radiusMeters ?? row.radius ?? row.organicRadiusMeters)
   const declaredMediaType = boundedText(row.mediaType, 16)?.toLowerCase()
   const imageURL = /\.(?:avif|gif|heic|heif|jpe?g|png|webp)(?:[?#]|$)/i.test(mediaURL)
