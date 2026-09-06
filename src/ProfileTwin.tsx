@@ -10,7 +10,7 @@ import { feedUrl } from './assetPacks'
 import { playPop } from './pop'
 import RadiusStrikerRail from './RadiusStrikerRail'
 import ProfilePostStep from './ProfilePostStep'
-import { profilePostStepAvailability, stepProfilePostIndex } from './profilePostSteps'
+import { profilePostStepAvailability, stepProfilePostIndex, type ProfilePostStepDirection } from './profilePostSteps'
 import { ACCOUNT_RADIUS_CHANGE_EVENT, readAccountRadiusKm } from './accountRadius'
 import { playCubeNavigationPop } from './cubeNavigationSound'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
@@ -94,7 +94,6 @@ import { getLibraryNewest, onCameraStore } from './cameraStore'
 import { readVerification } from './profileVerification'
 import { VERIFIED_CHECK_LABEL, VERIFIED_CHECK_SRC, verifiedCheckKind, type VerifiedCheckKind } from './verifiedCheck'
 import { businessDirectorySnapshot, subscribeBusinessDirectory } from './businessDirectory'
-import PostGrowthLine from './PostGrowthLine'
 import { shouldUseMiles } from './units'
 import PoplurDialog from './PoplurDialog'
 import { blockUser, reportUser } from './blockedUsers'
@@ -1427,6 +1426,46 @@ export default function ProfileTwin({
   }, [])
 
   // ── Clay channel arrows: browse posts in the viewer, else scroll the grid.
+  // Browsing your own posts is the same motion as the feed's: the opened pop
+  // is a pager, not a still. The four inner arrows already walk the grid, but
+  // reaching for them to see the next post is not how anyone holds a phone —
+  // the feed taught the thumb a swipe, and the profile has to answer it. Same
+  // 48px threshold and dominant-axis rule FeedTwin uses, mapped onto the grid:
+  // up/down step a row, left/right step a post. A sheet over the post owns the
+  // gesture, exactly as it owns the arrows.
+  const viewerGesture = useRef<{ pointerId: number; x: number; y: number } | null>(null)
+  const viewerSlotRef = useRef(0)
+  const postsCountRef = useRef(0)
+  const onViewerPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return
+    if (viewerCovered) return
+    const target = event.target
+    if (target instanceof Element
+      && target.closest('button, a, input, textarea, select, [role="button"], [role="slider"]')) return
+    viewerGesture.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+  const endViewerGesture = (event: React.PointerEvent<HTMLDivElement>) => {
+    const start = viewerGesture.current
+    if (!start || start.pointerId !== event.pointerId) return
+    viewerGesture.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    if (viewerCovered) return
+    const dx = event.clientX - start.x
+    const dy = event.clientY - start.y
+    let direction: ProfilePostStepDirection | null = null
+    // Swiping the media UP pulls the next row up into view, so it steps DOWN
+    // the grid — the same inversion the feed uses for its channel.
+    if (Math.abs(dy) > 48 && Math.abs(dy) >= Math.abs(dx)) direction = dy < 0 ? 'down' : 'up'
+    else if (Math.abs(dx) > 48) direction = dx < 0 ? 'right' : 'left'
+    if (!direction) return
+    const next = stepProfilePostIndex(viewerSlotRef.current, postsCountRef.current, direction)
+    if (next == null) return
+    playPop()
+    setViewerIdx(next)
+  }
   const viewerIdxRef = useRef(viewerIdx)
   viewerIdxRef.current = viewerIdx
   const modeRef = useRef(mode)
@@ -2316,6 +2355,10 @@ export default function ProfileTwin({
   const viewerPost = viewerIdx != null && posts.length ? posts[viewerIdx % posts.length] : null
   // The open post's tile in the grid: the flat index the inner arrows step from.
   const viewerSlot = viewerIdx != null && posts.length ? viewerIdx % posts.length : 0
+  // The swipe handler is declared above the render body, so it reads the live
+  // slot and count through refs rather than a stale closure.
+  viewerSlotRef.current = viewerSlot
+  postsCountRef.current = posts.length
   const viewerPostIsVideo = viewerPost ? postIsVideo(viewerPost) : false
   const viewerPostId = viewerPost ? (viewerPost.id ?? viewerPost.video) : null
   viewerPostIdRef.current = viewerPostId
@@ -2945,7 +2988,13 @@ export default function ProfileTwin({
 
       {/* ── Fullscreen post viewer — channel arrows browse posts. ── */}
       {viewerPost && (
-        <div className={styles.viewer} data-profile-viewer-post={viewerPostId ?? undefined}>
+        <div
+          className={styles.viewer}
+          data-profile-viewer-post={viewerPostId ?? undefined}
+          onPointerDown={onViewerPointerDown}
+          onPointerUp={endViewerGesture}
+          onPointerCancel={endViewerGesture}
+        >
           {viewerPostIsVideo && viewerPlaying && !viewerCovered ? (
             <video
               key={viewerPost.video}
@@ -3003,14 +3052,6 @@ export default function ProfileTwin({
           <div className={styles.viewerTop}>
             <span className={styles.viewerCh}>{viewerPost.ch}</span>
           </div>
-          {/* How this pop grew: its own server-written history, from the reach
-              it was posted with to the reach it holds now. A pop with no
-              history yet shows nothing rather than a guess. */}
-          <PostGrowthLine
-            postId={viewerPost.id ?? null}
-            useMiles={shouldUseMiles()}
-            className={styles.viewerGrowth}
-          />
           {viewerCaptionsOn && (
             <p className={styles.viewerCaptions} aria-live="polite">{viewerPost.title}</p>
           )}
