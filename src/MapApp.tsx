@@ -24,6 +24,93 @@ const WEATHER_TEST_ENABLED = weatherTestHarnessEnabled(
   import.meta.env.DEV,
 )
 
+/** The radius bench: grow and shrink one claim on the real board to see how a
+ *  radius actually paints. Same dev-flag convention as `takeover` above.
+ *
+ *  Deliberately LOCAL. The Radius Lab on 8098 answers the same question by
+ *  minting a genuine production post and rewriting its radius — true to the
+ *  last byte, but it leaves synthetic residue on the live map. This writes
+ *  nothing: it pushes a claim straight into the renderer, so the paint, the
+ *  overlap ordering and the growth curves are the real ones and the board is
+ *  clean the moment you close the tab. */
+const RADIUS_BENCH = import.meta.env.DEV
+  && new URLSearchParams(window.location.search).get('radius-lab') === '1'
+/** Same ladder the Test Center's radius panel offers, in km. */
+const RADIUS_BENCH_STEPS = [0.5, 1, 5, 25, 100, 1000] as const
+
+/**
+ * The bench itself. Kept in this file beside its flag, and rendered only under
+ * it, so nothing about it can reach a shipped build.
+ *
+ * The area readout is the point of the exercise as much as the paint: radius
+ * is linear but ground is squared, so 25 km does not look like five times
+ * 5 km — it covers twenty-five times the land. Seeing both numbers move
+ * together is what makes a radius legible.
+ */
+function RadiusBench({ onApply, onClear }: {
+  onApply: (km: number) => void
+  onClear: () => void
+}) {
+  // Built here rather than at module scope: this file has top-level code above
+  // its own import block, and Vite's dev transform does not hoist an import
+  // above it — reading EARTH_RADIUS_KM while the module body ran threw
+  // "not defined" and left the page on stale code behind a failed HMR.
+  const jumps: ReadonlyArray<{ label: string; km: number }> = [
+    { label: '500 m', km: 0.5 },
+    { label: '1 km', km: 1 },
+    { label: '5 km', km: 5 },
+    { label: '25 km', km: 25 },
+    { label: '100 km', km: 100 },
+    { label: '1,000 km', km: 1000 },
+    { label: 'WORLD', km: EARTH_RADIUS_KM },
+  ]
+  const [km, setKm] = useState(5)
+  const apply = (next: number) => {
+    const bounded = clampRadiusKm(next)
+    setKm(bounded)
+    onApply(bounded)
+  }
+  const areaKm2 = Math.PI * km * km
+  const area = areaKm2 >= 10_000
+    ? `${Math.round(areaKm2).toLocaleString()} km²`
+    : `${areaKm2.toFixed(areaKm2 < 10 ? 2 : 1)} km²`
+  return (
+    <div className={styles.radiusBench} data-radius-bench="">
+      <div className={styles.radiusBenchHead}>
+        <span className={styles.radiusBenchLabel}>RADIUS BENCH</span>
+        <button type="button" onClick={() => { onClear(); setKm(5) }}>clear</button>
+      </div>
+      <div className={styles.radiusBenchValue}>
+        {km >= 1 ? `${km.toLocaleString(undefined, { maximumFractionDigits: 1 })} km` : `${Math.round(km * 1000)} m`}
+      </div>
+      <div className={styles.radiusBenchArea}>{area} of ground</div>
+      <div className={styles.radiusBenchRow}>
+        {RADIUS_BENCH_STEPS.map(step => (
+          <button key={`down-${step}`} type="button" onClick={() => apply(km - step)}>
+            −{step < 1 ? `${step * 1000}m` : `${step}`}
+          </button>
+        ))}
+      </div>
+      <div className={styles.radiusBenchRow}>
+        {RADIUS_BENCH_STEPS.map(step => (
+          <button key={`up-${step}`} type="button" onClick={() => apply(km + step)}>
+            +{step < 1 ? `${step * 1000}m` : `${step}`}
+          </button>
+        ))}
+      </div>
+      <div className={styles.radiusBenchRow}>
+        {jumps.map(jump => (
+          <button key={jump.label} type="button" onClick={() => apply(jump.km)}>{jump.label}</button>
+        ))}
+      </div>
+      <p className={styles.radiusBenchNote}>
+        Drawn at the map centre with the real claim renderer — pan and press a
+        step to redraw there. Nothing is written; this board is local.
+      </p>
+    </div>
+  )
+}
+
 /** A claim set that covers the globe.
  *
  *  Deterministic, so two runs render the same board and a change in the look is
@@ -50,6 +137,7 @@ function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; ra
 }
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
 import { setClaimGroup, onClaimsSettled } from './mapClaims'
+import { EARTH_RADIUS_KM, clampRadiusKm } from './worldRadius'
 import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin, installPinSpotlight, updatePinSpotlight, pulsePinSpotlight } from './ClayMap'
 import WeatherMark from './WeatherMark'
 import { weatherIconIdForCode, weatherIconIdForMode } from './sideControlIcons'
@@ -5073,6 +5161,62 @@ export default function MapApp() {
           and the unified point action otherwise. Keeping those intents
           distinct means a cross-frame timing change can never turn a news-tour
           press into a manual map-point step. */}
+      {RADIUS_BENCH && (
+        <RadiusBench
+          onApply={(km) => {
+            const map = mapRef.current
+            if (!map) return
+            const centre = map.getCenter()
+            const radiusKm = clampRadiusKm(km)
+            // The terrain repaint spreads its setPaintProperty writes across
+            // animation frames, and on a still board the governor parks those
+            // — so the ground trailed the disc by seconds, or by a whole step.
+            // A short managed lease lets the pass run straight through, which
+            // is what puts the terrain, the disc and the readout on one beat.
+            wakeManagedRendering(1_200)
+            // `animate: false` on purpose. The animated path only notifies the
+            // terrain listeners when it SETTLES, and it settles on an ambient
+            // frame subscription — which the governor pauses while nobody is
+            // touching the map. On a still board it therefore never settled,
+            // so the disc grew and the ground under it never changed colour:
+            // exactly the "circle sitting on top of the map" this bench exists
+            // to disprove. Landing it in one push fires the settle listeners
+            // immediately, and `applyClaimRoadPaint` rebuilds the `within`
+            // expressions for grass, roads and buildings on the same frame.
+            // Pushed as the 'mine' GROUP, not as a loose claim. Terrain,
+            // roads and buildings recolour from `claimsWithinCollection`,
+            // which counts only claims tagged `group: 'mine'` — a tag that
+            // setClaimGroup stamps and setClaim does not. An untagged claim
+            // also has to win a place on a board already at its retention cap,
+            // so it was being evicted outright. That is why the disc drew and
+            // the ground underneath never changed: the paint pass genuinely
+            // could not see it.
+            setClaimGroup(map, 'mine', [{
+              id: 'radius-bench',
+              center: [centre.lng, centre.lat],
+              radiusKm,
+              user: '@bench',
+            }])
+            // The zoom rail is a radius METER whenever a pin is focused, so
+            // the striker rings up to the same number the ground just took.
+            setFocusedMapPoint({
+              key: 'radius-bench',
+              id: 'radius-bench',
+              kind: 'pin',
+              name: 'Radius bench',
+              coords: [centre.lng, centre.lat],
+              mine: true,
+              radiusKm,
+            })
+          }}
+          onClear={() => {
+            const map = mapRef.current
+            if (!map) return
+            setClaimGroup(map, 'mine', [])
+            setFocusedMapPoint(current => current?.key === 'radius-bench' ? null : current)
+          }}
+        />
+      )}
       <div
         className={`${styles.popStepper}${isEmbedded ? ` ${styles.popStepperAboveCube}` : ''}${activeNewsStop ? ` ${styles.popStepperNewsHidden}` : ''}`}
         data-map-tour-step=""

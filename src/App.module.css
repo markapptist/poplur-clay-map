@@ -1241,3 +1241,77 @@
   .countryFlagPop { animation: countryFlagPopFade 2600ms ease both; }
   @keyframes countryFlagPopFade { 0%,100% { opacity: 0 } 12%,80% { opacity: 1 } }
 }
+
+/* ── the radius bench (DEV only, ?radius-lab=1) ─────────────────────────────
+   A workbench panel, not app chrome: it is deliberately plain so nothing here
+   can be mistaken for a shipped Poplur control while it sits over the map. */
+.radiusBench {
+  position: absolute;
+  left: max(12px, env(safe-area-inset-left, 0px));
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  z-index: 60;
+  width: 232px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(10, 4, 9, 0.92);
+  border: 1px solid rgba(246, 59, 154, 0.5);
+  color: #ffe1f1;
+  font: 500 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  pointer-events: auto;
+}
+
+.radiusBenchHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.radiusBenchLabel {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: #ff86c4;
+}
+
+.radiusBenchValue {
+  font-size: 26px;
+  font-weight: 600;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.radiusBenchArea {
+  font-size: 11px;
+  color: rgba(255, 225, 241, 0.72);
+  margin-bottom: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.radiusBenchRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 5px;
+}
+
+.radiusBench button {
+  font: 500 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 5px 7px;
+  border-radius: 7px;
+  border: 1px solid rgba(246, 59, 154, 0.45);
+  background: rgba(246, 59, 154, 0.14);
+  color: #ffe1f1;
+  cursor: pointer;
+}
+
+.radiusBench button:hover { background: rgba(246, 59, 154, 0.3); }
+.radiusBench button:focus-visible { outline: 2px solid #5fe1ea; outline-offset: 1px; }
+
+.radiusBenchNote {
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.35;
+  color: rgba(255, 225, 241, 0.6);
+}
