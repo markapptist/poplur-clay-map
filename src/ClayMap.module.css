@@ -3065,3 +3065,27 @@ header.weatherTitleBar {
   .zoomThumbTrophy,
   .zoomWrap[data-radius-striker-running='true'] .zoomRail { animation: none; }
 }
+
+/* ── The crowd a pin is standing in front of ─────────────────────────────────
+   One pin holds each screen cell; this says how many more are behind it and
+   opens them when pressed. Sits on the pin's shoulder, opposite the NEW badge,
+   and wears the clay pink so it reads as part of the piece rather than a
+   system chip. */
+.popPinCrowd {
+  position: absolute;
+  top: -6px;
+  left: -10px;
+  z-index: 4;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1.5px solid rgba(255, 255, 255, 0.92);
+  border-radius: 11px;
+  background: linear-gradient(180deg, #ff4ba1, #d41470);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  color: #fff;
+  font: 900 12px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.popPinCrowd:active { transform: scale(0.92); }

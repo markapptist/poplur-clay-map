@@ -95,6 +95,7 @@ import {
   dominanceLeaders,
   type DominanceEngagement,
 } from './mapDominance'
+import { CLUSTER_CELL_PX, clusterPinsByScreenCell, mountedPinsForClusters, type ClusterablePin } from './mapPinClusters'
 import { createMapConquerSnapshot, type MapConquerSnapshot } from './mapConquer'
 import { localSunriseToNoon, skyShadeAt, type SkyShade } from './skyCycle'
 import { mapDaypart } from './contextCubeModels'
@@ -1839,6 +1840,14 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
    *  Survives an effect re-run so a changed board reconciles instead of
    *  rebuilding — see the pin effect. */
   const pinRegistryRef = useRef(new Map<string, { marker: mapboxgl.Marker; key: string }>())
+  /** How many pins each mounted winner is standing in front of, for its badge. */
+  const clusterCountsRef = useRef(new Map<string, number>())
+  /** Which screen cell each pin fell in, so a badge tap can open that cell. */
+  const clusterCellOfRef = useRef(new Map<string, string>())
+  /** The one cell showing all of its pins, or null when every cell is closed. */
+  const expandedCellRef = useRef<string | null>(null)
+  /** Lets a badge ask the pin effect to re-select the board it owns. */
+  const syncPinsRef = useRef<(() => void) | null>(null)
   // Read through a ref inside the marker's click listener: the listener is
   // attached once when the pin is built, and capturing the prop directly would
   // freeze whatever callback identity existed at that moment.
@@ -6281,6 +6290,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   // Persistent "you are here" marker: the Poplur pin always stands on the
   // validated live GPS point. Profile media enriches it when available, but a
   // new account without a selfie still needs a visible current-location stop.
+  // Your chosen pin colour, read here because the marker standing on you
+  // wears it (below) and a colour change has to rebuild that sprite.
+  const ownPinColor = useSyncExternalStore(onMyPinColor, myPinColor, () => null)
+  const youPinColor = ownPinColor ? PIN_COLOR_SWATCH[ownPinColor] : takeoverTint(PALETTE.pinkHot)
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
@@ -6319,7 +6332,13 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // must move the pending pin, not compose a second marker.
       if (buildStarted) { queuedCoords = coords; return }
       buildStarted = true
-      void pinWithFace({ avatar: null, color: takeoverFace, mode: '3d' })
+      // Your colour, not the takeover hue. There used to be a SECOND pin drawn
+      // on this same spot that carried the chosen colour while this one kept
+      // the transposed pink, so the map stood two pins on you and only one of
+      // them answered the colour wheel (user-ordered 6 Sep). This is the one
+      // pin now: it keeps the selfie video and ambient playback the other
+      // never had, and takes the colour the other was there for.
+      void pinWithFace({ avatar: null, color: youPinColor, pinColor: ownPinColor ?? null, mode: '3d' })
         .then(src => {
           if (cancelled || mapRef.current !== map) return
           const markerRoot = document.createElement('div')
@@ -6336,6 +6355,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           pinImage.draggable = false
           pin.appendChild(pinImage)
           markerRoot.appendChild(pin)
+          const youLabel = document.createElement('span')
+          youLabel.className = styles.dominationTerritoryLabel
+          youLabel.textContent = 'YOU'
+          markerRoot.appendChild(youLabel)
           if (usableVideo) {
             selfieVideo = document.createElement('video')
             selfieVideo.className = `${styles.popPinSelfie} ${styles.popPinSelfieVideo}`
@@ -6399,7 +6422,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       marker?.remove()
       marker = null
     }
-  }, [mapEpoch, mapRef, radiusPreviewLaunch, ownProfilePhoto, ownProfileSelfieVideo, takeoverFace])
+    // `youPinColor`/`ownPinColor` are dependencies on purpose: the marker is
+    // built once from a rendered sprite, so a colour change has to rebuild it
+    // or the pin standing on you keeps the colour it was born with while the
+    // rest of the board moves.
+  }, [mapEpoch, mapRef, radiusPreviewLaunch, ownProfilePhoto, ownProfileSelfieVideo, takeoverFace, youPinColor, ownPinColor])
 
   // ── Reach ring data: the account total, standing on the live fix ──────────
   // Same anchor contract as the you-are-here pin above — only a validated live
@@ -6447,62 +6474,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
 
   // Your chosen pin colour, read the same way the board reads it, so the
   // you-pin cannot drift from the pops it is standing among.
-  const ownPinColor = useSyncExternalStore(onMyPinColor, myPinColor, () => null)
-  const youPinColor = ownPinColor ? PIN_COLOR_SWATCH[ownPinColor] : takeoverTint(PALETTE.pinkHot)
 
-  // The pin standing where YOU are. Same clay pin the board uses for a pop, so
-  // your own ground reads in the map's own language instead of a bare dot, and
-  // it wears your profile face when you have one. Not pressable: it marks a
-  // place, it does not open a post.
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map || mapEpoch === 0 || radiusPreviewLaunch || !currentLocationPoint) return
-    let dropped = false
-    let marker: mapboxgl.Marker | null = null
-    // The pin standing on YOU wears your pin colour, like every other pop you
-    // hold. It was reading `takeoverTint(pinkHot)` — the house pink transposed
-    // by the takeover hue — which is NOT the swatch the board's pins take, so
-    // choosing a colour moved every pin except the one marking where you are.
-    // Falls back to that transposed pink when no colour has been chosen, which
-    // is what the takeover palette paints in that case anyway.
-    // `pinColor` is what picks the sprite — `color` only strokes its outline,
-    // which is why passing a hex here changed nothing. The board's own pins
-    // pass both; so does this one now.
-    void pinWithFace({ avatar: ownProfilePhoto, color: youPinColor, pinColor: ownPinColor ?? null, mode: '3d' })
-      .then(src => {
-        if (dropped || mapRef.current !== map) return
-        const root = document.createElement('div')
-        root.className = styles.popPinMarker
-        // Distinct from the selection highlight, which also marks current
-        // location — two markers sharing one id made them indistinguishable.
-        root.dataset.mapPointId = 'current:you'
-        root.dataset.mapPointKind = 'you'
-        root.style.pointerEvents = 'none'
-        const shell = document.createElement('div')
-        shell.className = styles.popPin
-        const img = document.createElement('img')
-        img.src = src
-        img.alt = ''
-        img.draggable = false
-        shell.appendChild(img)
-        root.appendChild(shell)
-        const label = document.createElement('span')
-        label.className = styles.dominationTerritoryLabel
-        label.textContent = 'YOU'
-        root.appendChild(label)
-        marker = new mapboxgl.Marker({ element: root, anchor: 'bottom' })
-          .setLngLat(currentLocationPoint)
-          .addTo(map)
-      })
-      .catch(() => { /* sprite unavailable: the map simply has no you-pin */ })
-    return () => {
-      dropped = true
-      marker?.remove()
-    }
-    // `youPinColor` is a dependency on purpose: the marker is built once from
-    // a rendered sprite, so a colour change has to rebuild it or the you-pin
-    // keeps the colour it was born with while the rest of the board moves.
-  }, [currentLocationPoint, mapEpoch, mapRef, ownProfilePhoto, radiusPreviewLaunch, youPinColor])
 
   // One universal selected-point marker. It deliberately does not depend on
   // the viewport pin budget or landmark zoom band, so an arrow can identify a
@@ -6631,13 +6603,43 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // one.
       // Ghosts never displace a pin the viewer has actually earned sight of:
       // the capped board keeps every in-reach pop ahead of the dotted outlines.
-      inView.sort((a, c) =>
-        (a.ghost === true ? 1 : 0) - (c.ghost === true ? 1 : 0)
-        || (onScreen.has(c.id) ? 1 : 0) - (onScreen.has(a.id) ? 1 : 0)
-        || dominanceFameScore(c.radiusKm, c.engagement) - dominanceFameScore(a.radiusKm, a.engagement)
-        || (c.world === true ? 1 : 0) - (a.world === true ? 1 : 0)
-        || c.radiusKm - a.radiusKm)
-      return inView.slice(0, maxLive)
+      // ── One pin per patch of screen ────────────────────────────────────
+      // The board used to mount the highest-scoring pins wherever they were,
+      // so eighteen pins in one city hid every pin in the next, and a busy
+      // street still stacked faces on each other. Pins are bucketed into cells
+      // measured in SCREEN pixels instead: one holder per cell, the rest
+      // counted on it. A cell is the same apparent size at every zoom, so the
+      // board reads from a street and from orbit, and there is no grid to
+      // straddle because the cells move with the camera. The cap is now a
+      // backstop rather than the thing deciding what you see.
+      const placed: ClusterablePin[] = []
+      const byId = new Map<string, PopPin>()
+      for (const pin of inView) {
+        byId.set(pin.id, pin)
+        try {
+          const point = map.project([pin.coords[0], pin.coords[1]])
+          placed.push({
+            id: pin.id,
+            x: point.x,
+            y: point.y,
+            // Anyone standing on this screen outranks an off-screen holder,
+            // exactly as under the flat cap; dominance decides the rest.
+            score: dominanceFameScore(pin.radiusKm, pin.engagement)
+              + (onScreen.has(pin.id) ? 1_000_000 : 0),
+            ghost: pin.ghost === true,
+          })
+        } catch { /* style mid-reload: this pin sits out the pass */ }
+      }
+      const clusters = clusterPinsByScreenCell(placed, CLUSTER_CELL_PX)
+      const { ids, counts } = mountedPinsForClusters(clusters, expandedCellRef.current, maxLive)
+      clusterCountsRef.current = counts
+      const cellOf = new Map<string, string>()
+      for (const cluster of clusters) {
+        cellOf.set(cluster.winner.id, cluster.key)
+        for (const other of cluster.others) cellOf.set(other.id, cluster.key)
+      }
+      clusterCellOfRef.current = cellOf
+      return ids.flatMap(id => { const pin = byId.get(id); return pin ? [pin] : [] })
     }
 
     // Pins are Poplur game pieces, independent of the terrain presentation.
@@ -6813,6 +6815,35 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       }
     }
 
+    // The crowd badge is written on every pass, never baked into the marker:
+    // a cell's population changes with the camera, and rebuilding a marker for
+    // a number would undo the reconcile that stopped the board churning.
+    const applyCrowdBadges = () => {
+      for (const [id, entry] of livePins) {
+        const root = entry.marker.getElement()
+        const existing = root.querySelector<HTMLButtonElement>(`.${styles.popPinCrowd}`)
+        const crowd = clusterCountsRef.current.get(id) ?? 0
+        if (crowd <= 0) { existing?.remove(); continue }
+        const badge = existing ?? document.createElement('button')
+        if (!existing) {
+          badge.type = 'button'
+          badge.className = styles.popPinCrowd
+          badge.addEventListener('click', event => {
+            event.preventDefault()
+            event.stopPropagation()
+            playPop()
+            expandedCellRef.current = badge.dataset.pinCrowdCell || null
+            syncPinsRef.current?.()
+          })
+          root.appendChild(badge)
+        }
+        badge.dataset.pinCrowd = String(crowd)
+        badge.dataset.pinCrowdCell = clusterCellOfRef.current.get(id) ?? ''
+        badge.textContent = `+${crowd}`
+        badge.setAttribute('aria-label', `Show ${crowd} more ${crowd === 1 ? 'pop' : 'pops'} here`)
+      }
+    }
+
     const syncPins = () => {
       if (dropped || mapRef.current !== map || syncing) return
       const want = visiblePins()
@@ -6859,9 +6890,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         })
         pinMarkersRef.current = [...livePins.values()].map(held => held.marker)
         applyPinSpread()
+        applyCrowdBadges()
       })
       pinMarkersRef.current = [...livePins.values()].map(held => held.marker)
       applyPinSpread()
+      applyCrowdBadges()
     }
 
     // A pop opened here or watched in the Feed stops being new on the board
@@ -6874,7 +6907,17 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       }
     })
 
+    syncPinsRef.current = syncPins
     syncPins()
+    // An opened cell belongs to where the camera was standing when it was
+    // opened: move, and the cells are redrawn around the new view, so the one
+    // that was showing closes rather than following the camera around.
+    const collapseOnCameraMove = () => {
+      if (expandedCellRef.current === null) return
+      expandedCellRef.current = null
+      syncPins()
+    }
+    map.on('zoomend', collapseOnCameraMove)
     // moveend/zoomend only — NOT `move`. Re-selecting the board mid-gesture
     // would run a bounds test and a DOM diff on every frame of every pan,
     // which is the one thing a fps budget cannot absorb.
@@ -6886,6 +6929,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       offSeen()
       map.off('moveend', syncPins)
       map.off('zoomend', syncPins)
+      map.off('zoomend', collapseOnCameraMove)
+      if (syncPinsRef.current === syncPins) syncPinsRef.current = null
       // The markers deliberately STAY mounted. This cleanup runs on every
       // change to the board, and tearing the pins down here is what made the
       // next run rebuild all of them; the run that follows reconciles against
