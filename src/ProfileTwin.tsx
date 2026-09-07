@@ -8,6 +8,7 @@ import { usePullToRefresh } from './usePullToRefresh'
 import { OTHER_POPS } from './data'
 import { feedUrl } from './assetPacks'
 import { playPop } from './pop'
+import { PIN_COLOR_SWATCH, type PinColorId } from './pinColors'
 import RadiusStrikerRail from './RadiusStrikerRail'
 import ClayArrowCluster from './ClayArrowCluster'
 import { responsiveChannelControlSize } from './channelControlSizing'
@@ -122,6 +123,7 @@ interface Post {
   syntheticPostId?: string
   /** This pop's own reach in km — see profileRealtimePosts. */
   reachKm?: number
+  pinColor?: PinColorId
   /** Public origin, [lng, lat] — see profileRealtimePosts. */
   origin?: [number, number]
 }
@@ -599,7 +601,7 @@ export default function ProfileTwin({
   /** The open pop's own reach, so the radius card can show THIS post's radius
    *  instead of the account total. null on close, which is what lets the card
    *  fall back without the grid needing a branch of its own. */
-  onPostReach?: (km: number | null) => void
+  onPostReach?: (km: number | null, color?: string) => void
   /** Whose profile the shell is looking at, when it is not yours: their
    *  overall radius and how many pops it is made of. The corner card reports
    *  the person on screen, so standing on someone else's profile it must stop
@@ -2386,11 +2388,11 @@ export default function ProfileTwin({
   const reportedReachRef = useRef<string | null>(null)
   useEffect(() => {
     const km = viewerPost?.reachKm ?? null
-    const signature = km == null ? 'none' : `${viewerPostId}:${km}`
+    const signature = km == null ? 'none' : `${viewerPostId}:${km}:${viewerPost?.pinColor ?? ''}`
     if (signature === reportedReachRef.current) return
     reportedReachRef.current = signature
-    onPostReach?.(km)
-  }, [onPostReach, viewerPost?.reachKm, viewerPostId])
+    onPostReach?.(km, viewerPost?.pinColor ? PIN_COLOR_SWATCH[viewerPost.pinColor] : undefined)
+  }, [onPostReach, viewerPost?.reachKm, viewerPost?.pinColor, viewerPostId])
   // Closing the viewer hands the card back to the account total.
   useEffect(() => () => { onPostReach?.(null) }, [onPostReach])
   useEffect(() => {

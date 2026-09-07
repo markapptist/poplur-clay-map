@@ -2116,7 +2116,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     const started = performance.now()
     const frame = (now: number) => {
       const raw = Math.min(1, (now - started) / STRIKER_MS)
-      const level = targetLevel * strikerEase(raw)
+      const level = radiusMeterLevel(strikerRadiusKm * strikerEase(raw))
       let rang = false
       while (ringIndex < rung.length && level >= radiusTrophyLevel(rung[ringIndex]) - 1e-6) {
         ringIndex += 1
@@ -7073,11 +7073,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
    * and ▼ always goes OUT, which is the only reading of an up and a down arrow
    * anybody has to be taught.
    *
-   * Going in still prefers the SUBJECT. When the ◀ ▶ arrows have landed on a
-   * pop, ▲ frames that pop — centres it and zooms until its territory fills
-   * the viewport — rather than diving to a fixed zoom beside it. That is the
-   * behaviour the rail's button grew, and it is the whole reason the vertical
-   * axis is worth having next to the traverse.
+   * Going in centers the selected pin at building level with a 3D pitch.
+   * Radius remains the pin's reach; it no longer limits the camera zoom.
    */
   const travelCamera = useCallback((direction: 'in' | 'out') => {
     const live = mapRef.current as (mapboxgl.Map & { __cinematic?: boolean }) | null
@@ -7092,23 +7089,14 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       : point?.kind === 'current' && (accountRadiusKmRef.current ?? 0) > 0
         ? { coords: point.coords, radiusKm: accountRadiusKmRef.current as number }
         : null
-    if (!subject || !live || subject.radiusKm <= 0) {
-      applyZoom(ZOOM_TRAVEL_BUILDING_LEVEL)
-      return
-    }
-    const box = live.getContainer()
-    const pad = framePaddingFor(box)
-    const usable = Math.max(120, Math.min(
-      box.clientWidth - pad.left - pad.right,
-      box.clientHeight - pad.top - pad.bottom,
-    ))
-    const zoom = fitZoomForRadius(subject.radiusKm, subject.coords[1], usable, ZOOM_MIN, ZOOM_MAX)
-    // The padding keeps the territory inside the chrome-free part of the
-    // screen; the rail's knob follows through the map's own zoom events, so
-    // the spring is not needed here.
+    if (!live) return
+    const center = subject?.coords ?? point?.coords ?? live.getCenter().toArray()
+    const zoom = ZOOM_TRAVEL_BUILDING_LEVEL
+    const pad = framePaddingFor(live.getContainer())
     wakeManagedRendering(900 + MANAGED_CAMERA_SETTLE_MS)
     live.easeTo({
-      center: [subject.coords[0], subject.coords[1]],
+      center: [center[0], center[1]],
+      pitch: MAP_BROWSE_3D_PITCH,
       zoom,
       padding: pad,
       duration: 900,
@@ -7799,9 +7787,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           // The rail's fill follows the takeover colour. `takeoverFace` is in
           // this component's state and changes with the wheel, so these
           // re-evaluate on the same render that repaints the world.
-          '--zoomFillA': takeoverTint('#ffe1f1'),
-          '--zoomFillB': takeoverTint('#ff86c4'),
-          '--zoomFillC': takeoverTint('#f53c99'),
+          '--zoomFillA': strikerPin?.color ? `color-mix(in srgb, ${strikerPin.color} 25%, white)` : takeoverTint('#ffe1f1'),
+          '--zoomFillB': strikerPin?.color ?? takeoverTint('#ff86c4'),
+          '--zoomFillC': strikerPin?.color ?? takeoverTint('#f53c99'),
           '--mapControlSpan': `${mapSideControlSpan}px`,
         } as React.CSSProperties}
         role="slider"

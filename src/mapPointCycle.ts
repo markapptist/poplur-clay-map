@@ -6,6 +6,7 @@ export interface MapPointPinInput {
   coords: [number, number]
   mine: boolean
   radiusKm: number
+  color?: string
 }
 
 export interface MapPointLandmarkInput {
@@ -23,6 +24,7 @@ export interface MapCyclePoint {
   mine: boolean
   /** Radius is intentionally public only for the signed-in person's pins. */
   radiusKm: number | null
+  color?: string
 }
 
 export interface MapPointStep {
@@ -94,6 +96,7 @@ export function buildMapPointCycle({
       coords: pin.coords,
       mine: pin.mine,
       radiusKm,
+      color: pin.color,
     })
   }
 

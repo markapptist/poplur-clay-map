@@ -129,8 +129,24 @@ const WORLD_DRAW_KM = EARTH_RADIUS_KM * Math.PI * 0.995
  * its pin, and still counts toward the planet scoreboard. It just cannot be
  * drawn as land, because land you cannot see past is not information.
  */
+let selectedGroundPin: string | null | undefined
+let selectedGroundColor: string | undefined
+function groundSelected(claim: Claim): boolean {
+  return selectedGroundPin === undefined || claim.id === selectedGroundPin
+}
 function paintsGround(claim: Claim): boolean {
-  return !isWorldRadiusKm(claim.radiusKm)
+  return groundSelected(claim) && !isWorldRadiusKm(claim.radiusKm)
+}
+function displayedClaim(claim: Claim): Claim {
+  return claim.id === selectedGroundPin && selectedGroundColor
+    ? { ...claim, color: selectedGroundColor } : claim
+}
+/** Selection changes paint only; the complete ledger still powers reach and totals. */
+export function selectGroundPin(map: mapboxgl.Map, id: string | null, color?: string): void {
+  selectedGroundPin = id
+  selectedGroundColor = color
+  pushClaims(map)
+  for (const listener of claimsListeners) listener()
 }
 
 function drawnRadiusKm(trueKm: number, zoom: number, lat: number): number {
@@ -530,7 +546,7 @@ export function getClaims(): Claim[] { return [...claims.values()] }
 export function claimsFeatureCollection(): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
-    features: mine().map(c => ownershipTerrainPolygon(c.center, c.radiusKm)),
+    features: mine().filter(groundSelected).map(c => ownershipTerrainPolygon(c.center, c.radiusKm)),
   }
 }
 
@@ -559,7 +575,7 @@ const mine = (): Claim[] => [...claims.values()]
 export function claimsWithinCollection(): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
-    features: mine().map(c => ownershipTerrainPolygon(c.center, c.radiusKm)),
+    features: mine().filter(groundSelected).map(c => ownershipTerrainPolygon(c.center, c.radiusKm)),
   }
 }
 
@@ -606,6 +622,7 @@ export function claimedGroundTest(map: mapboxgl.Map): unknown | null {
 export function visibleGroundClaims(map: mapboxgl.Map): Claim[] {
   return [...claims.values()]
     .filter(paintsGround)
+    .map(displayedClaim)
     .filter(claim => claimTouchesViewport(map, claim))
     .sort((a, b) => b.radiusKm - a.radiusKm)
     .slice(0, MAX_VISIBLE_BUILDING_CLAIMS)
@@ -635,6 +652,7 @@ export function visibleBuildingClaimColorExpression(
   // so without this every building on Earth wears one account's colour.
   const visible = [...claims.values()]
     .filter(paintsGround)
+    .map(displayedClaim)
     .filter(claim => claimTouchesViewport(map, claim))
   return buildingClaimColorExpression(visible, ownColor, unclaimedColor)
 }
@@ -693,7 +711,7 @@ function pushClaims(map: mapboxgl.Map): boolean {
   // keeps its own visible patch on top. See groundPaintOrder: painting the
   // biggest last says "who leads here", and says nothing at all once a claim
   // is wider than the screen.
-  const byReach = groundPaintOrder(claims.values()).filter(paintsGround)
+  const byReach = groundPaintOrder(claims.values()).filter(paintsGround).map(displayedClaim)
   const drawn = (c: Claim) => drawnRadiusKm(c.radiusKm, zoom, c.center[1])
   // Band first: a skipped push must not leave the band describing an older
   // camera, since other readers use it to decide their own work.

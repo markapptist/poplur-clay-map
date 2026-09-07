@@ -162,7 +162,7 @@ export default function RadiusStrikerRail({
     const started = performance.now()
     const frame = (now: number) => {
       const raw = Math.min(1, (now - started) / STRIKER_MS)
-      const level = from + (target - from) * strikerEase(raw)
+      const level = fresh ? radiusMeterLevel(radiusKm * strikerEase(raw)) : from + (target - from) * strikerEase(raw)
       levelRef.current = level
       paint(level)
       let rang = false

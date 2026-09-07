@@ -38,13 +38,10 @@ import {
 export default function NotificationsScreen({
   onClose: _onClose,
   onOpenNotification,
-  freshOnEntry = false,
+  freshOnEntry: _freshOnEntry = false,
 }: {
   onClose: () => void
-  /** Arrived by the CUBE — a tab resume or the hold-menu tile — rather than
-   *  from the profile's bell. A cube visit is a fresh look at the inbox, so
-   *  it is cleared and re-read on the way in; the bell is a specific errand
-   *  (a row was tapped) and keeps what it pointed at. */
+  /** Compatibility with cube callers; opening never dismisses inbox rows. */
   freshOnEntry?: boolean
   /** Follow a row to the thing it is about. The profile owns that highlight,
    *  so the screen hands the row over and closes rather than navigating. */
@@ -76,17 +73,6 @@ export default function NotificationsScreen({
   useEffect(() => {
     markNotificationsSeen()
     markEngagementSeen()
-  }, [])
-
-  // Clear, then re-read. The clear is the same one the CLEAR ALL button does
-  // (it dismisses locally and tells native), and the re-read is the same
-  // pull-to-refresh runs — so a cube visit lands on whatever is genuinely new
-  // instead of on three days of the same "taking over Paris" rows.
-  useEffect(() => {
-    if (!freshOnEntry) return
-    clearAllNotifications()
-    reconnectNativeNotificationInbox()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const pullHost = useRef<HTMLDivElement>(null)

@@ -1231,8 +1231,8 @@
      read the same size the others get. Pinned at 44px it stood 10px wider than
      its neighbours in a 34px rail — which centred it 5px further out, broke
      the shared left edge, and overlapped the button below it by 3px. */
-  width: var(--poplur-feed-ctl, 44px);
-  height: var(--poplur-feed-ctl, 44px);
+  width: 44px;
+  height: 44px;
   padding: 0;
   border: 0;
   background: none;
@@ -1268,3 +1268,7 @@
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
+
+.railHead { position: relative; }
+.railHead .mediaTimer { position: absolute; top: 12px; left: 48px; pointer-events: none; }
+:global([data-poplur-control-rail="right"]) .railHead .mediaTimer { left: auto; right: 48px; }

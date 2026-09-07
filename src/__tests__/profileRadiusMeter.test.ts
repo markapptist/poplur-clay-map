@@ -57,12 +57,12 @@ describe('the profile radius meter is the map’s striker, in sync with the radi
     // The SAME two variables the action rail opposite is hung from
     // (TabControlRail's .fill), not numbers measured to match it.
     const fillRule = railCss.slice(railCss.indexOf('.fill {'))
-    expect(fillRule).toContain('--poplur-feed-action-top')
+    expect(fillRule).toContain('--poplur-map-control-top')
     expect(fillRule).toContain('bottom: var(--poplur-home-clearance')
     // Without this the base rule's capped height wins and the bottom guide
     // does nothing at all.
     expect(fillRule.slice(0, fillRule.indexOf('}'))).toContain('height: auto')
-    expect(read('../TabControlRail.module.css')).toContain('--poplur-feed-action-top,')
+    expect(read('../TabControlRail.module.css')).toContain('--poplur-map-control-top')
     // Still a meter: going full screen does not make it a control.
     expect(rail).not.toContain('onPointerDown')
   })
@@ -89,7 +89,7 @@ describe('the profile radius meter is the map’s striker, in sync with the radi
   })
 
   it('makes the RADIUS number re-tally on the same beat the tower climbs', () => {
-    expect(home).toContain("? (profileReachKm != null ? `profile-pop:${profileReachKm}` : 'profile-total')")
+    expect(home).toMatch(/profileReachKm != null\s*\? `profile-pop:\$\{profileReachKm\}`/)
   })
 })
 
@@ -108,7 +108,7 @@ describe('the block control wears the supplied clay art', () => {
   })
 
   it('replaces the drawn glyph in the feed column and the moulded ring on a visited profile', () => {
-    expect(feed).toContain('<SideControlIconImage icon="global.block" displaySize={44} />')
+    expect(feed).toMatch(/<SideControlIconImage icon="global.block" displaySize=\{44\}(?: fluid)? \/>/)
     expect(feed).not.toContain('<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M6 6l12 12" /></svg>')
     expect(profile).toContain('<SideControlIconImage icon="global.block" displaySize={44} />')
     expect(profile).not.toContain('kind="block"')
@@ -170,8 +170,8 @@ describe('the opened pop and its meter hang from the same two guides', () => {
     // The action rail and the tower opposite it are a PAIR: same top, same
     // bottom. The profile's own rule re-hung the left one at the avatar's
     // 110px, so the two columns started 43px apart.
-    expect(railCssShared).toContain('--poplur-feed-action-top,')
-    expect(railCss).toContain('--poplur-feed-action-top,')
+    expect(railCssShared).toContain('--poplur-map-control-top')
+    expect(railCss).toContain('--poplur-map-control-top')
     expect(read('../TabControlRail.tsx')).toContain("data-poplur-control-rail-fill={fill ? 'true' : undefined}")
     expect(profileCss).toContain('.profile :global([data-poplur-control-rail]:not([data-poplur-control-rail-fill])) {')
     // The profile's three selfie actions still span the avatar; only the

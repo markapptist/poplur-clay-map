@@ -1,8 +1,11 @@
 import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore } from 'react'
+import { myPinColor, onMyPinColor } from './myPinColor'
+import { PIN_COLOR_SWATCH } from './pinColors'
 import MapBootCover from './MapBootCover'
 import { createPortal } from 'react-dom'
 import styles from './HomeTwin.module.css'
 import motionStyles from './HomeMotionEffects.module.css'
+import { radiusTrophyColor } from './radiusTrophies'
 import surfaceStyles from './TransientPopupSurface.module.css'
 import CubeTab3D, { DEFAULT_CUBE_MODEL, TAB_ORDER, type CubeTab } from './CubeTab3D'
 import { shouldHidePersistentCube } from './persistentCubeVisibility'
@@ -672,6 +675,7 @@ function AnimatedRadiusMetrics({
   active,
   accumulated = false,
   recountKey = null,
+  pinColor = '#f53c99',
 }: {
   radius: number
   ceiling: number
@@ -686,11 +690,13 @@ function AnimatedRadiusMetrics({
    *  new selection, and the map's zoom rail runs its trophy striker on the
    *  same beat (radiusTrophies.ts), so the number and the puck arrive together. */
   recountKey?: string | null
+  pinColor?: string
 }) {
   const [progress, setProgress] = useState(active ? 0 : 1)
   const [counting, setCounting] = useState(active)
   const wasActive = useRef(false)
   const lastRecountKey = useRef<string | null>(null)
+  const lastRadius = useRef(radius)
 
   useEffect(() => {
     // Only the false->true edge is an arrival; a value change under a card that
@@ -699,7 +705,8 @@ function AnimatedRadiusMetrics({
     // where replaying is the point.
     const arriving = active && !wasActive.current
     wasActive.current = active
-    const recount = active && recountKey != null && recountKey !== lastRecountKey.current
+    const recount = active && recountKey != null && (recountKey !== lastRecountKey.current || radius !== lastRadius.current)
+    lastRadius.current = radius
     lastRecountKey.current = recountKey
     let raf = 0
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -741,6 +748,8 @@ function AnimatedRadiusMetrics({
     <>
       <span
         className={`${styles.statValue} ${accumulated ? styles.radiusValueAccum : styles.radiusValueShader} ${motionStyles.radiusCounter}${counting ? ` ${motionStyles.radiusCounterRunning}` : ''}`}
+        style={{ color: radiusTrophyColor(unit === 'mi' ? shown / KM_TO_MI : shown, pinColor),
+          WebkitTextFillColor: radiusTrophyColor(unit === 'mi' ? shown / KM_TO_MI : shown, pinColor) }}
         data-counter-value={`${currentText}${unit}`}
       >
         {currentText}
@@ -3030,6 +3039,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             kind: event.data.kind,
             name: typeof event.data.name === 'string' ? event.data.name : '',
             mine: event.data.mine === true,
+            color: typeof event.data.color === 'string' ? event.data.color : undefined,
             ownerKey: typeof event.data.ownerKey === 'string' && event.data.ownerKey
               ? event.data.ownerKey
               : null,
@@ -3792,6 +3802,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     /** The post id, so the card can name the pin back to the map. */
     id: string
     kind: 'pin' | 'landmark' | 'current'
+    color?: string
     name: string
     mine: boolean
     radiusKm: number | null
@@ -4536,16 +4547,21 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   /** The reach of the video playing in the feed right now. Every video change
       re-reports it, and the RADIUS card re-runs its money counter on the new
       value — the user is shown how much radius each video carries. */
+  const ownPinColor = useSyncExternalStore(onMyPinColor, myPinColor, () => null)
+  const ownRadiusColor = ownPinColor ? PIN_COLOR_SWATCH[ownPinColor] : '#f53c99'
+  const [feedPinColor, setFeedPinColor] = useState<string | undefined>()
   const [feedReachKm, setFeedReachKm] = useState<number | null>(null)
   // The open pop's own reach on the PROFILE. The feed has always reported
   // this; the profile never did, so opening a pop there showed the account
   // total instead of that pop's radius — 0.0mi over a 6.5km pop.
+  const [profilePinColor, setProfilePinColor] = useState<string | undefined>()
+  const onProfilePostReach = useCallback((km: number | null, color?: string) => { setProfileReachKm(km); setProfilePinColor(color) }, [])
   const [profileReachKm, setProfileReachKm] = useState<number | null>(null)
   /** Whose profile is on screen when it is not yours — their overall radius
    *  and pop count, reported by ProfileTwin. The corner card reports the
    *  person you are looking at; null means the profile is your own. */
   const [visitedTotals, setVisitedTotals] = useState<{ radiusKm: number; posts: number } | null>(null)
-  const onFeedPostReach = useCallback((km: number | null) => setFeedReachKm(km), [])
+  const onFeedPostReach = useCallback((km: number | null, color?: string) => { setFeedReachKm(km); setFeedPinColor(color) }, [])
   /** The Times reports the story the reader is currently dwelling on. */
   const [newsReachKm, setNewsReachKm] = useState<number | null>(null)
   useEffect(() => {
@@ -5866,7 +5882,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             viewUserId={viewingUserId}
             highlightPops={profilePopFlash}
             onPostCountChange={setProfilePostCount}
-            onPostReach={setProfileReachKm}
+            onPostReach={onProfilePostReach}
             onVisitedTotals={setVisitedTotals}
             onBackToOwn={() => {
               // Closing someone else's profile — the cube, or leaving after a
@@ -6009,6 +6025,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                 forever. Idle snaps the number instead; the first touch
                 un-idles the chrome and the very next change beats again. */}
             <AnimatedRadiusMetrics
+              pinColor={(activeTab === 'map' ? mapFocusedPoint?.color : activeTab === 'profile' ? profilePinColor : activeTab === 'feed' ? feedPinColor : undefined) ?? ownRadiusColor}
               radius={shownRadiusKm * (unitMi ? KM_TO_MI : 1)}
               ceiling={unitMi ? EARTH_RADIUS_KM * KM_TO_MI : EARTH_RADIUS_KM}
               unit={unitMi ? 'mi' : 'km'}
@@ -6125,7 +6142,15 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               title: what it is, whose it is, how far it reaches, and where.
               The map iframe no longer draws its own copy of this. */}
           {mapPointLabelActive && mapFocusedPoint && (
-            <span
+            <button
+              type="button"
+              data-poplur-native-hit-region
+              data-map-point-owner={mapFocusedPoint.ownerKey ?? undefined}
+              data-map-point-owner-armed={mapOwnerFilterKey === mapFocusedPoint.ownerKey && !!mapFocusedPoint.ownerKey ? 'true' : 'false'}
+              disabled={mapFocusedPoint.kind !== 'pin' || !mapFocusedPoint.ownerKey}
+              onClick={() => postWebMapAction('traverseOwner', { id: mapFocusedPoint.id })}
+              aria-pressed={mapOwnerFilterKey === mapFocusedPoint.ownerKey && !!mapFocusedPoint.ownerKey}
+              style={{ pointerEvents: 'auto' }}
               key={`point-${mapFocusedPoint.key}`}
               className={styles.mapTitleText}
               data-map-point-card=""
@@ -6138,28 +6163,11 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                     ? 'CURRENT LOCATION'
                     : mapFocusedPoint.mine ? 'YOUR PIN' : 'PIN'}
               </em>
-              {/* The handle is the traverse control. The card itself refuses
-                  the pointer (.mapTitle), so this button takes it back — which
-                  is why a tap here did nothing before it existed. */}
-              {mapFocusedPoint.kind === 'pin' && mapFocusedPoint.ownerKey && mapFocusedPoint.id ? (
-                <button
-                  type="button"
-                  className={`${styles.mapTitleName} ${styles.mapTitleNameOwner}${
-                    mapOwnerFilterKey === mapFocusedPoint.ownerKey ? ` ${styles.mapTitleNameOwnerArmed}` : ''}`}
-                  data-poplur-native-hit-region
-                  data-map-point-owner={mapFocusedPoint.ownerKey}
-                  data-map-point-owner-armed={mapOwnerFilterKey === mapFocusedPoint.ownerKey ? 'true' : 'false'}
-                  aria-pressed={mapOwnerFilterKey === mapFocusedPoint.ownerKey}
-                  onClick={() => postWebMapAction('traverseOwner', { id: mapFocusedPoint.id })}
-                >
-                  {mapFocusedPoint.name}
-                </button>
-              ) : (
-                <strong className={styles.mapTitleName}>{mapFocusedPoint.name}</strong>
-              )}
+              <strong className={`${styles.mapTitleName}${mapOwnerFilterKey === mapFocusedPoint.ownerKey && mapFocusedPoint.ownerKey ? ` ${styles.mapTitleNameOwnerArmed}` : ''}`}>{mapFocusedPoint.name}</strong>
               {mapFocusedPoint.radiusKm != null && (
                 <span
                   className={styles.mapTitleRadius}
+                  style={{ color: radiusTrophyColor(mapFocusedPoint.radiusKm, mapFocusedPoint.color ?? '#f53c99') }}
                   data-map-point-radius-km={mapFocusedPoint.radiusKm}
                 >
                   {(() => {
@@ -6174,7 +6182,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               {mapPlace && mapPlace !== mapFocusedPoint.name && (
                 <span className={styles.mapTitlePlace}>{mapPlace}</span>
               )}
-            </span>
+            </button>
           )}
           {!mapPointLabelActive && (
             <span key={mapPlace} className={styles.mapTitleText}>

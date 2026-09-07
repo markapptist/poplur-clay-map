@@ -49,6 +49,7 @@ import { responsiveChannelControlSize } from './channelControlSizing'
 import { nextFilledChannelIndex } from './feedChannelSelection'
 import { VERIFIED_CHECK_SRC, verifiedKindForHandle, type VerifiedCheckKind } from './verifiedCheck'
 import { businessDirectorySnapshot, subscribeBusinessDirectory } from './businessDirectory'
+import { PIN_COLOR_SWATCH } from './pinColors'
 import PostActionRail from './PostActionRail'
 import { useControlSide, type ControlSide } from './controlPlacement'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -222,6 +223,7 @@ export interface ChannelPost {
   commentCount?: number
   shareCount?: number
   locationVisibility?: 'approximate' | 'hidden'
+  pinColor?: keyof typeof PIN_COLOR_SWATCH
   originLatitude?: number
   originLongitude?: number
   distanceMeters?: number
@@ -259,6 +261,7 @@ export function feedPostsForChannel(
       commentCount: post.commentCount,
       shareCount: post.shareCount,
       locationVisibility: post.locationVisibility,
+      pinColor: post.pinColor,
       originLatitude: post.originLatitude,
       originLongitude: post.originLongitude,
       syntheticCohort: post.syntheticCohort === true,
@@ -430,7 +433,7 @@ export default function FeedTwin({
   /** The playing post's reach, reported on every video change so the home
       RADIUS card can re-run its money counter — the user is shown how much
       radius each video carries, in the card that owns that number. */
-  onPostReach?: (km: number | null) => void
+  onPostReach?: (km: number | null, color?: string) => void
   /** A real feed progression (swipe or completed clip), reported to the
       native shell so its ad cadence follows posts rather than channel buttons. */
   onContentAdvance?: (channelId: string, contentIndex: number) => void
@@ -1095,11 +1098,11 @@ export default function FeedTwin({
   const reportedReachRef = useRef<string | null>(null)
   useEffect(() => {
     const km = post?.reachKm ?? null
-    const signature = km == null ? 'none' : `${postId}:${km}`
+    const signature = km == null ? 'none' : `${postId}:${km}:${post?.pinColor ?? ''}`
     if (signature === reportedReachRef.current) return
     reportedReachRef.current = signature
-    onPostReach?.(km)
-  }, [onPostReach, post?.reachKm, postId])
+    onPostReach?.(km, post?.pinColor ? PIN_COLOR_SWATCH[post.pinColor] : undefined)
+  }, [onPostReach, post?.reachKm, post?.pinColor, postId])
   // Leaving reports "no post". The signature ref is FORGOTTEN here on purpose:
   // a remount (React's dev-mode double mount included) runs this cleanup and
   // then the report effect again, and with the old signature still held the
@@ -2368,8 +2371,8 @@ export default function FeedTwin({
           // Block and the media timer came off the channel dial's shoulder
           // into this rail; delete uses the rail's own onDelete, which was
           // always there. The dial opposite is only a dial now.
-          head={post ? (
-            <>
+          head={post && (canBlockPoster || post.live || remainingSeconds !== null) ? (
+            <span className={styles.railHead}>
               {/* Block wears the supplied clay art (global.block) through the
                   registry, like every other side control. A plain button so
                   the pointer-down can stay out of the channel dial's hands. */}
@@ -2395,7 +2398,7 @@ export default function FeedTwin({
                   {post.live ? 'LIVE' : mediaTimeLabel(remainingSeconds)}
                 </output>
               )}
-            </>
+            </span>
           ) : undefined}
           onDelete={canDeletePost && post ? () => { playPop(); if (!deletePending) setDeletePromptPost(post) } : undefined}
           deletePending={Boolean(deletePending)}
@@ -2411,6 +2414,13 @@ export default function FeedTwin({
             playPop()
             onOpenDM(dmPeer.userId, dmPeer.user)
           } : undefined}
+          onShowOnMap={post && Number.isFinite(post.originLatitude) && Number.isFinite(post.originLongitude)
+            ? () => {
+              playPop()
+              window.dispatchEvent(new CustomEvent('poplur-post-focus-map', {
+                detail: { id: post.id, coords: [post.originLongitude, post.originLatitude], title: post.caption, user: post.user },
+              }))
+            } : undefined}
           onLike={likeCurrentPost}
           onDislike={dislikeCurrentPost}
         />

@@ -184,7 +184,7 @@ function worldTakeoverClaims(): Array<{ id: string; center: [number, number]; ra
   return claims
 }
 import { takeoverTint, onTakeoverColor } from './takeoverColor'
-import { setClaimGroup, onClaimsSettled, setClaim } from './mapClaims'
+import { selectGroundPin, setClaimGroup, onClaimsSettled, setClaim } from './mapClaims'
 import { EARTH_RADIUS_KM, clampRadiusKm } from './worldRadius'
 import { CLAIM_RADIUS_SEED_KM } from './claimRadius'
 import ClayMap, { MAP_LITE, MAP_MIN_ZOOM, installComposeRadiusPreview, landmarkCameraFrame, landmarkTourCameraFrame, updateComposeRadiusPreview, type LandmarkCameraFrame, type PopPin, installPinSpotlight, updatePinSpotlight, pulsePinSpotlight } from './ClayMap'
@@ -3544,6 +3544,11 @@ export default function MapApp() {
   mapPointRouteRef.current = mapPointRoute
   const focusedMapPointKeyRef = useRef<string | null>(null)
   const [focusedMapPoint, setFocusedMapPoint] = useState<MapCyclePoint | null>(null)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLive) return
+    selectGroundPin(map, focusedMapPoint?.kind === 'pin' ? focusedMapPoint.id : null, focusedMapPoint?.color)
+  }, [mapLive, focusedMapPoint?.id, focusedMapPoint?.kind, focusedMapPoint?.color])
   // The pin callout used to hardcode KM while the HUD above it — a different
   // document — rendered the same value in the user's own unit. One screen then
   // showed "6.5 KM RADIUS" and "4.0 mi" for one 6500m radius, which reads as
@@ -3584,7 +3589,13 @@ export default function MapApp() {
       active: mapPointLabelActive,
       key: mapPointLabelActive ? focusedMapPoint?.key ?? null : null,
     }, '*')
-  }, [focusedMapPoint?.key, isEmbedded, mapPointLabelActive])
+    if (mapPointLabelActive && focusedMapPoint) {
+      window.parent.postMessage({
+        type: 'poplur-map-point', ...focusedMapPoint,
+        ownerKey: focusedMapPoint.kind === 'pin' ? pointOwnerRef.current(focusedMapPoint.id)?.key ?? null : null,
+      }, '*')
+    }
+  }, [focusedMapPoint, isEmbedded, mapPointLabelActive])
 
   useEffect(() => () => {
     if (!isEmbedded) return
@@ -3611,6 +3622,7 @@ export default function MapApp() {
       && current.name === next.name
       && current.coords[0] === next.coords[0]
       && current.coords[1] === next.coords[1]
+      && current.color === next.color
       && current.radiusKm === next.radiusKm
       ? current
       : next)
@@ -3661,6 +3673,7 @@ export default function MapApp() {
         index,
         total: route.length,
         radiusKm: point.radiusKm,
+        color: point.color,
         mine: point.mine,
       }, '*')
     } catch { /* standalone route has no separate shell consumer */ }
@@ -3827,6 +3840,7 @@ export default function MapApp() {
         index,
         total,
         radiusKm: point.radiusKm,
+        color: point.color,
         mine: point.mine,
       }, '*')
     } catch { /* standalone route has no separate shell consumer */ }
@@ -5272,7 +5286,7 @@ export default function MapApp() {
               // and it wears your colour, the one your pins and your ground
               // are already painted in.
               data-map-point-radius-tier={radiusTrophyFor(focusedMapPoint.radiusKm)?.tier ?? 'own'}
-              style={{ '--radiusTrophyColor': radiusTrophyColor(focusedMapPoint.radiusKm, myColor) } as React.CSSProperties}
+              style={{ '--radiusTrophyColor': radiusTrophyColor(focusedMapPoint.radiusKm, focusedMapPoint.color ?? myColor) } as React.CSSProperties}
             >
               {(() => {
                 const shown = preferMiles ? focusedMapPoint.radiusKm * KM_TO_MI : focusedMapPoint.radiusKm

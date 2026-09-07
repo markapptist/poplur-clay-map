@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import React, { useEffect, useState } from 'react'
 import surfaceStyles from './TransientPopupSurface.module.css'
 import styles from './popups.module.css'
@@ -317,7 +318,9 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
 
   if (!live.length) return null
 
-  return (
+  let popupDocument = document
+  try { popupDocument = window.parent.document } catch { /* cross-origin host */ }
+  return createPortal(
     <div
       className={dismissOnBackdrop ? `${styles.host} ${styles.hostDismissible}` : styles.host}
       aria-live="polite"
@@ -413,7 +416,8 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
           ) : null}
         </div>
       ))}
-    </div>
+    </div>,
+    popupDocument.body,
   )
 }
 

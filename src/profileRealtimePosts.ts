@@ -1,3 +1,4 @@
+import type { PinColorId } from './pinColors'
 import type { NativeFeedPost } from './nativeFeedPosts'
 
 export interface RealtimeProfilePost {
@@ -13,6 +14,7 @@ export interface RealtimeProfilePost {
    *  the account total — which is what made an open pop report the account's
    *  0.0 mi rather than its own 6.5 km. */
   reachKm?: number
+  pinColor?: PinColorId
   /** The pop's public origin as [lng, lat], only when its owner published an
    *  approximate location. The profile's map button flies here; without it
    *  there is no button, because a hidden origin must stay hidden. */
@@ -90,6 +92,7 @@ function profilePost(value: NativeFeedPost): RealtimeProfilePost | null {
     syntheticPostId: synthetic ? value.id : undefined,
     // Same expression the feed already uses (FeedTwin), so one post reports
     // one reach whichever surface it is opened from.
+    pinColor: value.pinColor,
     reachKm: value.radiusMeters == null ? undefined : value.radiusMeters / 1_000,
     origin: value.locationVisibility === 'approximate'
       && typeof value.originLongitude === 'number' && Number.isFinite(value.originLongitude)

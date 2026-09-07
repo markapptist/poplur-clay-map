@@ -49,10 +49,7 @@
    `height: auto` is the point of the pair — the base rule's capped height
    would otherwise win and the bottom guide would do nothing. */
 .fill {
-  top: var(
-    --poplur-feed-action-top,
-    max(154px, calc(env(safe-area-inset-top, 0px) + 112px))
-  );
+  top: var(--poplur-map-control-top);
   bottom: var(--poplur-home-clearance, 200px);
   height: auto;
 }
