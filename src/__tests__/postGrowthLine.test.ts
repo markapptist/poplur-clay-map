@@ -31,8 +31,8 @@ describe('how a pop grew', () => {
     expect(text.change).toBe('▲ 1.4 km')
     expect(text.direction).toBe('up')
     expect(text.span).toBe('over 26 hours')
-    expect(text.counts).toBe('1 view · 1 like')
-    expect(text.sentence).toBe('5.0 km when posted → 6.4 km now, ▲ 1.4 km, over 26 hours, 1 view · 1 like')
+    expect(text.counts).toBe('1 view · 1 like · 2 decay steps')
+    expect(text.sentence).toBe('5.0 km when posted → 6.4 km now, ▲ 1.4 km, over 26 hours, 1 view · 1 like · 2 decay steps')
   })
 
   it('tells a shrinking pop and a brand-new one apart', () => {

@@ -226,6 +226,19 @@ export function startRadioOnBoot(_lat = HOME[1], _lng = HOME[0]): void {
   startMapRadio({ mediaOnly: true })
 }
 
+const MAP_RADIO_ENABLED_KEY = 'poplur.mapRadio.enabled'
+export function mapRadioEnabledByDefault(): boolean {
+  try { return window.localStorage.getItem(MAP_RADIO_ENABLED_KEY) !== '0' } catch { return true }
+}
+export function setMapRadioEnabled(on: boolean): void {
+  try { window.localStorage.setItem(MAP_RADIO_ENABLED_KEY, on ? '1' : '0') } catch { /* session still works */ }
+}
+/** Arrival on Map starts radio unless the listener explicitly switched it off. */
+export function startDefaultMapRadio(lat = HOME[1], lng = HOME[0]): void {
+  if (!mapRadioEnabledByDefault() || isGateMuted() || isMapRadioActive()) return
+  startAutomaticRadioSession(lat, lng)
+}
+
 /** Start Radio when its physical deck is on screen, regardless of scope. */
 export function startRadioForVisibleScreen(lat = HOME[1], lng = HOME[0]): void {
   startAutomaticRadioSession(lat, lng)

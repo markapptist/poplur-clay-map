@@ -294,7 +294,7 @@ import {
 } from './regionAudio'
 import {
   announceMapTour, getRadioPlaybackState, isMapRadioActive, isRadioBackgroundEnabled,
-  nowPlayingStation, startRadioForMap, stopMapRadio, subscribeRadioPlayback, tuneLiveRadio,
+  nowPlayingStation, startRadioForMap, startDefaultMapRadio, setMapRadioEnabled, stopMapRadio, subscribeRadioPlayback, tuneLiveRadio,
 } from './mapRadio'
 import { isNativeShell, isRNWebShellRoute, postNativeEvent, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
@@ -4218,7 +4218,7 @@ export default function MapApp() {
     if (isEmbedded && !radioAutoStartedRef.current && !isMapRadioActive() && !isGateMuted()) {
       radioAutoStartedRef.current = true
       const [autoLng, autoLat] = landingCenter ?? DEFAULT_NAV_ORIGIN
-      startRadioForMap(autoLat, autoLng)
+      startDefaultMapRadio(autoLat, autoLng)
     }
 
     // Begin looking up the local station now, but do not sound it yet. The
@@ -4887,7 +4887,7 @@ export default function MapApp() {
             // default-on radio was waiting for.
             if (isEmbedded && !radioAutoStartedRef.current && !isMapRadioActive()) {
               radioAutoStartedRef.current = true
-              startRadioForMap(navigationOrigin[1], navigationOrigin[0])
+              startDefaultMapRadio(navigationOrigin[1], navigationOrigin[0])
             }
           }}
         />
@@ -4895,6 +4895,7 @@ export default function MapApp() {
           active={mapRadioState !== 'off'}
           onPress={() => {
             playPop(0.25)
+            setMapRadioEnabled(!isMapRadioActive())
             if (isMapRadioActive()) stopMapRadio()
             else startRadioForMap(navigationOrigin[1], navigationOrigin[0])
           }}

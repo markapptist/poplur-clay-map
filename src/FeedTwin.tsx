@@ -70,6 +70,7 @@ import {
 } from './radiusLedger'
 import { currentViewerCoords as viewerCoordsFromFix } from './viewerFix'
 import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
+import { useFeedPostComments } from './feedPostComments'
 import { mediaTimeLabel, nextRadiusPost } from './mediaTiming'
 import { blockUser, blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } from './blockedUsers'
 
@@ -1337,17 +1338,16 @@ export default function FeedTwin({
   // decoder-free poster, so poster load is visual readiness; once playback is
   // unlocked, decoded-frame readiness takes over. This keeps comments working
   // without turning idle video/audio resources back on.
-  const openingVisualReady = mediaUnlocked
-    ? adReady
-    : Boolean(posterKey) && readyPosterKey === posterKey
+  const openingVisualReady = post?.mediaType === 'photo' ? posterReady
+    : mediaUnlocked ? adReady : posterReady
   useEffect(() => {
     if (!openingVisualReady) return
     if (suppressedRef.current || playerModeRef.current) return
     const settle = window.setTimeout(() => {
-      showCommentRoll({ silent: true, persist: !mediaUnlocked })
+      showCommentRoll({ silent: true, persist: true })
     }, 650)
     return () => window.clearTimeout(settle)
-  }, [openingVisualReady, mediaUnlocked, index, showCommentRoll])
+  }, [openingVisualReady, sourceKey, commentsAtEnd, suppressed, showCommentRoll])
   // Normal Feed handoffs keep the authored poster visible until the first
   // decoded frame, then cross-fade directly to the clip. Do not run a second
   // full-screen static decoder over the active video: on a slow WebKit start
@@ -2062,8 +2062,10 @@ export default function FeedTwin({
       [key]: [{ who: '@you', body, pic: mine ?? 'mark_talk0.png', mine: true }, ...(all[key] ?? [])],
     }))
     const engagementPostId = radiusPostId(ch.id, post)
-    void recordPostEngagement(engagementPostId, 'comment').catch(() => {
-      recordPostComment(engagementPostId, 2)
+    void recordPostEngagement(engagementPostId, 'comment', undefined, body).catch(() => {
+      setMyComments(all => ({ ...all, [key]: (all[key] ?? []).filter(row => row.body !== body) }))
+      setCommentText(body)
+      setCommentSent('Your comment could not be posted. Please try again.')
     })
     if (!post.demo) recordFeedDiscoverySignal({ id: post.id, channelId: ch.id }, 'comment')
     setRadiusReaction({ direction: 'up', amount: usesMiles() ? 1.2 : 2 })
@@ -2120,7 +2122,11 @@ export default function FeedTwin({
   // the post rather than held in one list, or a comment written on the ramen
   // clip would show up under the football one.
   const rollKey = post?.id ?? ''
-  const liveRoll = myComments[rollKey] ?? []
+  const publishedComments = useFeedPostComments(post?.id, Boolean(frontMost && !suppressed && (commentsAtEnd || commentOpen)))
+  const liveRoll = [
+    ...(myComments[rollKey] ?? []).filter(local => !publishedComments.some(remote => remote.body === local.body && remote.uid === accountUid)),
+    ...publishedComments,
+  ]
   const title = post?.caption ?? `${ch.name} post`
 
   return (

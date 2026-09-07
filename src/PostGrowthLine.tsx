@@ -55,6 +55,8 @@ export function formatGrowthLine(summary: RadiusHistorySummary, useMiles: boolea
   if (summary.kinds.view) parts.push(plural(summary.kinds.view, 'view'))
   if (summary.kinds.like) parts.push(plural(summary.kinds.like, 'like'))
   if (summary.kinds.comment) parts.push(plural(summary.kinds.comment, 'comment'))
+  if (summary.kinds.dislike) parts.push(plural(summary.kinds.dislike, 'dislike'))
+  if (summary.causes.decay) parts.push(plural(summary.causes.decay, 'decay step'))
   if (summary.causes.boost) parts.push(plural(summary.causes.boost, 'boost'))
   const counts = parts.join(' · ')
   // "when posted" is a claim about the beginning; only a 'create' point is
@@ -130,7 +132,7 @@ export default function PostGrowthLine({
       data-pop-growth-from-m={summary.initialMeters}
       data-pop-growth-to-m={summary.currentMeters}
       data-pop-growth-points={summary.points.length}
-      title={text.sentence}
+      title={`${text.sentence}. Earned radius loses 5% per day, applied hourly. A dislike removes up to 1 km of earned radius. Discovery seed stays; boosts follow their expiry.`}
     >
       <svg className={styles.spark} viewBox={`0 0 ${SPARK_W} ${SPARK_H}`} width={SPARK_W} height={SPARK_H} aria-hidden="true">
         <path className={styles.sparkArea} d={spark.area} />

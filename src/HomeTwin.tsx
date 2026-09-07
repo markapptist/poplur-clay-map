@@ -105,6 +105,9 @@ import {
   getRadioPlaybackState,
   isMapRadioActive,
   startRadioForMap,
+  startDefaultMapRadio,
+  isRadioBackgroundEnabled,
+  setMapRadioEnabled,
   startRadioOnBoot,
   stopMapRadio,
   subscribeRadioPlayback,
@@ -3588,6 +3591,22 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     subscreenRequested,
     permissionOpen: activePermission !== null,
   })
+  // Native MapKit has no MapApp iframe to start its default radio.
+  useEffect(() => {
+    if (!NATIVE_ADAPTIVE_MAP || nativeMapWebFallback || activeTab !== 'map' || committedTab !== 'map'
+      || !surfaceVisible || subscreenRequested || activePermission !== null || faceTimeActive) return
+    const start = () => {
+      const location = radioLocationRef.current
+      startDefaultMapRadio(location?.lat, location?.lng)
+    }
+    start()
+    const unsubscribe = onGateChange(start)
+    return () => {
+      unsubscribe()
+      if (!isRadioBackgroundEnabled()) stopMapRadio()
+    }
+  }, [activeTab, committedTab, surfaceVisible, subscreenRequested, activePermission, faceTimeActive, nativeMapWebFallback])
+
   // The idle fade exists so the chrome stops obstructing a SUBSCREEN you are
   // reading (News, TV Guide, Radio, an RCL capture). On the home view itself the
   // chrome IS the screen — fading it there just makes the app look like it
@@ -5619,6 +5638,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               active={mapRadioState !== 'off'}
               onPress={() => {
                 playPop(0.25)
+                setMapRadioEnabled(!isMapRadioActive())
                 if (isMapRadioActive()) {
                   stopMapRadio()
                   return

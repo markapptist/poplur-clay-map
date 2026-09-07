@@ -54,16 +54,17 @@ export function postEngagementPayload(
   postIdValue: string,
   kind: PostEngagementKind,
   eventIdValue = createPostEngagementEventId(),
-): { postId: string; eventId: string; kind: PostEngagementKind } {
+  text?: string,
+): { postId: string; eventId: string; kind: PostEngagementKind; text?: string } {
   if (!(POST_ENGAGEMENT_KINDS as readonly string[]).includes(kind)) {
     throw new Error('Unsupported post engagement.')
   }
   const postId = canonicalPostId(postIdValue)
   const eventId = eventIdValue.trim()
   if (!EVENT_ID_PATTERN.test(eventId)) throw new Error('Invalid post engagement event.')
-  // There is intentionally nowhere for a message/comment body, a counter or a
-  // radius delta to enter this payload. The Cloud Function derives all of it.
-  return { postId, eventId, kind }
+  // Comment text is public content; counters and radius deltas are always
+  // derived by the server and cannot enter this payload.
+  return { postId, eventId, kind, ...(kind === 'comment' && text ? { text: text.trim().slice(0, 500) } : {}) }
 }
 
 async function waitForNativeToken(): Promise<string | null> {
@@ -116,8 +117,9 @@ export async function recordPostEngagement(
   postId: string,
   kind: PostEngagementKind,
   eventId = createPostEngagementEventId(),
+  text?: string,
 ): Promise<PostEngagementResult> {
-  const payload = postEngagementPayload(postId, kind, eventId)
+  const payload = postEngagementPayload(postId, kind, eventId, text)
   // Analytics sees the action only, never the post. This is the single funnel
   // for like/dislike/comment on both the Feed and the Profile; a `view` only
   // reaches here through recordVisiblePostView, which owns pop_view.
