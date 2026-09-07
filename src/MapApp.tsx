@@ -4769,6 +4769,7 @@ export default function MapApp() {
         focusedLabelUserKey={tourOn ? null : focusedUserKey}
         focusedMapPoint={tourOn ? null : focusedMapPoint}
         onCurrentLocationChange={acceptCurrentLocation}
+        onComposerCameraClaim={stopTour}
         selectedId={selectedId}
         onSelectPoi={handleSelectPoi}
         mapRef={mapRef}

@@ -156,9 +156,8 @@ describe('an opened post steps on the shared D-pad', () => {
     // why the reserve went still names it, and should.
     expect(profile).not.toContain('const PROFILE_POST_STEP_RESERVE =')
     expect(profile).not.toContain('reserveBelow=')
-    // The rail still has its default reserve for the FEED, which does have a
-    // stepper under it — removing that would break the feed's column.
-    expect(read('../PostActionRail.tsx')).toContain('fillReserveBelow={reserveBelow ?? FEED_STEPPER_RESERVE}')
+    // Both screens now keep their D-pad in the centre, outside this column.
+    expect(read('../PostActionRail.tsx')).toContain("fillReserveBelow={reserveBelow ?? '0px'}")
   })
 })
 

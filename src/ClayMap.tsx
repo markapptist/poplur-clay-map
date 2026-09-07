@@ -2,6 +2,7 @@ import { normalizeViewerFix } from './viewerFix'
 import ShellOverlayPortal from './ShellOverlayPortal'
 import { installCloseMapTimeout } from './closeMapTimeout'
 import { createMapCameraSettle } from './mapCameraSettle'
+import { minimumWorldZoom, needsFlatWorldViewport, WORLD_VIEWPORT_ZOOM, ZERO_MAP_PADDING } from './mapWorldViewport'
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import mapboxgl, { type PointLike } from 'mapbox-gl'
 import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
@@ -232,6 +233,8 @@ export interface ClayMapProps {
   /** Publishes only validated native/browser fixes; intro targets and fallback
    * cities never become a Current location cycle stop. */
   onCurrentLocationChange?: (coords: [number, number]) => void
+  /** Retire tours/staged flights before the draft takes camera ownership. */
+  onComposerCameraClaim?: () => void
   /** The signed-in user's profile photo, used by the persistent self-location
    *  pin. Sourced from the shell (App.tsx); the iframe cannot read the shell's
    *  localStorage on its own. */
@@ -1407,6 +1410,7 @@ export function updateComposeRadiusPreview(
       // responsive camera pull during a drag, while a zero-duration fit made
       // each half-kilometre step snap visibly.
       duration: options?.duration ?? 0,
+      retainPadding: false,
       maxZoom: options?.maxZoom ?? 15.5,
       // OMIT these keys when the caller has no opinion. Passing an explicit
       // `bearing: undefined` is not the same as not passing one: Mapbox
@@ -1775,7 +1779,7 @@ export default function ClayMap(props: ClayMapProps) {
   return <MapboxClayMap {...props} />
 }
 
-function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIconId, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, focusedLabelUserKey = null, focusedMapPoint = null, onCurrentLocationChange, ownProfilePhoto = null, ownProfileSelfieVideo = null, accountRadiusKm, ownClaims, onRequestSearch }: ClayMapProps) {
+function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPoi, mapRef, theme, sky, streetView = false, onIntroComplete, onGlobeReady, weatherMode = 'clear', weatherIconId, weatherOpen, onWeatherOpenChange, controlsObscured = false, weatherForecast = [], weatherForecastStatus = 'loading', weatherTemp = null, pins, onConquerSnapshot, onWorldCountryChange, onPinOpen, focusedLabelUserKey = null, focusedMapPoint = null, onCurrentLocationChange, onComposerCameraClaim, ownProfilePhoto = null, ownProfileSelfieVideo = null, accountRadiusKm, ownClaims, onRequestSearch }: ClayMapProps) {
   const launchParams = typeof window === 'undefined'
     ? new URLSearchParams()
     : new URLSearchParams(window.location.search)
@@ -2255,6 +2259,44 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   const [composeMessage, setComposeMessage] = useState('')
   const composeDialogRef = useRef<HTMLDivElement>(null)
   const composerVisible = composeAt !== null && !radiusPreviewLaunch
+  const composerCameraClaimRef = useRef(onComposerCameraClaim)
+  composerCameraClaimRef.current = onComposerCameraClaim
+  const claimComposerCamera = useCallback(() => {
+    composerCameraClaimRef.current?.()
+    initialCameraInteractionRef.current = true
+    if (zoomAnimationRef.current) window.cancelAnimationFrame(zoomAnimationRef.current)
+    zoomAnimationRef.current = 0
+    zoomVelocityRef.current = 0
+    const map = mapRef.current as (mapboxgl.Map & {
+      __claimCamera?: () => void
+      __cancelAdaptiveCameraSettle?: () => void
+      __suppressNextMapClickUntil?: number
+    }) | null
+    if (!map) return null
+    map.__claimCamera?.()
+    map.stop()
+    map.__cancelAdaptiveCameraSettle?.()
+    map.__suppressNextMapClickUntil = Date.now() + 750
+    return map
+  }, [mapRef])
+  const closeComposer = useCallback(() => {
+    const point = composeAtRef.current
+    const map = claimComposerCamera()
+    focusedPostManualSelectionRef.current = true
+    composeOpenRef.current = false
+    setComposeMessage('')
+    setComposeAt(null)
+    // Keep the chosen ground after the card leaves. A world-view centre may
+    // lie in the ocean even when the selected post is on land.
+    if (map && point) {
+      wakeManagedRendering(650 + MANAGED_CAMERA_SETTLE_MS)
+      map.setMinPitch(0)
+      map.easeTo({ center: [point.lng, point.lat], zoom: Math.max(10, Math.min(13, map.getZoom())),
+        pitch: 0, bearing: 0, padding: { top: 0, right: 0, bottom: 0, left: 0 }, duration: 650 })
+    }
+  }, [claimComposerCamera])
+  const closeComposerRef = useRef(closeComposer)
+  closeComposerRef.current = closeComposer
   useEffect(() => {
     if (!composerVisible) return
     const previousFocus = document.activeElement instanceof HTMLElement
@@ -2267,10 +2309,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       event.preventDefault()
-      focusedPostManualSelectionRef.current = true
-      composeOpenRef.current = false
-      setComposeMessage('')
-      setComposeAt(null)
+      closeComposer()
     }
     document.addEventListener('keydown', onKeyDown)
     if (window.parent !== window) {
@@ -2284,7 +2323,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       }
       previousFocus?.focus({ preventScroll: true })
     }
-  }, [composerVisible])
+  }, [composerVisible, closeComposer])
   // Drop a pop by tapping the map. This used to require ?compose=1 — a
   // prototype flag from when posting lived only in the camera flow — which is
   // why tapping the map did nothing. ?compose=0 opts back out.
@@ -2580,9 +2619,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // of manufacturing a coordinate from an incidental screen tap.
       if (event.data?.type === 'poplur-map-action' && event.data.action === 'openComposer') {
         if (!prototypeComposer || radiusPreviewLaunch) return
-        const map = mapRef.current
+        const map = claimComposerCamera()
         if (!map) return
-        const center = map.getCenter()
+        const selected = focusedMapPointRef.current?.coords
+        const center = selected ? new mapboxgl.LngLat(selected[0], selected[1]) : map.getCenter()
         const point = composeScreenPoint(map, map.project(center))
         composeOpenRef.current = true
         setComposeMessage('')
@@ -2603,7 +2643,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       document.removeEventListener('visibilitychange', syncFrameSurface)
       setSurfaceFront(false)
     }
-  }, [composeScreenPoint, focusedPostLaunch, mapRef, positionFocusedPostComposer, prototypeComposer, radiusPreviewLaunch])
+  }, [claimComposerCamera, composeScreenPoint, focusedPostLaunch, mapRef, positionFocusedPostComposer, prototypeComposer, radiusPreviewLaunch])
 
   // Directions: the active route, the routing profile, whether we're mid
   // eye-level navigation, the current turn banner, and a routing-in-flight flag.
@@ -2806,7 +2846,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         maxZoom: ZOOM_MAX,
         // Unlike the old globe, Mercator has a real north/south edge. Clamp
         // gestures and programmatic cameras to the same safe regional floor.
-        minZoom: MAP_MIN_ZOOM,
+        minZoom: minimumWorldZoom(containerRef.current.clientHeight, MAP_MIN_ZOOM),
         // The world-scale view is meant to be explored laterally. Make the
         // interaction contract explicit rather than inheriting projection/
         // style defaults: repeated worlds let a drag cross the antimeridian,
@@ -2844,6 +2884,23 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       return
     }
     const mapCanvas = map.getCanvas()
+    // Mapbox constrains the flat Mercator sheet correctly, but inherited
+    // padding/pitch/rotation exposes its edge. Normalize before the next draw,
+    // including a pinch/slider move, not only after a flight has ended.
+    const constrainWorldViewport = () => {
+      if (map.getProjection().name !== 'mercator') return
+      if (needsFlatWorldViewport({ zoom: map.getZoom(), pitch: map.getPitch(),
+        bearing: map.getBearing(), padding: map.getPadding() })) {
+        map.setMinPitch(0)
+        map.jumpTo({ pitch: 0, bearing: 0, padding: ZERO_MAP_PADDING })
+      }
+    }
+    map.on('move', constrainWorldViewport)
+    map.on('resize', () => {
+      if (map.getProjection().name !== 'mercator') return
+      map.setMinZoom(minimumWorldZoom(map.getContainer().clientHeight, MAP_MIN_ZOOM))
+      constrainWorldViewport()
+    })
     const idleSnapshot = installMapIdleSnapshot(map, mapCanvas)
     idleSnapshotRef.current = idleSnapshot
     const handleContextLost = (event: Event) => {
@@ -3942,6 +3999,14 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // Landmark loading and policy changes also call this during a flight.
       // Neither the pitch correction nor a landmark zoom clamp may stop it.
       if (map.isMoving()) return
+      if (map.getZoom() <= WORLD_VIEWPORT_ZOOM) {
+        adaptiveIsometric = false
+        setThreeDLayerVisibility(false)
+        if (map.getMinPitch() !== 0) map.setMinPitch(0)
+        if (map.getMaxPitch() !== 0) map.setMaxPitch(0)
+        constrainWorldViewport()
+        return
+      }
       if (MAP_2D) {
         adaptiveIsometric = false
         setThreeDLayerVisibility(false)
@@ -5700,6 +5765,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         // needs one, because stepping pop-to-pop moved off the channel
         // buttons and onto the edges of the screen (below).
         const openComposerAt = (lngLat: mapboxgl.LngLat, at: mapboxgl.Point) => {
+          claimComposerCamera()
           if (focusedPostLaunch) {
             focusedPostManualSelectionRef.current = true
             setFocusedPostLocationStatus('ready')
@@ -5791,9 +5857,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           // button. Taps inside the bubble are DOM events on an overlay and
           // never reach the canvas, so this cannot fire while you are typing.
           if (composeOpenRef.current && !focusedPostLaunch) {
-            composeOpenRef.current = false
-            setComposeMessage('')
-            setComposeAt(null)
+            closeComposerRef.current()
             return
           }
           // The focused-post flow is a picking mode: it is asking you for a
@@ -6278,9 +6342,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         // the stable isometric board angle while pulling back for a larger
         // radius and diving in again for a smaller one.
         fit: true,
-        pitch: radiusPreviewLaunch ? MAP_BROWSE_3D_PITCH : undefined,
-        bearing: radiusPreviewLaunch ? MAP_BROWSE_3D_BEARING : undefined,
-        duration: radiusPreviewLaunch ? 110 : 0,
+        pitch: radiusPreviewLaunch ? MAP_BROWSE_3D_PITCH : 0,
+        bearing: radiusPreviewLaunch ? MAP_BROWSE_3D_BEARING : 0,
+        duration: radiusPreviewLaunch ? 110 : 650,
         maxZoom: radiusPreviewLaunch ? INTRO_LANDING_ZOOM : 15.5,
       })
     })
@@ -7000,7 +7064,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   const commitZoom = (value: number) => {
     const point = focusedMapPointRef.current
     const ceiling = point?.kind === 'landmark' ? landmarkTourCameraFrame(point.id)?.zoom ?? ZOOM_MAX : ZOOM_MAX
-    const next = Math.max(ZOOM_MIN, Math.min(ceiling, value))
+    const next = Math.max(mapRef.current?.getMinZoom() ?? ZOOM_MIN, Math.min(ceiling, value))
     zoomValueRef.current = next
     setZoomValue(next)
     mapRef.current?.setZoom(next)
@@ -7018,7 +7082,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       let current = zoomValueRef.current
       const point = focusedMapPointRef.current
       const ceiling = point?.kind === 'landmark' ? landmarkTourCameraFrame(point.id)?.zoom ?? ZOOM_MAX : ZOOM_MAX
-      const target = Math.min(zoomTargetRef.current, ceiling)
+      const target = Math.max(mapRef.current?.getMinZoom() ?? ZOOM_MIN, Math.min(zoomTargetRef.current, ceiling))
       let velocity = zoomVelocityRef.current
 
       // A lightly under-damped, short-travel spring: it takes the hard digital
@@ -7121,6 +7185,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       offset: landmarkFrame?.offset ?? [0, 0],
       zoom,
       padding: pad,
+      retainPadding: false,
       duration: 900,
       essential: true,
     })
@@ -7344,9 +7409,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           aria-label="Close post composer"
           onClick={() => {
             playPop()
-            composeOpenRef.current = false
-            setComposeMessage('')
-            setComposeAt(null)
+            closeComposer()
           }}
         />
       )}
@@ -7387,12 +7450,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
               type="button"
               className={styles.composeClose}
               aria-label={focusedPostLaunch ? 'Close location picker' : 'Close Drop a Pop'}
-              onClick={() => {
-                focusedPostManualSelectionRef.current = true
-                composeOpenRef.current = false
-                setComposeMessage('')
-                setComposeAt(null)
-              }}
+              onClick={closeComposer}
             >
               <span aria-hidden="true">×</span>
             </button>
@@ -7566,12 +7624,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
               <button
                 type="button"
                 className={styles.composeCancel}
-                onClick={() => {
-                  focusedPostManualSelectionRef.current = true
-                  composeOpenRef.current = false
-                  setComposeMessage('')
-                  setComposeAt(null)
-                }}
+                onClick={closeComposer}
               >
                 <span className={styles.composeCancelMark} aria-hidden="true">×</span>
                 <span>

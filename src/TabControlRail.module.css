@@ -82,6 +82,6 @@
 .fill {
   top: var(--poplur-action-rail-top, var(--poplur-map-control-top));
   bottom: calc(var(--poplur-home-clearance) + var(--rail-reserve-below, 0px));
-  align-content: center;
+  align-content: safe center;
 }
 .fill > * img { width: 100%; height: 100%; object-fit: contain; }

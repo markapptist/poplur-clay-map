@@ -11,13 +11,6 @@ import styles from './PostActionRail.module.css'
  * language, not two similar-looking copies that can drift apart over time.
  * Delete is optional because it only belongs to authenticated owner posts.
  */
-/** The feed's channel stepper, which sits under this rail in the same column:
- *  four dial-sized controls, two readouts, five gaps and the seam above. In
- *  terms of the column's own variables, never a number — the stepper grows
- *  with the control size, and a literal would misreserve the moment it did. */
-const FEED_STEPPER_RESERVE =
-  'calc(4 * var(--poplur-feed-ctl) + 2 * var(--poplur-feed-number) + 5 * var(--poplur-feed-gap) + var(--poplur-feed-seam))'
-
 export default function PostActionRail({
   side,
   label,
@@ -61,10 +54,8 @@ export default function PostActionRail({
   onShowOnMap?: () => void
   onDelete?: () => void
   deletePending?: boolean
-  /** The room to leave below this rail for whatever shares its column. The
-   *  default is the feed's channel stepper; an opened profile post has the
-   *  four inner arrows instead, which are a shorter block, and reserving the
-   *  feed's there left the rail overflowing its own box. */
+  /** Only reserve space for controls actually sharing this side column.
+   *  The current D-pad sits in the centre, so the default reserves nothing. */
   reserveBelow?: string
   /** Controls that belong to THIS post but are not rail actions — the feed's
    *  block button and its media timer, which used to ride on the shoulder of
@@ -73,18 +64,11 @@ export default function PostActionRail({
   head?: ReactNode
 }) {
   return (
-    // Fill, because this rail is one of the feed's PAIRED columns: it has to
-    // reach the same bottom line as the channel dial opposite. The reserve is
-    // the channel stepper's own block, which sits under this rail in the same
-    // column — five dial-sized controls with 5px between them, plus the gap
-    // above. Written in terms of --poplur-feed-dial, not a number: the stepper
-    // grows with the dial, so a literal here would misreserve the moment the
-    // column changed height.
     <TabControlRail
       side={side}
       label={label}
       fill
-      fillReserveBelow={reserveBelow ?? FEED_STEPPER_RESERVE}
+      fillReserveBelow={reserveBelow ?? '0px'}
     >
       {head}
       <SideControlIconButton

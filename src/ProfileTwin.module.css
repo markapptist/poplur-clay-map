@@ -1099,6 +1099,7 @@
 /* ---- fullscreen post viewer (channel arrows browse posts) ---- */
 
 .viewer {
+  --poplur-action-rail-top: calc(var(--poplur-map-control-top) + 56px);
   position: absolute;
   inset: 0;
   z-index: 46;
