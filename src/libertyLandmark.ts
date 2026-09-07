@@ -406,6 +406,9 @@ export function installNearLandmark3D(
     slot: 'top',
     renderingMode: '3d',
     onAdd(m, gl) {
+      // A full style replacement can re-add this layer without onRemove.
+      // Release the previous renderer and any pending model load first.
+      if (renderer) customLayer.onRemove?.(m, gl)
       cam = new THREE.Camera()
       scene = new THREE.Scene()
       // A small, fixed light rig makes authored concrete, glass, metal and
@@ -591,10 +594,10 @@ export function installNearLandmark3D(
       modelRendered = false
       scene = null
       cam = null
-      // This renderer uses Mapbox's canvas and WebGL context. Disposing it
-      // here also tears down shared GL state; the next landmark then gets a
-      // blank map rather than a fresh custom layer. The model's own geometry
-      // and materials above are the resources this layer owns.
+      // Release this Three renderer's listeners and internal allocations.
+      // The Mapbox context is shared: do not force context loss or route this
+      // renderer through releaseWebGL().
+      renderer?.dispose()
       renderer = null
     },
     // Mapbox 3.x passes the extra globe arguments whenever the projection is
