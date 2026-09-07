@@ -42,6 +42,8 @@ const deferToOwner = (owner: AudioOwner | null): boolean =>
 import ClayCornerButton from './ClayCornerButton'
 import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import PoplurDialog from './PoplurDialog'
+import PostDeleteDialog from './PostDeleteDialog'
+import { playFeedVideo } from './feedVideoPlayback'
 import PoplurStatusToast from './PoplurStatusToast'
 import FeedChannelRail from './FeedChannelRail'
 import ClayArrowCluster from './ClayArrowCluster'
@@ -1166,6 +1168,8 @@ export default function FeedTwin({
   const retryAdPlayback = useCallback((source: string, video: HTMLVideoElement) => {
     if (adVideoRef.current !== video || video.getAttribute('src') !== source) return
     if (completedAdRef.current === source) return
+    if (suppressedRef.current || !frontMostRef.current || document.hidden
+      || !(window.__poplurDisplayActive?.() ?? true) || playerPausedByUserRef.current) return
     if (!mediaUnlockedRef.current) {
       video.muted = true
       video.pause()
@@ -1175,10 +1179,8 @@ export default function FeedTwin({
     // WebKit resumes it. Re-arming the static/first-frame latch here created a
     // circular wait: `waiting` cleared readiness, but an already-playing video
     // did not owe us a second `playing` event to set it again.
-    void video.play().catch(() => {
-      if (adVideoRef.current === video && video.getAttribute('src') === source) {
-        advanceAdSource(source)
-      }
+    void playFeedVideo(video, () => adVideoRef.current === video && video.getAttribute('src') === source).then(result => {
+      if (result === 'failed' && adVideoRef.current === video && video.getAttribute('src') === source) advanceAdSource(source)
     })
   }, [advanceAdSource])
 
@@ -1409,8 +1411,8 @@ export default function FeedTwin({
     settleAfterFrame(video, () => {
       if (adVideoRef.current === video && video.getAttribute('src') === source) {
         setReadyPlaybackKey(key)
-        // A decoded/composited frame is stronger evidence than the 900ms
-        // progress poll. Lift the static cover immediately instead of waiting
+        // A decoded/composited frame is stronger evidence than a recovery
+        // deadline. Lift the static cover immediately instead of waiting
         // for a watchdog tick that may be throttled by WKWebView.
         setRecoveringPlayback(false)
       }
@@ -1512,7 +1514,7 @@ export default function FeedTwin({
         video.load()
         awaitingPostLoadProgress = true
         checkpoint = video.currentTime
-        void video.play().catch(() => {})
+        retryAdPlayback(adSrc, video)
         const retryCheckpoint = video.currentTime
         rotateTimer = window.setTimeout(() => {
           rotateTimer = 0
@@ -1520,8 +1522,8 @@ export default function FeedTwin({
           const recovered = video.currentTime > retryCheckpoint + 0.03
           if (recovered) onProgress()
           else advanceAdSource(adSrc)
-        }, 1800)
-      }, 900)
+        }, 6_000)
+      }, 6_000)
     }
     const onPlaying = () => {
       if (
@@ -1529,12 +1531,13 @@ export default function FeedTwin({
         && !video.paused
         && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
       ) {
-        // `playing` only means WebKit left its paused state. Some failed
-        // decoders emit it with one frame and never advance currentTime, so it
-        // is not strong enough to cancel the bounded startup deadline. A real
-        // `timeupdate` calls onProgress and retires both recovery timers.
+        // A late first frame must cancel the STARTUP deadline. Previously a
+        // healthy `playing` at 880ms was reloaded at 900ms before its first
+        // timeupdate. The resulting AbortErrors exhausted both source attempts.
+        // The separate no-progress deadline still catches a frozen first frame.
+        if (!awaitingPostLoadProgress) clearRecovery()
         markAdReady(adSrc)
-        armRecovery()
+        armSilence()
       }
     }
     const onForeground = (event?: Event) => {
@@ -1553,10 +1556,21 @@ export default function FeedTwin({
       clearSilence()
       if (stillOwnsVideo()) advanceAdSource(adSrc)
     }
-    const onRest = () => clearSilence()
+    const onRest = () => { clearSilence(); clearRecovery() }
+    const onPause = () => {
+      onRest()
+      // Native audio/ad interruptions may pause without a later focus event.
+      // Defer one task so a tab transition can commit its suppression first.
+      retryTimer = window.setTimeout(() => {
+        retryTimer = 0
+        if (!stillOwnsVideo() || video.ended) return
+        retryAdPlayback(adSrc, video)
+        armRecovery()
+      }, 200)
+    }
     video.addEventListener('timeupdate', onProgress)
     video.addEventListener('playing', onPlaying)
-    video.addEventListener('pause', onRest)
+    video.addEventListener('pause', onPause)
     video.addEventListener('ended', onRest)
     video.addEventListener('waiting', armRecovery)
     video.addEventListener('stalled', armRecovery)
@@ -1573,7 +1587,7 @@ export default function FeedTwin({
       clearSilence()
       video.removeEventListener('timeupdate', onProgress)
       video.removeEventListener('playing', onPlaying)
-      video.removeEventListener('pause', onRest)
+      video.removeEventListener('pause', onPause)
       video.removeEventListener('ended', onRest)
       video.removeEventListener('waiting', armRecovery)
       video.removeEventListener('stalled', armRecovery)
@@ -1582,7 +1596,7 @@ export default function FeedTwin({
       window.removeEventListener('pageshow', onForeground)
       window.removeEventListener('poplur-native-app-lifecycle', onForeground)
     }
-  }, [adReady, adSrc, completedAdSrc, suppressed, frontMost, mediaUnlocked, decoderGranted, markAdReady, advanceAdSource])
+  }, [adReady, adSrc, completedAdSrc, suppressed, frontMost, mediaUnlocked, decoderGranted, markAdReady, advanceAdSource, retryAdPlayback, recoveryAttempt])
 
   // Channel audio. The ad creative is the channel's soundtrack, so it plays
   // aloud — but iOS/Safari block unmuted autoplay until the user has interacted,
@@ -1627,7 +1641,7 @@ export default function FeedTwin({
       video.volume = 0.85
       if (audible) requestAudioFocus('feed')
       // A muted element may already be playing; unmuting can still need a nudge.
-      if (video.paused) void video.play().catch(() => {})
+      if (video.paused && adSrc) retryAdPlayback(adSrc, video)
     }
     apply()
     const offGate = onGateChange(apply)
@@ -2201,7 +2215,6 @@ export default function FeedTwin({
           onLoadedMetadata={event => {
             if (Number.isFinite(event.currentTarget.duration)) setRemainingSeconds(event.currentTarget.duration)
           }}
-          onWaiting={event => retryAdPlayback(adSrc, event.currentTarget)}
           onEnded={event => {
             completedAdRef.current = adSrc
             // Retire synchronously before the state update unmounts this node.
@@ -2214,9 +2227,23 @@ export default function FeedTwin({
             releaseAudioFocus('feed')
             advanceCompletedContent()
           }}
-          onError={event => retryAdPlayback(adSrc, event.currentTarget)}
-          onStalled={event => retryAdPlayback(adSrc, event.currentTarget)}
         />
+      )}
+
+      {adSrc && playbackUnavailable && (
+        <div className={styles.playbackRetry} role="status">
+          <span>Video couldn’t start</span>
+          <button type="button" onClick={() => {
+            recoveryAttemptRef.current = 0
+            recoveringAdSrcRef.current = null
+            settledAdRef.current = null
+            setRecoveryAttempt(0)
+            setReadyPlaybackKey(null)
+            setRecoveringPlayback(true)
+            setPlaybackUnavailable(false)
+            setRemainingSeconds(null)
+          }}>Retry video</button>
+        </div>
       )}
 
       {/* Static + channel identity while the video buffers or swaps; fades out
@@ -2392,17 +2419,11 @@ export default function FeedTwin({
           </div>
         )}
         {deletePromptPost && !deletePending && (
-          <div className={surfaceStyles.scrim} onClick={() => setDeletePromptPost(null)} data-feed-delete-dialog="">
-            <PoplurDialog
-              eyebrow="Poplur"
-              title="Delete this post?"
-              subtitle="It comes off the feed, the map and your profile. This cannot be undone."
-              primaryAction={{ label: 'Delete', onActivate: () => { playPop(); confirmDelete() } }}
-              secondaryAction={{ label: 'Keep it', onActivate: () => { playPop(); setDeletePromptPost(null) } }}
-              onClose={() => { playPop(); setDeletePromptPost(null) }}
-              dataId={`feed-delete:${deletePromptPost.id ?? ''}`}
-            />
-          </div>
+          <PostDeleteDialog
+            onDelete={() => { playPop(); confirmDelete() }}
+            onCancel={() => { playPop(); setDeletePromptPost(null) }}
+            dataId={`feed-delete:${deletePromptPost.id ?? 'post'}`}
+          />
         )}
         {/* The no-signal card above is aria-hidden, so with nothing on the
             live channel would otherwise announce nothing at all. */}
