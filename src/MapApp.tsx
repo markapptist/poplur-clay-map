@@ -2711,6 +2711,7 @@ export default function MapApp() {
     index: number,
     total: number,
   ) => {
+    if (!event.coords) return
     clearTourTimers()
     setActiveNewsStop(null)
     reportNewsEvent(null)

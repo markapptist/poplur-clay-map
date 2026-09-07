@@ -4,7 +4,6 @@ import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
 import { playPop } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
-import { feedUrl } from './assetPacks'
 import { requestProfileMode } from './profileMode'
 import { localDaylight } from './skyCycle'
 import ScreenCoach from './ScreenCoach'
@@ -39,22 +38,7 @@ import {
 
 // THE POPLUR TIMES — the News screen.
 //
-// Reads like a newspaper, works like a timeline. Two kinds of entry are set in
-// the same columns:
-//
-//   · DISPATCH — written by Poplur AI about what is happening on the map right
-//     now (claims, radius changes, venues heating up).
-//   · MESSAGE — a written post someone dropped on the map. Messages carry a
-//     radius exactly like video pops do, so you only read the ones whose radius
-//     reaches your location.
-//
-// The edition keeps setting more type as you scroll, and stops only when the
-// next messages no longer intercept where you are standing.
-//
-// The messages YOU drop from the map composer lead the edition. They are real
-// (newsMessages, written by ClayMap's "Post message"), they carry the radius
-// you chose, and their map plate is the actual ground you claimed — everything
-// below them is the synthetic edition until the live service takes over.
+// Publisher-sourced reporting and the messages you posted on the map.
 
 type EntryMediaAttachment = NewsMediaAttachment & Partial<Pick<LiveNewsMedia,
   'credit' | 'sourceUrl' | 'rights'
@@ -86,116 +70,6 @@ export interface Entry {
   liveEvent?: LiveNewsEvent
 }
 
-const AVATARS = [
-  feedUrl('posters/ad-food.jpg'), feedUrl('posters/ad-comedy.jpg'), feedUrl('posters/ad-shopping.jpg'),
-  feedUrl('posters/ad-music.jpg'), feedUrl('posters/ad-sports.jpg'), feedUrl('posters/ad-french.jpg'),
-  'mark_talk0.png', feedUrl('posters/ad-kids.jpg'), feedUrl('posters/ad-cartoon.jpg'),
-]
-
-const WRITERS = [
-  { who: 'Kensington', handle: '@kensington_eats' },
-  { who: 'Harbourfront', handle: '@harbourfront' },
-  { who: 'Queen West', handle: '@queenwest' },
-  { who: 'The Annex', handle: '@the_annex' },
-  { who: 'Night Market', handle: '@nightmarket' },
-  { who: 'Local Wire', handle: '@localwire' },
-  { who: 'Basement Set', handle: '@basement.set' },
-  { who: 'Sauce Boss', handle: '@sauceboss' },
-]
-
-const MESSAGES = [
-  'Anyone else seeing the queue down Augusta? Two blocks and growing.',
-  'Dropped a pop outside Union. Whoever tagged the mural — respect.',
-  'Rain held off. Harbourfront is packed for the blue hour.',
-  'The 501 is running short turns again. Walk if you are near Bathurst.',
-  'Free cold brew at the sample sale until they run out.',
-  'Someone left a clay pin on my street. It is beautiful. Leaving it.',
-  'Warehouse doors at ten. Bring cash, the card machine is dead.',
-  'Best croissant in the radius is still the one on Baldwin. I said it.',
-  'Claimed my block this morning. Nobody take it.',
-  'Fog rolled in off the lake, whole skyline gone in ten minutes.',
-]
-
-const DISPATCHES = [
-  'Barrie falls: the northern corridor is fully claimed after a nine-hour push, extending the local map by 14 km.',
-  'Downtown holds. Three overlapping pops now cover the core, and the ground has taken their colour.',
-  'Queen West is the densest square kilometre on the map tonight, with 41 posts inside a single radius.',
-  'Harbourfront reports the sharpest rise of the evening — reach up 1.2 km in under an hour.',
-  'A quiet stretch along the Danforth has gone dark as older pops expire, opening ground to the east.',
-  'The lake edge remains uncontested. No pop has yet reached the water.',
-  'Mississauga edges closer to the western boundary as two mid-sized claims merge.',
-  'Trending inside your radius: food, then music, then whatever is happening at the fairground.',
-]
-
-// Deterministic pseudo-random so the edition reads the same on every render and
-// only grows when you actually scroll (Math.random would reshuffle constantly).
-function seeded(n: number) {
-  const x = Math.sin(n * 12.9898) * 43758.5453
-  return x - Math.floor(x)
-}
-
-const SAMPLE_POSTERS = [
-  feedUrl('posters/ad-food.jpg'), feedUrl('posters/ad-comedy.jpg'),
-  feedUrl('posters/ad-shopping.jpg'), feedUrl('posters/ad-music.jpg'),
-  feedUrl('posters/ad-sports.jpg'), feedUrl('posters/ad-french.jpg'),
-]
-const SAMPLE_CLIPS = [
-  feedUrl('ad-food.mp4'), feedUrl('ad-comedy.mp4'),
-  feedUrl('ad-music.mp4'), feedUrl('ad-sports.mp4'),
-]
-
-function sampleMedia(seed: number): NewsMediaAttachment[] | undefined {
-  const roll = seeded(seed + 200)
-  if (roll > 0.7) return undefined          // ~30% text-only
-  if (roll > 0.45) {                        // ~25% single photo
-    return [{ kind: 'photo', src: SAMPLE_POSTERS[seed % SAMPLE_POSTERS.length] }]
-  }
-  if (roll > 0.25) {                        // ~20% multi-image (2-4 photos)
-    const count = 2 + (seed % 3)
-    return Array.from({ length: count }, (_, i) => ({
-      kind: 'photo' as const,
-      src: SAMPLE_POSTERS[(seed + i * 3) % SAMPLE_POSTERS.length],
-    }))
-  }
-  // ~25% video
-  const clip = SAMPLE_CLIPS[seed % SAMPLE_CLIPS.length]
-  const poster = SAMPLE_POSTERS[seed % SAMPLE_POSTERS.length]
-  return [{ kind: 'video', src: clip, poster }]
-}
-
-// Successive pages sit further out. A message only appears if its radius still
-// reaches you — the same interception rule the feed and the map use.
-function buildPage(page: number, edition = 0): Entry[] {
-  const out: Entry[] = []
-  for (let i = 0; i < 8; i += 1) {
-    const n = page * 8 + i
-    const seed = n + edition * 997
-    const r = seeded(seed)
-    const kind: Entry['kind'] = n % 3 === 0 ? 'dispatch' : 'message'
-    const distanceKm = +(n * 0.9 + r * 2.4).toFixed(1)
-    const radiusKm = +(3 + seeded(seed + 101) * 38).toFixed(1)
-    if (distanceKm > radiusKm) continue
-    const writer = WRITERS[seed % WRITERS.length]
-    out.push({
-      id: `e${edition}-${n}`,
-      kind,
-      who: kind === 'dispatch' ? 'Poplur AI' : writer.who,
-      handle: kind === 'dispatch' ? '@poplur' : writer.handle,
-      avatar: kind === 'dispatch' ? 'logo_icon.png' : AVATARS[seed % AVATARS.length],
-      body: kind === 'dispatch' ? DISPATCHES[seed % DISPATCHES.length] : MESSAGES[seed % MESSAGES.length],
-      radiusKm,
-      distanceKm,
-      when: n < 3 ? `${2 + n * 5}m` : n < 9 ? `${1 + Math.floor(n / 3)}h` : `${1 + Math.floor(n / 9)}d`,
-      replies: Math.floor(r * 40),
-      repops: Math.floor(seeded(seed + 7) * 90),
-      likes: Math.floor(seeded(seed + 13) * 400),
-      media: kind === 'message' ? sampleMedia(seed) : undefined,
-      verified: kind === 'dispatch' ? 'verified' : seed % 4 === 0 ? 'verified' : seed % 5 === 0 ? 'confirmed' : undefined,
-    })
-  }
-  return out
-}
-
 // Real snapshots of the real map: Mapbox renders the same dark style the app
 // uses, centred on where the story happened, with the post's own radius drawn
 // as a pink pin. Not an illustration — the actual map at those coordinates.
@@ -220,7 +94,7 @@ export function coordsFor(entry: Entry): [number, number] {
 }
 
 function snapshotFor(entry: Entry): string | null {
-  if (!MAPBOX_TOKEN) return null
+  if (!MAPBOX_TOKEN || (entry.liveEvent && !entry.liveEvent.coords)) return null
   const [lng, lat] = coordsFor(entry)
   const zoom = entry.radiusKm > 24 ? 8.4 : entry.radiusKm > 10 ? 10.2 : 12.4
   const pin = `pin-l+f63b9a(${lng.toFixed(4)},${lat.toFixed(4)})`
@@ -257,23 +131,23 @@ function liveEntries(list: LiveNewsEvent[], nowMs: number): Entry[] {
   return list.map(event => ({
     id: `live-news-${event.id}`,
     kind: 'liveNews' as const,
-    who: 'Poplur News',
+    who: event.sources[0]?.publisher ?? 'Poplur News',
     handle: '@poplurnews',
     avatar: '/holdmenu/News.png',
     headline: event.title,
     body: event.summary,
     radiusKm: liveNewsRadiusKm(event),
-    distanceKm: +distanceKm(HOME, event.coords[0], event.coords[1]).toFixed(1),
+    distanceKm: event.coords ? +distanceKm(HOME, event.coords[0], event.coords[1]).toFixed(1) : 0,
     when: liveNewsWhen(event, nowMs),
     replies: 0,
     repops: 0,
     likes: 0,
-    coords: event.coords,
+    coords: event.coords ?? undefined,
     // Keep provider attribution attached to the exact asset. User-created
     // NewsMediaAttachment records deliberately have none of these fields and
     // continue through the same renderer without a credit row.
     media: event.media.map(item => ({ ...item })),
-    verified: event.sources.length >= 2 ? 'verified' as const : 'confirmed' as const,
+    verified: undefined,
     liveEvent: event,
   }))
 }
@@ -385,7 +259,6 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   /** One step back through the paper's own nesting, read through a ref so the
       binding below stays stable and the Escape handler above can reach it. */
   const stepBackRef = useRef<() => boolean>(() => false)
-  const [pages, setPages] = useState(1)
   // The edition clock is the real clock, ticking, in AM/PM.
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
@@ -402,9 +275,6 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   const [dropped, setDropped] = useState<NewsMessage[]>(() => readNewsMessages())
   useEffect(() => onNewsMessages(setDropped), [])
   const liveNews = useLiveNews()
-  const [exhausted, setExhausted] = useState(false)
-  /** Bumped by a refresh: the presses set a genuinely new edition. */
-  const [edition, setEdition] = useState(0)
   /** Briefly announces how many stories the last pull brought in. */
   const [freshCount, setFreshCount] = useState(0)
   // Newsprint by day, an evening edition after dark — same daylight model the
@@ -426,31 +296,8 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   const pullHead = useRef<HTMLDivElement>(null)
 
   const entries = useMemo(() => {
-    // The same canonical live events shown on the map lead the world edition.
-    // Your own map drops follow them, then the local synthetic community pages
-    // remain as an offline fallback while the production wire is unavailable.
-    const all: Entry[] = liveEntries(liveNews.events, now.getTime())
-    all.push(...myEntries(dropped, now.getTime()))
-    for (let p = 0; p < pages; p += 1) all.push(...buildPage(p, edition))
-    return all
-  }, [pages, dropped, now, edition, liveNews.events])
-
-  // Keep setting type while the presses have something in reach.
-  const loadMore = useCallback(() => {
-    setPages(p => {
-      const next = buildPage(p, edition)
-      if (next.length === 0) { setExhausted(true); return p }
-      return p + 1
-    })
-  }, [edition])
-
-  useEffect(() => {
-    const node = sentinel.current
-    if (!node || exhausted) return
-    const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) loadMore() }, { rootMargin: '400px' })
-    io.observe(node)
-    return () => io.disconnect()
-  }, [loadMore, exhausted, entries.length])
+    return [...liveEntries(liveNews.events, now.getTime()), ...myEntries(dropped, now.getTime())]
+  }, [dropped, now, liveNews.events])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -516,7 +363,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   }
 
   const focusLiveEventOnMap = (entry: Entry) => {
-    if (!entry.liveEvent) return
+    if (!entry.liveEvent?.coords) return
     playCubeNavigationPop()
     window.dispatchEvent(new CustomEvent('poplur-news-focus-map', {
       detail: { id: entry.liveEvent.id, title: entry.liveEvent.title, coords: entry.liveEvent.coords },
@@ -676,20 +523,10 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   const lead = filtering ? undefined : shown[0]
   const rest = filtering ? shown : shown.slice(1)
 
-  // Pull down for a new edition. Everything the paper prints is derived from
-  // `pages`, `dropped` and `now`, so a refresh is: take whatever the map has
-  // dropped since, throw away the pages already set, and re-stamp the edition
-  // clock. The masthead date and time change under your finger, which is the
-  // proof that it actually reprinted.
+  // Refresh the source wire and locally posted messages together.
   const refresh = useCallback(() => {
     setDropped(readNewsMessages())
-    setPages(1)
-    setExhausted(false)
     setNow(new Date())
-    // A new edition: fresh stories lead the paper, the way a timeline fills in
-    // above what you were reading. Simulated until the live wire lands — the
-    // banner says "new", not "live", so it never overstates itself.
-    setEdition(e => e + 1)
     void liveNews.refresh().then(next => {
       setFreshCount(next.events.length)
       window.setTimeout(() => setFreshCount(0), 4200)
@@ -740,7 +577,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
         </div>
         <div ref={pullInner}>
         {freshCount > 0 && (
-          <p className={styles.freshBanner}>{freshCount} new posts</p>
+          <p className={styles.freshBanner}>{freshCount} stories available</p>
         )}
 
         <header className={styles.masthead}>
@@ -761,7 +598,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
             <span>{liveNews.loading ? 'UPDATING WIRE' : liveNews.source === 'preview' ? 'LIVE WIRE PREVIEW' : liveNews.stale ? 'SAVED EDITION' : 'LIVE WORLD WIRE'}</span>
             <b>{liveNews.loading
               ? 'Checking trusted sources…'
-              : liveNews.error ?? `${liveNews.events.length} geolocated ${liveNews.events.length === 1 ? 'story' : 'stories'} shared with the map`}</b>
+              : liveNews.error ?? `${liveNews.events.length} ${liveNews.events.length === 1 ? 'story' : 'stories'} from original reporting`}</b>
             {/* `liveNews.error` is now always a sentence written for a reader.
                 It used to carry error.message straight from the failed fetch,
                 so the paper printed the browser's own words — "Failed to
@@ -804,8 +641,8 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
               </figure>
             )}
             <div className={styles.byline}>
-              By {lead.who} · {lead.liveEvent ? `${lead.liveEvent.sources.length} confirmed sources` : `${lead.radiusKm} km radius`}
-              {' · '}{lead.distanceKm} km away · {lead.when === 'now' ? 'just now' : `${lead.when} ago`}
+              By {lead.who} · {lead.liveEvent ? `${lead.liveEvent.sources.length} linked sources` : `${lead.radiusKm} km radius`}
+              {' · '}{lead.liveEvent && !lead.liveEvent.coords ? 'World news' : `${lead.distanceKm} km away`} · {lead.when === 'now' ? 'just now' : `${lead.when} ago`}
             </div>
           </article>
         )}
@@ -850,7 +687,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
               <div className={styles.entryBody}>
                 <div className={styles.entryTop}>
                   <span className={styles.who}>{entry.who}</span>
-                  <span className={styles.handle}>{entry.handle}</span>
+                  {!entry.liveEvent && <span className={styles.handle}>{entry.handle}</span>}
                   {entry.verified && <VerifyBadge tier={entry.verified} />}
                   <span className={styles.dot}>·</span>
                   <span className={styles.when}>{entry.when}</span>
@@ -901,7 +738,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                 )}
                 <div className={styles.reach}>
                   <span className={styles.reachPip} aria-hidden="true" />
-                  {entry.radiusKm} km radius · {entry.distanceKm} km from you
+                  {entry.liveEvent && !entry.liveEvent.coords ? 'World news · Read the original reporting' : `${entry.radiusKm} km radius · ${entry.distanceKm} km from you`}
                 </div>
                 <div className={styles.actions}>
                   <button
@@ -953,9 +790,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
         </div>
 
         <div ref={sentinel} className={styles.sentinel}>
-          {exhausted
-            ? <span className={styles.endMark}>— NOTHING FURTHER REACHES YOU —</span>
-            : <span className={styles.setting}>setting more type…</span>}
+          <span className={styles.endMark}>{liveNews.loading ? 'UPDATING NEWS…' : '— YOU’RE CAUGHT UP · PULL DOWN TO REFRESH —'}</span>
         </div>
         </div>
       </div>
@@ -994,6 +829,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                 </button>
               )}
 
+              <h2>{detail.headline}</h2>
               <p className={styles.detailBody}>{detail.body}</p>
               {detail.media?.length ? <EntryMedia media={detail.media} large active /> : null}
               <p className={styles.detailWhen}>{detail.when === 'now' ? 'just now' : `${detail.when} ago`}</p>
@@ -1019,11 +855,11 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                 </div>
                 <div>
                   <dt>FROM YOU</dt>
-                  <dd>{detail.distanceKm} km</dd>
+                  <dd>{detail.liveEvent && !detail.liveEvent.coords ? 'Location unavailable' : `${detail.distanceKm} km`}</dd>
                 </div>
                 <div>
-                  <dt>{detail.liveEvent ? 'CONFIDENCE' : 'POSTED AT'}</dt>
-                  <dd className={styles.detailCoords}>{detail.liveEvent ? `${Math.round(detail.liveEvent.confidence * 100)}% source match` : 'Approximate map area'}</dd>
+                  <dt>{detail.liveEvent ? 'REPORTING' : 'POSTED AT'}</dt>
+                  <dd className={styles.detailCoords}>{detail.liveEvent ? `${detail.liveEvent.sources.length} linked source(s)` : 'Approximate map area'}</dd>
                 </div>
               </dl>
 
@@ -1034,7 +870,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                 </figure>
               ) : (
                 <p className={styles.detailNoPlate}>
-                  The map plate needs a Mapbox token in this build.
+                  No map location is available for this story.
                 </p>
               )}
 
@@ -1044,7 +880,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                 <span>♥ {detail.likes + (liked.has(detail.id) ? 1 : 0)}</span>
               </div>
 
-              {detail.liveEvent && (
+              {detail.liveEvent?.coords && (
                 <button
                   className={styles.detailMap}
                   onClick={() => focusLiveEventOnMap(detail)}

@@ -34,7 +34,7 @@ export interface LiveNewsEvent {
   status: LiveNewsStatus
   place: string
   country?: string
-  coords: [number, number]
+  coords: [number, number] | null
   scope: LiveNewsScope
   category: string
   publishedAt: string
@@ -231,7 +231,7 @@ function eventField(value: unknown, nowMs: number): LiveNewsEvent | null {
     ? record.media.map(mediaField).filter((item): item is LiveNewsMedia => Boolean(item)).slice(0, 4)
     : []
 
-  if (!id || !title || !summary || !place || !coords || !status || !scope || !publishedAt || !updatedAt) return null
+  if (!id || !title || !summary || !place || (record.coords !== null && !coords) || !status || !scope || !publishedAt || !updatedAt) return null
   if (!Number.isFinite(confidence) || confidence < 0.5 || confidence > 1) return null
   if (sources.length === 0) return null
   const age = nowMs - Date.parse(updatedAt)
@@ -320,11 +320,12 @@ export function tourEligibleLiveNewsEvents(events: LiveNewsEvent[], nowMs = Date
   return rankLiveNewsEvents(events, nowMs).filter(event => {
     const ageMs = nowMs - Date.parse(event.updatedAt)
     const corroborated = event.sources.length >= 2 || event.confidence >= 0.9
-    return event.confidence >= 0.72 && corroborated && ageMs >= 0 && ageMs <= 72 * 60 * 60_000
+    return event.coords !== null && event.confidence >= 0.72 && corroborated && ageMs >= 0 && ageMs <= 72 * 60 * 60_000
   }).slice(0, 12)
 }
 
 export function liveNewsCameraFrame(event: LiveNewsEvent) {
+  if (!event.coords) throw new Error('This story has no verified map location.')
   const zoom = event.scope === 'local' ? 12.2
     : event.scope === 'regional' ? 9.2
       : event.scope === 'national' ? 5.7

@@ -39,6 +39,13 @@ function event(overrides: Partial<LiveNewsEvent> = {}): LiveNewsEvent {
 }
 
 describe('shared live news wire', () => {
+  it('accepts real reporting without coordinates but never tours an unknown location', () => {
+    const story = event({ coords: null, scope: 'global', place: 'World news' })
+    expect(parseLiveNewsPayload([story], NOW)).toHaveLength(1)
+    expect(tourEligibleLiveNewsEvents([story], NOW)).toEqual([])
+    expect(() => liveNewsCameraFrame(story)).toThrow('no verified map location')
+  })
+
   it('accepts sourced current records and de-duplicates canonical ids', () => {
     const older = event({ updatedAt: '2026-08-26T15:40:00.000Z', title: 'Older title' })
     const newer = event({ updatedAt: '2026-08-26T15:55:00.000Z', title: 'Latest title' })
