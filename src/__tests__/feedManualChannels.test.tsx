@@ -11,7 +11,7 @@ vi.mock('../nativeFeedPosts', () => ({
   requestNativeFeedPosts: vi.fn(),
 }))
 vi.mock('../feedPostComments', () => ({ useFeedPostComments: () => [] }))
-vi.mock('../feedEngagements', () => ({ recordPostEngagement: vi.fn(), recordVisiblePostView: vi.fn(() => () => {}) }))
+vi.mock('../feedEngagements', () => ({ recordPostEngagement: vi.fn(), recordVisiblePostView: vi.fn(async () => undefined) }))
 vi.mock('firebase/firestore', async original => ({
   ...await original<typeof import('firebase/firestore')>(),
   onSnapshot: vi.fn(() => () => {}),
@@ -37,6 +37,8 @@ function arrow(label: string) {
 
 beforeEach(async () => {
   vi.useFakeTimers()
+  // happy-dom omits the constructor constants that browsers expose.
+  Object.assign(HTMLMediaElement, { HAVE_NOTHING: 0, HAVE_CURRENT_DATA: 2, NETWORK_EMPTY: 0 })
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   store.posts = [{ id: 'only-food-post', channelId: 'food', username: '@fixture', mediaURL: 'https://example.invalid/food.webp', mediaType: 'photo',
     radiusMeters: 6_371_000, createdAtMillis: Date.now(), locationVisibility: 'approximate', originLatitude: 43.6487, originLongitude: -79.3811 }]
@@ -73,5 +75,49 @@ describe('manual Feed tuning with one populated channel', () => {
     })
     expect(channel()).toBe(6)
     expect(host.textContent).toContain('No posts in this channel')
+  })
+})
+
+// Use the real Feed component so a play promise cannot silently consume its
+// decoder recovery budget before the first timeupdate arrives.
+describe('Feed startup and interruption recovery', () => {
+  async function mountVideo() {
+    await act(async () => {
+      store.posts = [{ ...store.posts[0], id: 'fixture-video', mediaType: 'video',
+        mediaURL: 'https://example.invalid/clip.mp4', posterURL: 'https://example.invalid/poster.jpg' }]
+      store.listeners.forEach(listener => listener())
+    })
+    return host.querySelector<HTMLVideoElement>('video[data-feed-media]')!
+  }
+  it('keeps an interrupted play request on its original source', async () => {
+    vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValue(new DOMException('new load', 'AbortError'))
+    const video = await mountVideo()
+    expect(video).not.toBeNull()
+    await act(async () => { video.dispatchEvent(new Event('waiting')); await Promise.resolve() })
+    expect(host.querySelector('video[data-feed-media]')).toBe(video)
+    expect(host.textContent).not.toContain('Video couldn’t start')
+  })
+  it('does not reload a healthy late first frame', async () => {
+    const video = await mountVideo()
+    const loads = vi.mocked(HTMLMediaElement.prototype.load)
+    loads.mockClear()
+    await act(async () => vi.advanceTimersByTime(5_500))
+    expect(loads).not.toHaveBeenCalled()
+    Object.defineProperties(video, { paused: { configurable: true, value: false }, readyState: { configurable: true, value: 4 }, currentTime: { configurable: true, value: 0.01 } })
+    await act(async () => video.dispatchEvent(new Event('playing')))
+    await act(async () => vi.advanceTimersByTime(1_000))
+    expect(loads).not.toHaveBeenCalled()
+    expect(host.querySelector('video[data-feed-media]')).toBe(video)
+  })
+  it('resumes an unexpected foreground pause but not a covered Feed', async () => {
+    const video = await mountVideo()
+    const play = vi.mocked(HTMLMediaElement.prototype.play); play.mockClear()
+    await act(async () => video.dispatchEvent(new Event('pause')))
+    await act(async () => vi.advanceTimersByTime(200))
+    expect(play).toHaveBeenCalled()
+    await act(async () => root.render(<FeedTwin index={0} frontMost={false} />))
+    play.mockClear()
+    await act(async () => vi.advanceTimersByTime(10_000))
+    expect(play).not.toHaveBeenCalled()
   })
 })

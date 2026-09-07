@@ -230,13 +230,6 @@ function StationController3D({ enabled, state }: { enabled: boolean; state: FpsS
       onLostPointerCapture={event => releasePointer(event.pointerId)}
       onContextMenu={event => event.preventDefault()}
     >
-      <img
-        className={styles.controllerPoster}
-        src="games/poplurstation/controller-poster-v2.png"
-        alt=""
-        draggable={false}
-        aria-hidden="true"
-      />
       <StationControllerModel className={styles.controllerModel} />
     </div>
   )

@@ -99,6 +99,7 @@ import { VERIFIED_CHECK_LABEL, VERIFIED_CHECK_SRC, verifiedCheckKind, type Verif
 import { businessDirectorySnapshot, subscribeBusinessDirectory } from './businessDirectory'
 import { shouldUseMiles } from './units'
 import PoplurDialog from './PoplurDialog'
+import PostDeleteDialog from './PostDeleteDialog'
 import { blockUser, reportUser } from './blockedUsers'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
@@ -3073,20 +3074,11 @@ export default function ProfileTwin({
             </div>
           )}
 
-          {/* The house dialog, the one the map's post picker and the Block
-              prompt already wear. This asked the same question in a plain
-              dark box with two flat buttons — the only surface in the app
-              still doing that (user-ordered 6 Sep). Delete leads, because it
-              is the answer being asked for; keeping the post is the way out
-              and is also what the scrim and the cube already do. */}
+          {/* Viewport-centered confirmation stays above the viewer rails. */}
           {deletePromptPost && !deletePending && (
-            <PoplurDialog
-              eyebrow="Poplur"
-              title="Delete this post?"
-              subtitle="It will be removed from your profile. This cannot be undone."
-              primaryAction={{ label: 'Delete', onActivate: () => { playPop(); confirmViewerDelete() } }}
-              secondaryAction={{ label: 'Keep it', onActivate: () => { playPop(); setDeletePromptPost(null) } }}
-              onClose={() => { playPop(); setDeletePromptPost(null) }}
+            <PostDeleteDialog
+              onDelete={() => { playPop(); confirmViewerDelete() }}
+              onCancel={() => { playPop(); setDeletePromptPost(null) }}
               dataId={`delete:${deletePromptPost.id ?? 'post'}`}
             />
           )}

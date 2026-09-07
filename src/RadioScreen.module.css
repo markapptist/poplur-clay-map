@@ -967,3 +967,15 @@
 @media (prefers-reduced-motion: reduce) {
   .bootShadow, .bootGlass, .lcdWaveOn i { animation: none; }
 }
+
+.bootArtwork {
+  object-fit: contain;
+  animation: radioArtworkIn 2.1s ease-out 1 both;
+}
+@keyframes radioArtworkIn {
+  0% { opacity: 0; transform: translateY(8px) rotate(-10deg) scale(.8); }
+  28% { opacity: 1; transform: translateY(-4px) rotate(6deg) scale(1.03); }
+  65% { transform: translateY(2px) rotate(-3deg); }
+  100% { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .bootArtwork { animation: none; } }
