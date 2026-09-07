@@ -7116,7 +7116,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       center: landmarkFrame?.center ?? [center[0], center[1]],
       pitch: landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH,
       bearing: landmarkFrame?.bearing ?? live.getBearing(),
-      offset: landmarkFrame?.offset,
+      // An explicit undefined overrides Mapbox's default and throws before
+      // the flight starts for posts/current location (which have no frame).
+      offset: landmarkFrame?.offset ?? [0, 0],
       zoom,
       padding: pad,
       duration: 900,
