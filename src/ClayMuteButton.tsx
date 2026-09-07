@@ -1,4 +1,7 @@
 import React, { useEffect, useRef } from 'react'
+import { usesShared2DUI } from './sharedRenderingPolicy'
+import bakedControls from './sharedClayControls.json'
+import './sharedClayControls.css'
 import * as THREE from 'three'
 import { qualityPixelRatio } from './frameGovernor'
 import { acquireClayRenderer, blitClayScene, releaseClayRenderer } from './clayButtonRenderer'
@@ -44,6 +47,7 @@ export default function ClayMuteButton({
   size?: number
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const shared2D = usesShared2DUI()
   const mutedRef = useRef(muted)
   mutedRef.current = muted
   const pulse = useRef(0)
@@ -52,6 +56,7 @@ export default function ClayMuteButton({
   const kickRef = useRef<() => void>(() => {})
 
   useEffect(() => {
+    if (shared2D) return
     const canvas = canvasRef.current!
     // A ~40px clay icon used to be its own GL context and framebuffer — one
     // more context created and compiled on every feed/camera visit. It now
@@ -171,24 +176,25 @@ export default function ClayMuteButton({
       mat.dispose()
       releaseClayRenderer(onContextLost)
     }
-  }, [size])
+  }, [size, shared2D])
 
   // Muted toggled: redraw one frame so the waves↔slash swap shows immediately.
   useEffect(() => { kickRef.current() }, [muted])
 
   return (
-    <div style={{ position: 'relative', width: size, height: size, pointerEvents: 'auto' }}>
-      <canvas
+    <div className={shared2D ? 'poplur-baked-control' : undefined} style={{ position: 'relative', width: size, height: size, pointerEvents: 'auto' }}>
+      {shared2D ? <img src={(bakedControls as Record<string, string>)[`mute|${muted}|clay`]} alt="" draggable={false} /> : <canvas
         ref={canvasRef}
         width={size}
         height={size}
         style={{ width: size, height: size, display: 'block', pointerEvents: 'none' }}
-      />
+      />}
       <button
         type="button"
         aria-label={muted ? 'Unmute sound' : 'Mute sound'}
         aria-pressed={muted}
-        onPointerDown={() => { pulse.current = 1; kickRef.current(); onToggle() }}
+        onPointerDown={event => { if (event.isPrimary && event.button === 0) { pulse.current = 1; kickRef.current(); onToggle() } }}
+        onClick={event => { if (event.detail === 0) onToggle() }}
         style={{ position: 'absolute', inset: 0, background: 'transparent', border: 0, cursor: 'pointer', padding: 0 }}
       />
     </div>

@@ -1,0 +1,9 @@
+.poplur-sprite-shutter {
+  position: absolute;
+  top: 39%; left: 29%; width: 18px; height: 8px;
+  border-radius: 2px; background: #effcff;
+  box-shadow: 0 0 15px 5px #e8fbff;
+  opacity: 0; pointer-events: none;
+  animation: poplur-sprite-shutter 180ms ease-out 1;
+}
+@keyframes poplur-sprite-shutter { 0%, 30% { opacity: 1; } 100% { opacity: 0; } }

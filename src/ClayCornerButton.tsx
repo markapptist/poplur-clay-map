@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { qualityPixelRatio } from './frameGovernor'
 import { acquireClayRenderer, blitClayScene, releaseClayRenderer } from './clayButtonRenderer'
+import { usesShared2DUI } from './sharedRenderingPolicy'
+import bakedControls from './sharedClayControls.json'
+import './sharedClayControls.css'
 
 // Clay 3D corner controls for the camera (flash + switch-camera): the same
 // extruded-clay recipe as ClayChannelArrows / ClayMuteButton — matte pink
@@ -152,6 +155,7 @@ export default function ClayCornerButton({
   prism?: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const shared2D = usesShared2DUI()
   const activeRef = useRef(active)
   activeRef.current = active
   const pulse = useRef(0)
@@ -173,7 +177,7 @@ export default function ClayCornerButton({
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (prism || !canvas) return
+    if (shared2D || prism || !canvas) return
     // This component is instantiated ~26 times across the app, and every
     // instance used to be its own GL context — so a feed or camera visit
     // created and shader-compiled several contexts on every lap, which the
@@ -471,7 +475,7 @@ export default function ClayCornerButton({
       creamMat.dispose()
       releaseClayRenderer(onContextLost)
     }
-  }, [prism, size, kind, tone, still])
+  }, [shared2D, prism, size, kind, tone, still])
 
   // A parked renderer still has to repaint when flash/heart state changes.
   // This is one finite frame, not a permanent animation loop.
@@ -527,7 +531,7 @@ export default function ClayCornerButton({
   }
 
   return (
-    <div style={{ position: 'relative', width: size, height: size, pointerEvents: 'auto' }}>
+    <div className={shared2D ? 'poplur-baked-control' : undefined} style={{ position: 'relative', width: size, height: size, pointerEvents: 'auto' }}>
       {flat && (
         <span
           aria-hidden="true"
@@ -547,7 +551,7 @@ export default function ClayCornerButton({
           {FLAT_GLYPH[kind] ?? '●'}
         </span>
       )}
-      <canvas
+      {shared2D ? <img src={(bakedControls as Record<string, string>)[`${kind}|${active}|${tone}`]} alt="" draggable={false} /> : <canvas
         ref={canvasRef}
         width={size}
         height={size}
@@ -560,7 +564,7 @@ export default function ClayCornerButton({
             ? 'drop-shadow(0 3px 0 rgba(150,108,130,.45)) drop-shadow(0 7px 10px rgba(60,20,44,.35))'
             : undefined,
         }}
-      />
+      />}
       <button
         type="button"
         aria-label={label}
