@@ -498,7 +498,18 @@ export default function Camera({
   // edit/preview screen. A web/Android broadcast may keep ownership of its
   // explicit MediaStream, but the native sensor always follows real surface
   // visibility and the OS thermal tripwire.
-  const liveSurfaceVisible = surfaceVisible && page === 'live' && !composing && !reviewMedia
+  // NOT gated on the capture review. This term was here to stop the lens
+  // running under a full-bleed review, but the review is a transparent panel
+  // now — it keeps the capture visible behind its controls — so hiding the
+  // live surface fought the design it was meant to serve.
+  //
+  // It could also strand the camera. This value is captureRequested, which
+  // grants the capture lease, which is what the web reports to the shell as
+  // cameraLiveVisibilityChanged — and the native side will not activate the
+  // lens at all unless it hears that (isCameraTab needs it). So any state
+  // that left reviewMedia set showed a black viewfinder with the HUD drawn
+  // over it, and nothing on screen said why.
+  const liveSurfaceVisible = surfaceVisible && page === 'live' && !composing
 
   // AR is scoped to one visit to the live viewfinder. Camera Roll, the post
   // composer, the hold menu, and another tab are all real exits: returning
