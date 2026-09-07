@@ -82,7 +82,7 @@ describe('shared sprite navigator', () => {
     act(() => document.dispatchEvent(new Event('visibilitychange')))
     expect(vi.getTimerCount()).toBe(0)
     expect(postNativeEvent).toHaveBeenLastCalledWith({ type: 'navigatorMotionDemandChanged', active: false, aiming: false })
-    delete (document as Partial<Document>).hidden
+    Reflect.deleteProperty(document, 'hidden')
   })
 
   it.each([1, -1])('responds to pitch with native sign %s', sign => {
