@@ -2,7 +2,7 @@ import { normalizeViewerFix } from './viewerFix'
 import ShellOverlayPortal from './ShellOverlayPortal'
 import { installCloseMapTimeout } from './closeMapTimeout'
 import { createMapCameraSettle } from './mapCameraSettle'
-import { minimumWorldZoom, needsFlatWorldViewport, WORLD_VIEWPORT_ZOOM, ZERO_MAP_PADDING } from './mapWorldViewport'
+import { minimumWorldZoom, normalizeWorldViewport, WORLD_VIEWPORT_ZOOM } from './mapWorldViewport'
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import mapboxgl, { type PointLike } from 'mapbox-gl'
 import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
@@ -2885,17 +2885,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     }
     const mapCanvas = map.getCanvas()
     // Mapbox constrains the flat Mercator sheet correctly, but inherited
-    // padding/pitch/rotation exposes its edge. Normalize before the next draw,
-    // including a pinch/slider move, not only after a flight has ended.
-    const constrainWorldViewport = () => {
-      if (map.getProjection().name !== 'mercator') return
-      if (needsFlatWorldViewport({ zoom: map.getZoom(), pitch: map.getPitch(),
-        bearing: map.getBearing(), padding: map.getPadding() })) {
-        map.setMinPitch(0)
-        map.jumpTo({ pitch: 0, bearing: 0, padding: ZERO_MAP_PADDING })
-      }
-    }
+    // padding/pitch/rotation exposes its edge. Normalize direct moves while
+    // allowing owned flights to finish; jumpTo during easeTo cancels zoom-in.
+    const constrainWorldViewport = () => { normalizeWorldViewport(map) }
     map.on('move', constrainWorldViewport)
+    map.on('moveend', constrainWorldViewport)
     map.on('resize', () => {
       if (map.getProjection().name !== 'mercator') return
       map.setMinZoom(minimumWorldZoom(map.getContainer().clientHeight, MAP_MIN_ZOOM))
