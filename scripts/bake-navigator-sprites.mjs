@@ -65,7 +65,8 @@ try {
   models.push('games/poplurstation/console.glb', 'games/poplurstation/controller.glb')
   models.push(...['inverted', 'lens', 'split_diamond', 'swoosh'].map(name => `subscreens/store-models/poplur_card_${name}.glb`))
   const swaying = new Set(['clay_tv.glb', 'poplur_mark_head_navigator.glb', 'poplur_female_head_navigator.glb',
-    'poplur_camera_kodak.glb', 'poplur_cube_camcorder.glb', 'poplur_clay_phone_lite.glb', 'poplur-globe-lite.glb'])
+    'poplur_camera_kodak.glb', 'poplur_cube_camcorder.glb', 'poplur_clay_phone_lite.glb', 'poplur-globe-lite.glb',
+    'poplur_cube_v4.glb', 'poplur_cube_home.glb', 'poplur_cube_mailbox.glb'])
   const requested = process.argv.slice(3)
   const manifest = requested.length ? JSON.parse(readFileSync(join(root, 'src/navigatorSprites.json'), 'utf8')) : {}
   mkdirSync(output, { recursive: true })

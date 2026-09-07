@@ -13,9 +13,9 @@ Feed/Profile experiment is parked on `trial/native-shell-2026-09-07`.
 - Shared layout preview: `http://127.0.0.1:5173/?view=profile` or `?view=feed`.
 - Previous renderer comparison: append `&uiRenderer=legacy` to either URL. This
   is an explicit per-URL choice; it does not change account preferences.
-- **Do not install this trial on any phone or tablet until the user reviews it
-  in the browser and authorizes the device trial.** Source bundle preparation
-  and source pushes do not constitute approval to install.
+- Browser review is complete. The user authorized the iPhone Feed trial, then
+  requested the corrected build on Android too. Other device installs remain
+  outside this trial.
 - Expo projects are excluded from every build, sync and installation.
 
 ## Rendering changes
@@ -24,8 +24,11 @@ The DOM/CSS screens, typography, assets, data and screen actions stay shared.
 The bundled navigator uses views baked from the existing GLBs with their actual
 lighting, camera and fitted geometry. Core navigators have multiple yaw/pitch
 views; simpler objects have a front view. Motion selects an image only when the
-view changes, with a three-second sensor lease after a gesture. There is no
-navigator render loop. Camera flash and die rolls are finite 2D effects. Reward
+view changes. Visible navigators renew the native sensor lease every two
+seconds; hiding the page or backgrounding the app releases it immediately.
+The native six-second expiry still protects against a frozen WebView. Pose
+selection is capped at 12.5 Hz with boundary hysteresis and no navigator
+render loop. Pitch calibrates to the current hold on both native platforms. Camera flash and die rolls are finite 2D effects. Reward
 faces, camera shutter, vertical paging, horizontal navigation, hold menus and
 incoming-call double taps retain their action contracts.
 
@@ -79,3 +82,25 @@ renderer counts and the automated gate cannot prove the overheating is fixed.
 After browser approval, the next proof is an unplugged physical-device session
 longer than the reported ten-minute failure point, including active Feed, Map,
 Camera and Profile use, with thermal/CPU/GPU/memory telemetry.
+
+## Feed controls follow-up
+
+The first installed iPhone trial exposed two regressions: manual Feed tuning
+skipped or immediately left empty channels, and the sprite navigator stopped
+accepting motion three seconds after a touch. Manual D-pad/dial choices now
+stay selected, including empty channels and across feed/location refreshes.
+Initial discovery may still choose a populated channel until the user tunes.
+The visible sprite navigator responds without requiring a touch and resumes
+after foregrounding. The default cube, house, and mailbox also have baked
+yaw/pitch views. No WebGL renderer was added.
+
+Verification: 58 focused tests across 11 suites pass, including sustained tilt,
+both native pitch signs, background sensor cleanup, stationary-image behavior,
+manual empty-channel selection, media lifecycle and existing thermal policies.
+TypeScript and the governed-loop check pass. The existing browser verified
+D-pad Modelling → Fashion and dial → Tech, with Tech staying selected.
+
+The initial iPhone recording was stopped when the controls failed; it is not
+a completed heat test. Corrected release evidence is in the parent workspace
+`.codex/install-reports/shared-ui-controls-20260907/`. A physical endurance
+result must be recorded separately after these controls are usable.

@@ -2187,6 +2187,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const feedEntryVisitRef = useRef(0)
   const autoTunedFeedChannelRef = useRef<number | null>(null)
   const skipNextFeedAutoTuneRef = useRef(false)
+  const changeFeedChannel = useCallback((index: number) => {
+    // A D-pad/dial/content progression owns the selection from now on. A
+    // later feed snapshot must not retune it, even after returning to the
+    // same index that automatic discovery originally picked.
+    autoTunedFeedChannelRef.current = null
+    setChanIndex(index)
+  }, [])
   const interceptingFeedPosts = useSyncExternalStore(
     onNativeFeedPosts,
     nativeFeedPostsSnapshot,
@@ -2238,7 +2245,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     setChanIndex(current => {
       if (autoTunedFeedChannelRef.current !== current) return current
       const next = nextInterceptingChannelIndex(CHANNELS, reaching, current, visit)
-      autoTunedFeedChannelRef.current = next
+      autoTunedFeedChannelRef.current = null
       return next
     })
   }, [activeTab, interceptingFeedPosts, liveSimulationForTune])
@@ -5820,7 +5827,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         {mainSurfaceVisible && committedTab === 'feed' && (
           <FeedTwin
             index={chanIndex}
-            onIndexChange={setChanIndex}
+            onIndexChange={changeFeedChannel}
             onPostReach={onFeedPostReach}
             onContentAdvance={reportFeedContentAdvance}
             focusedContent={feedFocusedContent}

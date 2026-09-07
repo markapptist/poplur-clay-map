@@ -4,10 +4,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SpriteNavigator, { nearestNavigatorFrame } from '../SpriteNavigator'
 import type { CubeTab3DProps } from '../CubeTab3D'
+import { postNativeEvent } from '../nativeBridge'
 
 vi.mock('../pop', () => ({ preloadPop: vi.fn(), primePopAudio: vi.fn() }))
 vi.mock('../motionEffectsAudio', () => ({ primeMotionAudio: vi.fn() }))
-vi.mock('../nativeBridge', () => ({ isNativeShell: () => false, postNativeEvent: vi.fn() }))
+vi.mock('../nativeBridge', () => ({ isNativeShell: () => true, postNativeEvent: vi.fn() }))
 
 let root: Root
 let host: HTMLDivElement
@@ -15,6 +16,9 @@ let callbacks: CubeTab3DProps
 
 beforeEach(async () => {
   vi.useFakeTimers()
+  vi.spyOn(performance, 'now').mockImplementation(() => Date.now())
+  vi.clearAllMocks()
+  delete window.__poplurNativeAppActive
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   vi.spyOn(HTMLImageElement.prototype, 'decode').mockResolvedValue(undefined)
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 200, 200))
@@ -35,6 +39,61 @@ function pointer(type: string, x: number, y: number) {
 }
 
 describe('shared sprite navigator', () => {
+  it('responds to tilt without a touch and keeps responding after the old three-second cutoff', () => {
+    const tilt = (roll: number) => act(() => window.dispatchEvent(new CustomEvent('poplur-native-motion', { detail: { roll, pitch: 1 } })))
+    tilt(0.25)
+    expect(host.querySelector('img')?.getAttribute('src')).toContain('y24_p0')
+    act(() => vi.advanceTimersByTime(10_000))
+    tilt(-0.25)
+    expect(host.querySelector('img')?.getAttribute('src')).toContain('y-24_p0')
+    expect(postNativeEvent).toHaveBeenLastCalledWith({ type: 'navigatorMotionDemandChanged', active: true, aiming: false })
+  })
+
+  it('stops the sensor heartbeat and pose changes while native hides it, then resumes without touching', () => {
+    act(() => window.dispatchEvent(new CustomEvent('poplur-native-app-lifecycle', { detail: { active: false } })))
+    const parked = host.querySelector('img')?.getAttribute('src')
+    expect(vi.getTimerCount()).toBe(0)
+    expect(postNativeEvent).toHaveBeenLastCalledWith({ type: 'navigatorMotionDemandChanged', active: false, aiming: false })
+    act(() => {
+      vi.advanceTimersByTime(10_000)
+      window.dispatchEvent(new CustomEvent('poplur-native-motion', { detail: { roll: 0.25, pitch: 1 } }))
+    })
+    expect(host.querySelector('img')?.getAttribute('src')).toBe(parked)
+    act(() => {
+      window.dispatchEvent(new CustomEvent('poplur-native-app-lifecycle', { detail: { active: true } }))
+      window.dispatchEvent(new CustomEvent('poplur-native-motion', { detail: { roll: 0.25, pitch: 1 } }))
+    })
+    expect(host.querySelector('img')?.getAttribute('src')).toContain('y24_p0')
+    expect(vi.getTimerCount()).toBe(1)
+  })
+
+  it('parks while the document is hidden and does not repaint for a resting sensor', () => {
+    const img = host.querySelector('img')!
+    const observer = new MutationObserver(() => {})
+    observer.observe(img, { attributes: true, attributeFilter: ['src'] })
+    act(() => window.dispatchEvent(new CustomEvent('poplur-native-motion', { detail: { roll: 0, pitch: -1 } })))
+    act(() => {
+      vi.advanceTimersByTime(100)
+      window.dispatchEvent(new CustomEvent('poplur-native-motion', { detail: { roll: 0.002, pitch: -1.001 } }))
+    })
+    expect(observer.takeRecords()).toHaveLength(0)
+    observer.disconnect()
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+    act(() => document.dispatchEvent(new Event('visibilitychange')))
+    expect(vi.getTimerCount()).toBe(0)
+    expect(postNativeEvent).toHaveBeenLastCalledWith({ type: 'navigatorMotionDemandChanged', active: false, aiming: false })
+    delete (document as Partial<Document>).hidden
+  })
+
+  it.each([1, -1])('responds to pitch with native sign %s', sign => {
+    act(() => window.dispatchEvent(new CustomEvent('poplur-native-motion', { detail: { roll: 0, pitch: sign } })))
+    act(() => {
+      vi.advanceTimersByTime(100)
+      window.dispatchEvent(new CustomEvent('poplur-native-motion', { detail: { roll: 0, pitch: sign * 1.5 } }))
+    })
+    expect(host.querySelector('img')?.getAttribute('src')).toContain('y0_p16')
+  })
+
   it('renders the existing TV artwork without a canvas or WebGL call', () => {
     expect(host.querySelector('canvas')).toBeNull()
     expect(host.querySelector('img')?.getAttribute('src')).toContain('clay_tv_y0_p0.webp')

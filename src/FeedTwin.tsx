@@ -46,7 +46,6 @@ import PoplurStatusToast from './PoplurStatusToast'
 import FeedChannelRail from './FeedChannelRail'
 import ClayArrowCluster from './ClayArrowCluster'
 import { responsiveChannelControlSize } from './channelControlSizing'
-import { nextFilledChannelIndex } from './feedChannelSelection'
 import { VERIFIED_CHECK_SRC, verifiedKindForHandle, type VerifiedCheckKind } from './verifiedCheck'
 import { businessDirectorySnapshot, subscribeBusinessDirectory } from './businessDirectory'
 import { PIN_COLOR_SWATCH } from './pinColors'
@@ -69,7 +68,6 @@ import {
   recordProfileVisitAfterView,
 } from './radiusLedger'
 import { currentViewerCoords as viewerCoordsFromFix } from './viewerFix'
-import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
 import { useFeedPostComments } from './feedPostComments'
 import { mediaTimeLabel, nextRadiusPost } from './mediaTiming'
 import { blockUser, blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } from './blockedUsers'
@@ -639,9 +637,6 @@ export default function FeedTwin({
   const [, setLiveRevision] = useState(0)
   useEffect(() => onLiveStore(() => setLiveRevision(value => value + 1)), [])
   const contentIdxRef = useRef<Record<string, number>>({})
-  // Which way the person last stepped the dial, so steering past an empty
-  // channel keeps going the way they were going.
-  const lastChannelDirRef = useRef<1 | -1>(1)
   const [contentRevision, forceContentRender] = useState(0)
 
   const consumedFocusRef = useRef('')
@@ -844,17 +839,12 @@ export default function FeedTwin({
     else setOwnIndex(next)
   }, [ch, focusedContent, index, onIndexChange, publishedPosts])
 
-  // The dial is a loop: up from the highest channel lands on the first, down
-  // from the first on the highest. No dead end at either edge — and no dead
-  // channel either: a step keeps going in its direction past channels with
-  // nothing in reach, because the feed should always be showing something.
+  // Manual tuning walks the whole catalogue, including empty channels. With
+  // only one populated channel, skipping empties loops back to the same index
+  // and makes the D-pad look broken. Initial discovery belongs to Home.
   const change = useCallback((dir: 1 | -1) => {
-    lastChannelDirRef.current = dir
-    const snapshot = radiusDiscoverySnapshot()
-    const isFilled = (candidate: number) =>
-      rankedPostsFor(CHANNELS[candidate], publishedPosts, snapshot).some(post => !post.demo)
-    goToChannel(nextFilledChannelIndex(CHANNELS.length, index, dir, isFilled))
-  }, [goToChannel, index, publishedPosts])
+    goToChannel((index + dir + CHANNELS.length) % CHANNELS.length)
+  }, [goToChannel, index])
 
   const toggleMute = () => {
     const next = !muted
@@ -1049,41 +1039,9 @@ export default function FeedTwin({
       window.removeEventListener('poplur-native-profile-post-delete-result', receive)
     }
   }, [deletePending])
-  // Never sit on an empty channel — and "empty" means nothing IN REACH: a
-  // channel full of pops that cannot reach the viewer is empty to them, and
-  // demo padding does not count. Whenever the channel under the viewer has
-  // nothing, steer to the nearest one with a real pop in reach, in the
-  // direction they were last stepping (the pool, the location fix and the
-  // simulation switch all arrive after open, so this must re-run, not fire
-  // once). A Map handoff names its own channel and is left alone.
-  const liveSimulation = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
-  const [viewerFixTick, setViewerFixTick] = useState(0)
-  useEffect(() => {
-    const bump = () => setViewerFixTick(tick => tick + 1)
-    window.addEventListener('poplur-native-location', bump)
-    window.addEventListener('poplur-location', bump)
-    return () => {
-      window.removeEventListener('poplur-native-location', bump)
-      window.removeEventListener('poplur-location', bump)
-    }
-  }, [])
-  useEffect(() => {
-    void liveSimulation
-    void viewerFixTick
-    if (focusedContent || publishedPosts.length === 0) return
-    const filledInReach = (channel: Channel) =>
-      rankedPostsFor(channel, publishedPosts, discovery).some(post => !post.demo)
-    if (filledInReach(ch)) return
-    const next = nextFilledChannelIndex(
-      CHANNELS.length,
-      index,
-      lastChannelDirRef.current,
-      candidate => filledInReach(CHANNELS[candidate]),
-    )
-    if (next === index || !filledInReach(CHANNELS[next])) return
-    if (onIndexChange) onIndexChange(next)
-    else setOwnIndex(next)
-  }, [ch, discovery, focusedContent, index, liveSimulation, onIndexChange, publishedPosts, viewerFixTick])
+  // Home chooses a populated channel on arrival. Once this screen is live,
+  // an empty selection is intentional: updates to posts or location must not
+  // pull the dial back to the one populated channel.
   // Going to a channel is seeing what it holds: the badge on its tile comes
   // off on arrival, not one pop at a time. The pop actually on screen is
   // marked too, which is what clears the same pop's badge on the Map.

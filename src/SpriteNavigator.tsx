@@ -29,8 +29,9 @@ export function nearestNavigatorFrame(frames: readonly NavigatorSpriteFrame[], y
     !best || Math.hypot(frame.yaw - yaw, frame.pitch - pitch) < Math.hypot(best.yaw - yaw, best.pitch - pitch) ? frame : best, undefined)
 }
 
-/** Shared DOM navigator: pre-baked clay views, one image decode at a time,
- * no WebGL context, no animation clock and no continuously leased sensors. */
+/** Shared DOM navigator: pre-baked clay views, no WebGL or animation clock.
+ * Visible tilt is input, so its sensor lease lasts as long as the control is
+ * visible. Only a changed pose replaces the image; resting costs no paints. */
 export default function SpriteNavigator(props: CubeTab3DProps) {
   const { targetTab, size = 200, modelUrl = DEFAULT_CUBE_MODEL, renderingVisible = true } = props
   const surface = useRef<HTMLDivElement>(null)
@@ -43,8 +44,7 @@ export default function SpriteNavigator(props: CubeTab3DProps) {
   // never replace a landed reward with another face from the sprite sheet.
   const frameRef = useRef(frames)
   frameRef.current = props.diceRollFace ? frames.filter(frame => !frame.face || frame.face === props.diceRollFace) : frames
-  const motionUntil = useRef(0)
-  const motionTimer = useRef<ReturnType<typeof setTimeout>>()
+  const neutralPitch = useRef<number>()
   const centre = IMAGE_URL.test(modelUrl) || modelUrl.startsWith('data:image/') ? modelUrl :
     (props.diceRollFace && modelUrl === 'poplur_dice_lite.glb' ? frames.find(frame => frame.face === props.diceRollFace)?.src : undefined)
       ?? nearestNavigatorFrame(frames, 0, 0)?.src
@@ -87,33 +87,80 @@ export default function SpriteNavigator(props: CubeTab3DProps) {
   }, [props.prepareModelUrl])
 
   useEffect(() => {
-    if (!renderingVisible) return
+    if (!renderingVisible || !shown) return
+    let nativeActive = window.__poplurNativeAppActive !== false
+    let lastPoseAt = -Infinity
+    let lastFrame: NavigatorSpriteFrame | undefined
+    let heartbeat: ReturnType<typeof setInterval> | undefined
+    const eligible = () => !document.hidden && nativeActive
     const setPose = (yaw: number, pitch: number) => {
-      if (document.hidden || performance.now() > motionUntil.current || !Number.isFinite(yaw) || !Number.isFinite(pitch)) return
-      const next = nearestNavigatorFrame(frameRef.current, Math.max(-24, Math.min(24, yaw)), Math.max(-16, Math.min(16, pitch)))
+      if (!eligible() || !Number.isFinite(yaw) || !Number.isFinite(pitch)) return
+      const now = performance.now()
+      if (now - lastPoseAt < 80) return
+      lastPoseAt = now
+      yaw = Math.max(-24, Math.min(24, yaw))
+      pitch = Math.max(-16, Math.min(16, pitch))
+      const next = nearestNavigatorFrame(frameRef.current, yaw, pitch)
+      // A little hysteresis keeps sensor noise at a view boundary from
+      // repeatedly decoding/painting its two neighboring images.
+      if (lastFrame && next && Math.hypot(lastFrame.yaw - yaw, lastFrame.pitch - pitch)
+        < Math.hypot(next.yaw - yaw, next.pitch - pitch) + 1.5) return
       if (image.current && next && image.current.getAttribute('src') !== next.src) image.current.src = next.src
+      lastFrame = next
+    }
+    const tilt = (roll: number, pitch: number) => {
+      if (!eligible() || !Number.isFinite(roll) || !Number.isFinite(pitch)) return
+      // Both hosts send radians, but Android gravity and Core Motion use
+      // opposite pitch signs. Calibrate the comfortable hold on first input.
+      const uprightPitch = Math.abs(pitch)
+      neutralPitch.current ??= uprightPitch
+      setPose(roll * 180 / Math.PI * 1.6, (uprightPitch - neutralPitch.current) * 180 / Math.PI * 0.6)
     }
     const nativeMotion = (event: Event) => {
       const { roll, pitch } = (event as CustomEvent<{ roll?: number; pitch?: number }>).detail ?? {}
-      setPose((roll ?? 0) * 180 / Math.PI * 1.6, ((pitch ?? 0) - Math.PI / 3) * 180 / Math.PI * 0.4)
+      if (typeof roll === 'number' && typeof pitch === 'number') tilt(roll, pitch)
     }
-    const deviceMotion = (event: DeviceOrientationEvent) => setPose((event.gamma ?? 0) * 1.6, ((event.beta ?? 60) - 60) * 0.4)
+    const deviceMotion = (event: DeviceOrientationEvent) => {
+      if (event.gamma != null && event.beta != null) tilt(event.gamma * Math.PI / 180, event.beta * Math.PI / 180)
+    }
+    const report = (active: boolean) => {
+      if (isNativeShell()) postNativeEvent({ type: 'navigatorMotionDemandChanged', active, aiming: false })
+    }
     const park = () => {
-      motionUntil.current = 0
-      clearTimeout(motionTimer.current)
-      postNativeEvent({ type: 'navigatorMotionDemandChanged', active: false, aiming: false })
+      clearInterval(heartbeat); heartbeat = undefined
+      neutralPitch.current = undefined
+      report(false)
     }
-    const visibility = () => { if (document.hidden) park() }
+    const sync = () => {
+      if (!eligible()) { park(); return }
+      lastPoseAt = -Infinity
+      report(true)
+      // Renew iOS's six-second safety lease, never a rendering clock. If
+      // WebKit suspends, native still expires the lease without a final event.
+      if (isNativeShell() && !heartbeat) heartbeat = setInterval(() => {
+        if (eligible()) report(true)
+        else park()
+      }, 2_000)
+    }
+    const lifecycle = (event: Event) => {
+      const active = (event as CustomEvent<{ active?: boolean }>).detail?.active
+      if (typeof active !== 'boolean') return
+      nativeActive = active
+      sync()
+    }
     window.addEventListener('poplur-native-motion', nativeMotion)
     if (!isNativeShell()) window.addEventListener('deviceorientation', deviceMotion, { passive: true })
-    document.addEventListener('visibilitychange', visibility)
+    document.addEventListener('visibilitychange', sync)
+    window.addEventListener('poplur-native-app-lifecycle', lifecycle)
+    sync()
     return () => {
       park()
       window.removeEventListener('poplur-native-motion', nativeMotion)
       window.removeEventListener('deviceorientation', deviceMotion)
-      document.removeEventListener('visibilitychange', visibility)
+      document.removeEventListener('visibilitychange', sync)
+      window.removeEventListener('poplur-native-app-lifecycle', lifecycle)
     }
-  }, [renderingVisible])
+  }, [renderingVisible, shown])
 
   useEffect(() => {
     const node = surface.current
@@ -134,10 +181,6 @@ export default function SpriteNavigator(props: CubeTab3DProps) {
       held = false; moved = false; scrolling = false; setPressed(true)
       try { node.setPointerCapture(event.pointerId) } catch { /* synthetic event */ }
       hold = setTimeout(() => { held = true; setPressed(false); callbacks.current.onHold() }, 500)
-      motionUntil.current = performance.now() + 3000
-      clearTimeout(motionTimer.current)
-      postNativeEvent({ type: 'navigatorMotionDemandChanged', active: true, aiming: false })
-      motionTimer.current = setTimeout(() => postNativeEvent({ type: 'navigatorMotionDemandChanged', active: false, aiming: false }), 3000)
     }
     const move = (event: PointerEvent) => {
       if (!start || held) return
