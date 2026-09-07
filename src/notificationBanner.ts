@@ -44,6 +44,11 @@ const RADIUS_KINDS = new Set(['growth', 'decrease', 'pop', 'trend', 'like', 'vie
  * number the text actually states; nothing is inferred from the kind alone.
  */
 export function radiusDeltaFromText(text: string, kind: string): number | undefined {
+  const radiusChange = /Radius (grew|decreased) (\d+(?:[.,]\d+)?)\s*(km|m)\b/i.exec(text)
+  if (radiusChange) {
+    const amount = Number(radiusChange[2].replace(',', '.')) / (radiusChange[3].toLowerCase() === 'm' ? 1000 : 1)
+    return radiusChange[1].toLowerCase() === 'decreased' ? -amount : amount
+  }
   const match = /(\d+(?:[.,]\d+)?)\s*(km|m)\b/i.exec(text)
   if (!match) return undefined
   const amount = Number(match[1].replace(',', '.'))
@@ -102,9 +107,16 @@ export function showNotificationBanner(n: Notification): number {
   })
 }
 
+const deliveredBanners = new Map<string, number>()
+
 /** A native shell's foreground push, in the same row shape the inbox uses. */
 export function showNativeNotificationBanner(value: unknown, now = Date.now()): number | null {
   const row = nativeNotificationRow(value, now)
   if (!row) return null
-  return showNotificationBanner(row)
+  const delivered = deliveredBanners.get(row.key!)
+  if (delivered !== undefined) return delivered
+  const id = showNotificationBanner(row)
+  deliveredBanners.set(row.key!, id)
+  if (deliveredBanners.size > 256) deliveredBanners.delete(deliveredBanners.keys().next().value!)
+  return id
 }

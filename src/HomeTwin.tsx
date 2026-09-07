@@ -124,7 +124,8 @@ import {
 } from './nativeBridge'
 import { showPopup } from './popups'
 import { NOTIFICATION_FOCUS_PIN_EVENT, followNotification, showNativeNotificationBanner, type PinFocusRequest } from './notificationBanner'
-import { nativeNotificationRow } from './notifications'
+import { nativeNotificationRow, replaceNativeNotifications } from './notifications'
+import { startNativeNotificationInbox } from './notificationInboxBridge'
 import {
   nativeFeedPostsSnapshot,
   onNativeFeedPosts,
@@ -2380,6 +2381,23 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     window.addEventListener('poplur-post-focus-map', onFocusPost)
     return () => window.removeEventListener('poplur-post-focus-map', onFocusPost)
   }, [sendMapAction])
+
+  // Keep the inbox live across Map/Feed/Profile, even when push permission is
+  // off. Only new activity from this session produces a foreground banner.
+  useEffect(() => {
+    if (!isNativeShell()) return
+    const startedAt = Date.now()
+    return startNativeNotificationInbox(window, value => {
+      replaceNativeNotifications(value)
+      if (document.visibilityState !== 'visible' || !Array.isArray(value)) return
+      for (const item of [...value].reverse()) {
+        const row = nativeNotificationRow(item)
+        if (row?.unread && (row.createdAtMillis ?? 0) >= startedAt) {
+          showNativeNotificationBanner(item)
+        }
+      }
+    })
+  }, [])
 
   // A notification about a post — a banner tapped, or its row on the
   // Notifications screen — lands on that pin: Home closes whatever is up,

@@ -21,27 +21,47 @@ export function nativeNotificationUnreadIds(value: unknown): string[] {
   })
 }
 
-/**
- * Own the installed shell's one account-scoped notification subscription.
- * Repeated `notificationsRequested` messages are reconnect requests: every
- * shell removes its current Firestore registration before starting another.
- */
+interface InboxSubscription {
+  callbacks: Set<(value: unknown) => void>
+  listener: EventListener
+  latest?: unknown
+}
+const subscriptions = new WeakMap<NotificationInboxEventTarget, InboxSubscription>()
+
+/** Home and the inbox screen share one authenticated native listener. Closing
+ * the screen must not stop delivery of activity elsewhere in the app. */
 export function startNativeNotificationInbox(
   target: NotificationInboxEventTarget,
   onSnapshot: (notifications: unknown) => void,
 ): () => void {
-  const onResult: EventListener = event => {
-    const detail = (event as CustomEvent<Record<string, unknown>>).detail
-    if (detail?.type !== 'poplurNotifications') return
-    onSnapshot(detail.notifications)
+  let subscription = subscriptions.get(target)
+  if (!subscription) {
+    const callbacks = new Set<(value: unknown) => void>()
+    subscription = { callbacks, listener: () => {} }
+    const current = subscription
+    current.listener = event => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail
+      if (detail?.type !== 'poplurNotifications') return
+      current.latest = detail.notifications
+      current.callbacks.forEach(callback => callback(detail.notifications))
+    }
+    subscriptions.set(target, current)
+    target.addEventListener(NOTIFICATION_INBOX_RESULT_EVENT, current.listener)
+    current.callbacks.add(onSnapshot)
+    postNativeEvent({ type: 'notificationsRequested' })
+  } else {
+    subscription.callbacks.add(onSnapshot)
+    if (subscription.latest !== undefined) onSnapshot(subscription.latest)
   }
-  target.addEventListener(NOTIFICATION_INBOX_RESULT_EVENT, onResult)
-  postNativeEvent({ type: 'notificationsRequested' })
+  const current = subscription
   let stopped = false
   return () => {
     if (stopped) return
     stopped = true
-    target.removeEventListener(NOTIFICATION_INBOX_RESULT_EVENT, onResult)
+    current.callbacks.delete(onSnapshot)
+    if (current.callbacks.size) return
+    target.removeEventListener(NOTIFICATION_INBOX_RESULT_EVENT, current.listener)
+    subscriptions.delete(target)
     postNativeEvent({ type: 'notificationsStopped' })
   }
 }

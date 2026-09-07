@@ -145,6 +145,7 @@ function nativeKind(value: unknown): NotificationKind {
     case 'message': return 'message'
     case 'radiusGrowth':
     case 'growth': return 'growth'
+    case 'dislike':
     case 'radiusDip':
     case 'decrease': return 'decrease'
     case 'areaTakeover':

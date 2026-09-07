@@ -100,3 +100,15 @@ describe('showNotificationBanner', () => {
     expect(showNativeNotificationBanner('nope')).toBeNull()
   })
 })
+
+it('deduplicates the same event arriving from inbox and foreground push', () => {
+  const row = { id: 'dedup-push-inbox', title: '@person', detail: 'viewed your post', kind: 'view', postId: 'p1' }
+  showNativeNotificationBanner(row)
+  showNativeNotificationBanner(row)
+  expect(popups.show).toHaveBeenCalledTimes(1)
+})
+
+it('uses the stated radius change for likes, views and dislikes', () => {
+  expect(radiusDeltaFromText('viewed your post · Radius grew 0.5 km.', 'view')).toBe(0.5)
+  expect(radiusDeltaFromText('disliked your post · Radius decreased 1 km.', 'decrease')).toBe(-1)
+})
