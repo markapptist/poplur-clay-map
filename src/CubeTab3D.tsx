@@ -12,6 +12,7 @@ import { askForMotion } from './motionPermission'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
 import { mapGlobeSpinIsActive } from './mapThermalPolicy'
+import { ambientAllowed, onAmbientSleepChange } from './frameGovernor'
 import {
   advanceCubeMotionLease,
   cubeMotionDemandIsActive,
@@ -48,7 +49,7 @@ declare global {
         which precondition is holding it back. */
     __poplurGlobeSpin?: {
       spinning: boolean
-      gate: 'spinning' | 'hidden' | 'display-off' | 'chrome-idle' | 'spin-complete' | 'not-map-tab' | 'not-globe' | 'parked'
+      gate: 'spinning' | 'hidden' | 'display-off' | 'chrome-idle' | 'ambient-budget' | 'spin-complete' | 'not-map-tab' | 'not-globe' | 'parked'
       at: number
     }
     __poplurDisplayRAF?: (callback: FrameRequestCallback) => number
@@ -1011,9 +1012,14 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       // Mapbox; model arrival and genuine interactions extend globeSpinUntil.
       && window.__poplurChromeIdle !== true
       && isMapGlobe()
+    // Only autonomous turning spends the shared native decoration budget.
+    // Direct dragging, handset aiming, tab transitions and reward rolls keep
+    // their own demand-driven paths below, including on a warm phone.
+    const decorativeTurnAllowed = () => !isNativeShell() || ambientAllowed()
     const discoBallIsVisible = () =>
       rendererEligible()
       && window.__poplurChromeIdle !== true
+      && decorativeTurnAllowed()
       && loadedUrlRef.current === DISCO_BALL_MODEL
     const armGlobeSpin = (durationMs: number) => {
       if (!mapGlobeIsVisible()) return
@@ -1770,12 +1776,10 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
         needsRender = true
       }
 
-      // The globe keeps its character through an eight-second arrival turn and
-      // short interaction tails, then remains visibly planted and renders only
-      // when something actually changes. This removes a permanent 20 Hz WebGL
-      // owner from the same screen as the 3D map without changing the model.
+      // The authored turn also obeys the native decoration budget. Repeated
+      // wrist motion must not extend this autonomous spin for the whole visit.
       const globeEligible = mapGlobeIsVisible()
-      const globeAnimating = mapGlobeSpinIsActive(globeEligible, now, globeSpinUntil)
+      const globeAnimating = mapGlobeSpinIsActive(globeEligible && decorativeTurnAllowed(), now, globeSpinUntil)
       // Report WHY, so a rested spin and a dead one are distinguishable from
       // outside. Cheap: object literal on an already-running frame.
       window.__poplurGlobeSpin = {
@@ -1786,7 +1790,8 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
               : window.__poplurChromeIdle === true ? 'chrome-idle'
                 : targetTabRef.current !== 'map' ? 'not-map-tab'
                   : !isMapGlobe() ? 'not-globe'
-                    : 'spin-complete',
+                    : !decorativeTurnAllowed() ? 'ambient-budget'
+                      : 'spin-complete',
         at: now,
       }
       if (globeAnimating) {
@@ -2007,6 +2012,13 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       needsRender = true
       wake()
     }
+    const stopAmbientObservation = isNativeShell()
+      ? onAmbientSleepChange(() => {
+        // One reconciliation frame either starts an admitted burst or parks
+        // the old turn. This callback never renews the decoration budget.
+        if (isMapGlobe() || loadedUrlRef.current === DISCO_BALL_MODEL) wakeLoopRef.current()
+      })
+      : () => {}
     triggerDiceRollRef.current = (pulse, face) => {
       if (loadedUrlRef.current !== RADIUS_REWARD_DICE_MODEL) return
       if (!Number.isSafeInteger(pulse) || pulse <= consumedDiceRollPulse) return
@@ -2034,12 +2046,14 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
       }
       navigatorFPS = fpsForMode(policy.mode)
       navigatorFrameMs = 1000 / navigatorFPS
-      renderer.setPixelRatio(Math.min(
+      const pixelRatio = Math.min(
         window.devicePixelRatio || 1,
         policy.maximumPixelRatio,
         maximumNavigatorDPR,
-      ))
-      renderer.setSize(size, size, false)
+      )
+      // setPixelRatio reallocates the drawing buffer. A renderer lease can
+      // change on every settled gesture even though resolution is unchanged.
+      if (renderer.getPixelRatio() !== pixelRatio) renderer.setPixelRatio(pixelRatio)
     }
     performanceRenderer = PoplurPerformanceManager.registerRenderer({
       id: 'CubeTab3D',
@@ -2083,6 +2097,7 @@ export default function CubeTab3D({ targetTab, onFaceChange, onVerticalSwipe, on
 
     return () => {
       disposed = true
+      stopAmbientObservation()
       performanceRenderer?.dispose()
       performanceRenderer = null
       cancelScheduledFrame()

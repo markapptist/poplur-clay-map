@@ -1,4 +1,5 @@
 import { MANAGED_RENDERING_OPERATION_EVENT, isNativeShell } from './nativeBridge'
+import { nativeAmbientDeadline } from './ambientWorkBudget'
 
 // One clock for every animation in the app, and a thermal ladder on top of it.
 //
@@ -114,10 +115,11 @@ let boostUntil = 0
 // decoration and Mapbox's already-settled renderer, preserving its last frame.
 // The tab navigator has its own event-driven budget, so it can still react to
 // tilt without keeping the rest of the document awake.
-// Capable devices get a real lease: decoration lives while the user is engaged
-// and for 15s after their last input, then sleeps until the next touch. The old
-// 2s native lease plus a one-showcase kill meant phones lost all ambient motion
-// two seconds after boot, permanently — masking, not scheduling.
+// Native decoration has a shared, non-renewable burst followed by a rest.
+// Renewing a 15s idle timeout with every tap left it running for an entire
+// active session. New bursts remain available after the rest; gestures and
+// meaningful handset motion never depend on decorative motion being awake.
+// Desktop retains the renewable 15s idle lease.
 //
 // The 3GB class is different, and this was measured, not assumed: on an A03 the
 // ambient subscribers ARE the frame budget (map p50 57ms governed vs 250ms with
@@ -125,7 +127,7 @@ let boostUntil = 0
 // regressed that device's map straight back to 250ms. So no-headroom hardware
 // keeps the short lease AND the one-showcase kill: it gets the authored
 // showcase once, then decoration stays parked and the frame budget goes to
-// gestures. Everything else keeps the full lease.
+// gestures. Other phones keep recurring bounded bursts.
 const AMBIENT_IDLE_MS = LOW_TIER_DEVICE ? 2_000 : 15_000
 let ambientAwakeUntil = typeof performance !== 'undefined'
   ? performance.now() + AMBIENT_IDLE_MS
@@ -269,8 +271,10 @@ function noteInteraction(): void {
   interactionTimer = window.setTimeout(() => {
     interactionTimer = 0
     syncRendererPark()
+    sync()
   }, INTERACTION_TAIL_MS + 20)
   syncRendererPark()
+  sync()
 }
 
 function setAmbientSleeping(sleeping: boolean): void {
@@ -284,9 +288,8 @@ function setAmbientSleeping(sleeping: boolean): void {
   }
   ambientSleepListeners.forEach(listener => listener(sleeping))
   syncRendererPark()
-  // Every subscriber pauses and resumes with this gate, so an untouched
-  // document has no shared-clock wakeups at all. The next real input reopens
-  // the gate and restarts the clock.
+  // An untouched document has no shared-clock wakeups. Direct input and
+  // managed operations can restart their own subscribers during ambient rest.
   sync()
 }
 
@@ -360,7 +363,8 @@ function subscriberWorkPaused(sub: Sub): boolean {
   if (sub.rate === 'managed') return !managedRenderingOperationActive()
   // A finite camera/navigation operation may keep attended work alive, but it
   // never re-enables ambient or idle decoration while the thermal gate is shut.
-  return !managedRenderingOperationActive() || sub.rate !== 'interactive'
+  return sub.rate !== 'interactive'
+    || (!interacting() && !managedRenderingOperationActive())
 }
 
 // ── the thermal ladder ───────────────────────────────────────────────────────
@@ -514,8 +518,7 @@ if (typeof document !== 'undefined') {
   }
   const ambientLeaseMs = () => {
     const ceiling = effectiveQualityCeiling()
-    if (ceiling <= 0) return 0
-    if (ceiling <= 1) return 4_000
+    if (ceiling <= 1) return 0
     return AMBIENT_IDLE_MS
   }
   const wakeAmbient = () => {
@@ -535,10 +538,17 @@ if (typeof document !== 'undefined') {
       sleepAmbient()
       return
     }
-    ambientAwakeUntil = performance.now() + lease
+    const deadline = isNativeShell()
+      ? nativeAmbientDeadline(lease)
+      : performance.now() + lease
+    if (!deadline) {
+      sleepAmbient()
+      return
+    }
+    ambientAwakeUntil = deadline
     setAmbientSleeping(false)
     window.clearTimeout(ambientSleepTimer)
-    ambientSleepTimer = window.setTimeout(sleepAmbient, lease)
+    ambientSleepTimer = window.setTimeout(sleepAmbient, Math.max(0, deadline - performance.now()))
     boostFrames()
   }
   const onVisibility = () => {
@@ -752,9 +762,9 @@ export function setSurfaceFront(front: boolean): void {
     document.documentElement.dataset.poplurSurfaceFront = front && !document.hidden ? '1' : '0'
     if (front && !document.hidden) {
       window.clearTimeout(ambientSleepTimer)
-      const lease = effectiveQualityCeiling() <= 0
+      const lease = effectiveQualityCeiling() <= 1
         ? 0
-        : effectiveQualityCeiling() <= 1 ? 4_000 : AMBIENT_IDLE_MS
+        : AMBIENT_IDLE_MS
       if (surfaceShowcasePlayed) {
         // A RETURN. Keep decoration asleep and hand the renderer a short,
         // bounded lease instead: it un-parks, Mapbox repaints the unchanged
@@ -770,12 +780,14 @@ export function setSurfaceFront(front: boolean): void {
         setAmbientSleeping(true)
         ambientSleepTimer = 0
       } else {
-        ambientAwakeUntil = performance.now() + lease
-        setAmbientSleeping(false)
+        ambientAwakeUntil = isNativeShell()
+          ? nativeAmbientDeadline(lease)
+          : performance.now() + lease
+        setAmbientSleeping(ambientAwakeUntil === 0)
         ambientSleepTimer = window.setTimeout(() => {
           ambientAwakeUntil = 0
           setAmbientSleeping(true)
-        }, lease)
+        }, Math.max(0, ambientAwakeUntil - performance.now()))
       }
     } else {
       // A surface going away cannot leave a finger "down": the pointerup landed
@@ -880,11 +892,9 @@ export function qualityPixelRatio(max = 2): number {
 /**
  * Whether ambient decoration (flyers, boats, traffic) should run at all.
  *
- * Deliberately NOT `quality >= 3`: the ladder drops a step on any sustained
- * overrun, and killing every moving thing in the city the first time a device
- * gets warm is a worse regression than the frames cost. Decoration survives one
- * step down (just slower, per the rate table) and only stops at the bottom two
- * tiers, where the device is genuinely in trouble.
+ * The lease accounts for native thermal/power ceilings when it is granted.
+ * A rest preserves the last rendered frame; direct manipulation has a separate
+ * renderer lease so this signal must only gate autonomous decoration.
  */
 export function ambientAllowed(): boolean {
   return surfaceFront

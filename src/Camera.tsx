@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import CameraRoll from './CameraRoll'
+import CameraAvailability, { readNativeCameraBudget, type NativeCameraBudget } from './CameraAvailability'
 import PoplurDialog from './PoplurDialog'
 import ShellOverlayPortal from './ShellOverlayPortal'
 import CameraScanButton from './CameraScanButton'
@@ -148,14 +149,6 @@ const NATIVE_CAMERA_PREVIEW = NATIVE_SHELL && !ANDROID_SHELL
 
 /** Capture shares the native camera's cold budget: recordings stop at 10s. */
 export const MAX_RECORD_MS = 10_000
-
-type NativeCameraBudget = {
-  state: 'running' | 'parked' | 'recording'
-  reason: 'entry' | 'explicitResume' | 'windowExpired' | 'recordingStarted'
-    | 'recordingFinished' | 'thermal' | 'leftCamera' | 'unavailable'
-  canResume: boolean
-  windowMs: number
-}
 
 type DeferredCameraAction = 'photo' | 'video'
 
@@ -572,7 +565,7 @@ export default function Camera({
       .map(read => read.label))
   }, [currentCameraReads, detectOn, effectiveLiveSurfaceVisible])
   const webCaptureRequired = captureRequested && captureGranted
-  const [nativeCameraBudget, setNativeCameraBudget] = useState<NativeCameraBudget | null>(null)
+  const [nativeCameraBudget, setNativeCameraBudget] = useState<NativeCameraBudget | null>(readNativeCameraBudget)
   const [parkedDetections, setParkedDetections] = useState<Detection[]>([])
   useEffect(() => {
     if (!NATIVE_CAMERA_PREVIEW) return
@@ -583,11 +576,14 @@ export default function Camera({
       setNativeCameraBudget(detail)
     }
     window.addEventListener('poplur-camera-budget', receiveBudget)
+    // Native can finish or refuse startup before React installs its listener.
+    // Recover the last bridge value rather than leaving that viewfinder blank.
+    setNativeCameraBudget(readNativeCameraBudget())
     return () => window.removeEventListener('poplur-camera-budget', receiveBudget)
   }, [])
   const resumeNativePreview = useCallback(() => {
     // This bridge event is intentionally reachable only from pointer/click
-    // handlers below. Never renew the ten-second window from a timer or effect.
+    // handlers below. Thermal recovery never starts the sensor from a timer.
     if (!NATIVE_CAMERA_PREVIEW || !effectiveLiveSurfaceVisible || !nativeCameraBudget?.canResume) return
     postNativeEvent({ type: 'cameraControl', control: 'resumePreview' })
   }, [effectiveLiveSurfaceVisible, nativeCameraBudget?.canResume])
@@ -1786,6 +1782,10 @@ export default function Camera({
       // pointer handlers because there is nothing else for it to pan.
       style={{ touchAction: real ? 'pan-y' : undefined }}
     >
+      {real && NATIVE_CAMERA_PREVIEW && effectiveLiveSurfaceVisible && !needsCameraPermission && (
+        <CameraAvailability budget={nativeCameraBudget} onResume={resumeNativePreview}
+          onOpenRoll={() => onOpenRoll?.()} />
+      )}
       {!NATIVE_CAMERA_PREVIEW && real && (
         <>
           {!hardwareZoom && zoom < 1 && wideBackdrop && (

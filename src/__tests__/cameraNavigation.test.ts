@@ -32,7 +32,7 @@ describe('Camera navigation inventory', () => {
 
   it('returns to the live camera with the default AR filter', () => {
     expect(cameraSource).toContain(
-      "if (liveSurfaceVisible) return\n    setArOpen(false)\n    setArFilter('none')",
+      "if (liveSurfaceVisible) return\n    setArFilter('none')",
     )
     expect(iosCameraSource).toMatch(
       /private func resetARFilterIfLoaded\(\)[\s\S]*?controller\.resetARFilterSelection\(\)[\s\S]*?publishARFilterState\(\.none\)/,

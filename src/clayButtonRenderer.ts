@@ -43,6 +43,7 @@ function ensureRenderer(): THREE.WebGLRenderer | null {
     renderer = new THREE.WebGLRenderer({
       canvas: glCanvas, alpha: true, antialias: false, powerPreference: 'low-power',
     })
+    renderer.setSize(1, 1, false)
     renderer.setClearColor(0x000000, 0)
     glCanvas.addEventListener('webglcontextlost', onContextLost)
   } catch {
@@ -110,10 +111,19 @@ export function blitClayScene(
   if (!r || !glCanvas) return false
   const ctx = dest.getContext('2d')
   if (!ctx) return false
-  r.setPixelRatio(pixelRatio)
-  r.setSize(cssSize, cssSize, false)
-  r.render(scene, camera)
   const px = Math.max(1, Math.round(cssSize * pixelRatio))
+  // A shared renderer sees differently sized buttons in the same frame.
+  // setPixelRatio() itself calls setSize(); doing both on every blit cleared
+  // and resized the GPU drawing buffer twice, even for an unchanged size.
+  // Keep one high-water buffer and draw into its top-left viewport instead.
+  // The camera, lights, materials and per-button pixel count stay identical.
+  if (glCanvas.width < px || glCanvas.height < px) {
+    r.setSize(Math.max(px, glCanvas.width), Math.max(px, glCanvas.height), false)
+  }
+  r.setViewport(0, glCanvas.height - px, px, px)
+  r.setScissor(0, glCanvas.height - px, px, px)
+  r.setScissorTest(true)
+  r.render(scene, camera)
   if (dest.width !== px || dest.height !== px) {
     dest.width = px
     dest.height = px
