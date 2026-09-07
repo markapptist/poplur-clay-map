@@ -1,3 +1,5 @@
+import { useMapDiscovery } from './useMapDiscovery'
+import { MapDiscoveryLayers } from './MapDiscoveryLayers'
 import React, { useRef, useState, useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 import mapboxgl from 'mapbox-gl'
 import { MAP_THEMES, PALETTE, type POI, type PopLevel } from './data'
@@ -3132,13 +3134,21 @@ export default function MapApp() {
   // Resolved once: inside a native shell the Map is fed by the shell, not by
   // its own Firestore client (see the forwarded-posts listener below).
   const nativeShell = isNativeShell()
+  const liveSimulation = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
+  const [discoveryFocusPostId, setDiscoveryFocusPostId] = useState<string | null>(null)
+  const discovery = useMapDiscovery(mapRef, mapLive, ownUid, true, mapFrontRef, rnWebShellRoute, discoveryFocusPostId)
+  const discoveryEnabled = discovery.page?.enabled ?? null
+  const [accountMapPosts, setAccountMapPosts] = useState<LiveMapPostPin[]>([])
+  useEffect(() => {
+    if (discovery.page?.enabled) { setLiveMapPosts(discovery.page.pins); setLiveMapPostsReady(true) }
+  }, [discovery.page])
   const [liveMapPosts, setLiveMapPosts] = useState<LiveMapPostPin[]>([])
   const liveMapPostsRef = useRef(liveMapPosts)
   liveMapPostsRef.current = liveMapPosts
   // The poster's OWN ground, unfiltered by the board's marker budget. The pins
   // ClayMap renders are capped and viewport-ranked; a coverage question has to
   // see every pop, including the ones no marker is standing on right now.
-  const ownLiveClaims = useMemo(() => accountPostedClaims(liveMapPosts), [liveMapPosts])
+  const ownLiveClaims = useMemo(() => accountPostedClaims([...new Map([...accountMapPosts, ...liveMapPosts].map(p => [p.id, p])).values()]), [liveMapPosts, accountMapPosts])
   const [liveMapPostsReady, setLiveMapPostsReady] = useState(false)
   const [accountRadiusSnapshot, setAccountRadiusSnapshot] = useState({
     radiusKm: 0,
@@ -3172,12 +3182,15 @@ export default function MapApp() {
         )
         setOwnUid(nextUid)
         setNativeAccountTotals(payload.accountTotals ?? null)
-        setLiveMapPosts(nativeFeedPostsToMapPins(posts, nextUid, { syntheticOnly: rnWebShellRoute }))
+        const forwarded = nativeFeedPostsToMapPins(posts, nextUid, { syntheticOnly: rnWebShellRoute })
+        setAccountMapPosts(forwarded.filter(p => p.mine))
+        if (discoveryEnabled === false || rnWebShellRoute) setLiveMapPosts(forwarded)
         setLiveMapPostsReady(true)
       }
       window.addEventListener('message', receiveForwardedPosts)
       return () => window.removeEventListener('message', receiveForwardedPosts)
     }
+    if (discoveryEnabled !== false) return undefined
     return subscribeLiveMapPosts(
       pins => {
         setLiveMapPosts(pins)
@@ -3186,7 +3199,7 @@ export default function MapApp() {
       () => setLiveMapPostsReady(true),
       ownUid,
     )
-  }, [nativeShell, ownUid, rnWebShellRoute])
+  }, [nativeShell, ownUid, rnWebShellRoute, discoveryEnabled])
   // Sum the pins the shell forwarded in. This ran ONLY on the local Expo web
   // route, so on an actual phone it never ran at all and the total fell
   // through to the web Firestore subscription below — which, on a device,
@@ -3209,7 +3222,7 @@ export default function MapApp() {
   useEffect(() => {
     if (!rnWebShellRoute && !nativeShell) return
     if (nativeAccountTotals) { setAccountRadiusSnapshot(nativeAccountTotals); return }
-    const mine = liveMapPosts.filter(pin => pin.mine)
+    const mine = accountMapPosts
     setAccountRadiusSnapshot({
       // EARNED radius only, the same sum the web path takes
       // (radiusKmFromAccountPost) and the same one the create rule enforces.
@@ -3221,7 +3234,7 @@ export default function MapApp() {
       totalReachKm: mine.reduce((sum, pin) => sum + Math.max(0, pin.radiusKm), 0),
       postCount: mine.length,
     })
-  }, [liveMapPosts, nativeShell, nativeAccountTotals, rnWebShellRoute])
+  }, [accountMapPosts, nativeShell, nativeAccountTotals, rnWebShellRoute])
   useEffect(() => {
     // webDb() is for documents with no native bridge behind them. A device has
     // one, and asking the unauthenticated web client for `posts where userID
@@ -3452,7 +3465,6 @@ export default function MapApp() {
   const [myColor, setMyColor] = useState(() => takeoverTint(PALETTE.pinkHot))
   const ownPinColor = useSyncExternalStore(onMyPinColor, myPinColor, () => null)
   useEffect(() => onTakeoverColor(() => setMyColor(takeoverTint(PALETTE.pinkHot))), [])
-  const liveSimulation = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
   // Someone you blocked leaves the board at once (blockedUsers.ts).
   const blockedUsers = useSyncExternalStore(onBlockedUsersChange, blockedUsersSnapshot, blockedUsersSnapshot)
   const mapPins = useMemo(() => {
@@ -3482,7 +3494,7 @@ export default function MapApp() {
       // more — it is simply not there, the same answer Feed delivery gives.
       // Your own pops always stand, and with no location fix yet nothing of
       // anybody else's is drawn, because reach cannot be proven without one.
-      .filter(pin => !liveMapPinGhost(pin, reachViewer))
+      .filter(pin => discoveryEnabled === true || !liveMapPinGhost(pin, reachViewer))
       .filter(pin => pin.mine || !isUserBlocked(pin.ownerId, pin.user))
       .map(pin => {
         // ONE colour decision per pin, used by all three things that show it:
@@ -3519,7 +3531,7 @@ export default function MapApp() {
         pinColor,
       })
       })
-  }, [blockedUsers, currentLocation, liveMapPosts, liveSimulation, myColor, ownAvatar, ownPinColor, ownSelfieVideo, pinRadiusPulse, popLevel])
+  }, [discoveryEnabled, blockedUsers, currentLocation, liveMapPosts, liveSimulation, myColor, ownAvatar, ownPinColor, ownSelfieVideo, pinRadiusPulse, popLevel])
 
   // One route powers the horizontal arrows at every zoom. It comes from the
   // authoritative data, not the handful of DOM markers ClayMap keeps mounted
@@ -3968,7 +3980,7 @@ export default function MapApp() {
   // next snapshot rather than flying nowhere.
   const pendingPinFocusRef = useRef<{ request: PinFocusMapRequest; expiresAt: number } | null>(null)
   const resolvePinForFocus = useCallback((request: PinFocusMapRequest): LiveMapPostPin | null => {
-    const posts = liveMapPostsRef.current
+    const posts = [...liveMapPostsRef.current, ...accountMapPosts]
     if (request.postId) {
       const wanted = request.postId
       return posts.find(pin => pin.id === wanted || pin.id === `firestore:${wanted}`) ?? null
@@ -3979,7 +3991,7 @@ export default function MapApp() {
       return best
     }
     return null
-  }, [])
+  }, [accountMapPosts])
   const focusPinCamera = useCallback((pin: PopPin, request: PinFocusMapRequest) => {
     const map = mapRef.current
     if (!map) return
@@ -4510,6 +4522,7 @@ export default function MapApp() {
           break
         }
         case 'focusPost': {
+          if (typeof event.data.id === 'string') setDiscoveryFocusPostId(event.data.id.replace(/^firestore:/, '').slice(0, 180))
           // A profile asking "where was this pop posted?" Fly to the pop's
           // public origin and name the ground. If the pop is on the board it
           // is the pin you land beside; if reach keeps it off the board, the
@@ -4530,6 +4543,7 @@ export default function MapApp() {
         case 'focusPin': {
           const request = pinFocusMapRequest(event.data as Record<string, unknown>)
           if (!request) break
+          if (request.postId) setDiscoveryFocusPostId(request.postId.replace(/^firestore:/, '').slice(0, 180))
           const pin = resolvePinForFocus(request)
           if (pin) { focusPinCamera(pin, request); break }
           // Not on the board yet. Hold the request for the next snapshot; if
@@ -4800,6 +4814,23 @@ export default function MapApp() {
         onIntroComplete={handleIntroComplete}
         onGlobeReady={handleGlobeReady}
       />
+
+      {discovery.page?.enabled && !tourOn && !focusedPostPicker && <MapDiscoveryLayers map={mapRef.current} cells={discovery.page.cells} pins={pinsForRenderer} onOpen={openClickedMapPinContent} />}
+      {!tourOn && discovery.page?.enabled && !discovery.error && !discovery.page.nextCursor && (
+        <span style={{ position: 'absolute', top: '23%', left: '50%', transform: 'translateX(-50%)', zIndex: 19,
+          maxWidth: '60%', borderRadius: 16, padding: '6px 12px', textAlign: 'center', pointerEvents: 'none',
+          fontSize: 12, fontWeight: 800, color: '#8fe7ff', background: '#251223d9' }}>
+          {discovery.page.mode === 'regions' ? (discovery.page.pins.some(pin => pin.competition?.status === 'winner') ? 'Regional leaders · Zoom in for more' : 'New pops · Zoom in for more') : discovery.page.mode === 'cells' ? 'Area leaders · ≈5 km sections' : 'Pops in this area'}
+        </span>
+      )}
+      {!tourOn && (discovery.error || discovery.page?.nextCursor) && (
+        <button type="button" onClick={discovery.error ? discovery.retry : discovery.nextPage} disabled={discovery.loading}
+          style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', top: '23%', zIndex: 20,
+            maxWidth: '60%', padding: '8px 14px', borderRadius: 18, background: '#251223ed', color: '#8fe7ff',
+            border: '2px solid #ee409b', fontWeight: 800, fontSize: 13 }}>
+          {discovery.loading ? 'Loading…' : discovery.error || 'More pops in this area →'}
+        </button>
+      )}
 
       {weatherTestOpen && (
         <section

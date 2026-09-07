@@ -1,3 +1,4 @@
+import { installMapDiscoveryRelay } from './mapDiscoveryTransport'
 // Map dialogs portal into this document and need their scoped stylesheet here.
 import './ClayMap.module.css'
 import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore } from 'react'
@@ -2244,6 +2245,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // Cube size follows the viewport so the bottom cluster never overlaps.
   const [cubeSize, setCubeSize] = useState(cubeSizeFor)
   const mapFrameRef = useRef<HTMLIFrameElement>(null)
+  useEffect(() => installMapDiscoveryRelay(() => mapFrameRef.current), [])
   const [mapSyntheticPostId, setMapSyntheticPostId] = useState<string | null>(null)
   const [mapConquerSnapshot, setMapConquerSnapshot] = useState<MapConquerSnapshot | null>(null)
   const [mapConquerGlanceOpen, setMapConquerGlanceOpen] = useState(false)

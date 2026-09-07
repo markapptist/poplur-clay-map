@@ -258,6 +258,7 @@ export interface ClayMapProps {
 
 /** A pop standing on the map: whose it is, where, and how much it holds. */
 export interface PopPin {
+  competition?: { cellId: string; status: 'winner' | 'new' | 'local'; cohort: 'real' | 'test'; score: number }
   id: string
   /** Stable account identity used for aggregation even if the handle changes. */
   ownerId?: string
@@ -5782,6 +5783,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           // flow entered from the composer, and they answer a plain tap. A
           // hold would be a second, hidden way to do the same thing.
           if (radiusPreviewLaunch) return
+          // Batched discovery dots own the same tap as a rich marker. Do not
+          // also advance an edge lane or open a composer under that post.
+          if (map.getLayer('poplur-discovery-points') && map.queryRenderedFeatures(e.point, { layers: ['poplur-discovery-points'] }).length) return
           const target = e.originalEvent?.target
           if (target instanceof Element && target.closest('.mapboxgl-marker')) return
           const anchor = { x: e.point.x, y: e.point.y }
@@ -5824,6 +5828,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           // every marker's DOM click has fully settled. Without this guard,
           // tapping a real pop could both open its post and open the empty-
           // ground composer underneath it. Marker taps belong to the marker.
+          // Batched discovery dots own the same tap as a rich marker. Do not
+          // also advance an edge lane or open a composer under that post.
+          if (map.getLayer('poplur-discovery-points') && map.queryRenderedFeatures(e.point, { layers: ['poplur-discovery-points'] }).length) return
           const target = e.originalEvent?.target
           if (target instanceof Element && target.closest('.mapboxgl-marker')) return
           // The hold already acted on this press.
@@ -6682,7 +6689,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             y: point.y,
             // Anyone standing on this screen outranks an off-screen holder,
             // exactly as under the flat cap; dominance decides the rest.
-            score: dominanceFameScore(pin.radiusKm, pin.engagement)
+            score: (pin.competition?.score ?? dominanceFameScore(pin.radiusKm, pin.engagement))
               + (onScreen.has(pin.id) ? 1_000_000 : 0),
             ghost: pin.ghost === true,
           })
