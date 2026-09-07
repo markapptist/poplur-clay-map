@@ -133,7 +133,7 @@ describe('settled Map building cull scheduler', () => {
     expect(run).toHaveBeenCalledTimes(1)
 
     const source = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
-    expect(source).toMatch(/buildingCullScheduler\.onIdle\(\s*lastThreeDLayerVisibility\s*===\s*true\s*&&\s*adaptiveCameraFrame\s*==\s*null,?\s*\)/)
+    expect(source).toMatch(/buildingCullScheduler\.onIdle\(\s*lastThreeDLayerVisibility\s*===\s*true\s*&&\s*!adaptiveCameraSettle\?\.pending,?\s*\)/)
     expect(source).toMatch(/createMapBuildingCullScheduler\(refreshSelection\s*=>\s*\{\s*return updateBuildingExtrusionCull\(false, refreshSelection\)/)
   })
 })

@@ -429,7 +429,7 @@ describe('subtle Map presentation policy', () => {
 
     expect(subscription).toContain('buildingCullScheduler.markPolicyChanged()')
     expect(subscription).toContain('lastThreeDLayerVisibility === true')
-    expect(subscription).toContain('adaptiveCameraFrame == null')
+    expect(subscription).toContain('!adaptiveCameraSettle?.pending')
     expect(subscription).toContain('!map.isMoving()')
     expect(subscription).toContain('buildingCullScheduler.onIdle(true)')
   })

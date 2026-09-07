@@ -1,6 +1,7 @@
 import { normalizeViewerFix } from './viewerFix'
 import ShellOverlayPortal from './ShellOverlayPortal'
 import { installCloseMapTimeout } from './closeMapTimeout'
+import { createMapCameraSettle } from './mapCameraSettle'
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import mapboxgl, { type PointLike } from 'mapbox-gl'
 import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
@@ -3689,7 +3690,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     // pops up (with a hard count ceiling) while the rest disappear instead of
     // becoming a flat roof field. Landmarks remain independently governed hero
     // pieces, and Street View retains the same finite generic-building batch.
-    let adaptiveCameraFrame: number | null = null
+    let adaptiveCameraSettle: ReturnType<typeof createMapCameraSettle> | null = null
     let adaptiveIsometric = false
     let lastThreeDLayerVisibility: boolean | null = null
     let buildingDensityLabRequestedMax: number | null = null
@@ -3878,7 +3879,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       buildingDensityLabRequestedMax = requestedMax
       lastBuildingCull = null
       buildingCullScheduler.markPolicyChanged()
-      if (lastThreeDLayerVisibility === true && adaptiveCameraFrame == null) {
+      if (lastThreeDLayerVisibility === true && !adaptiveCameraSettle?.pending) {
         buildingCullScheduler.onIdle(true)
       } else {
         lastBuildingDensitySelected = 0
@@ -3920,25 +3921,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // target pitch and therefore emits no second move/zoom event.
       threeDVisibilityRetry.request(enabled)
     }
-    const cancelAdaptiveCameraSettle = () => {
-      if (adaptiveCameraFrame != null) {
-        window.cancelAnimationFrame(adaptiveCameraFrame)
-        ownedRafs.delete(adaptiveCameraFrame)
-        adaptiveCameraFrame = null
-      }
-    }
-    mapCamera.__cancelAdaptiveCameraSettle = cancelAdaptiveCameraSettle
-    const settleAdaptiveCamera = (pitch: number, bearing: number) => {
-      cancelAdaptiveCameraSettle()
-      // `zoomend` is emitted while Mapbox may still be finishing symbol
-      // placement. Scheduling the one-shot camera settle for the next paint
-      // avoids mutating that placement pass (which can otherwise throw inside
-      // Mapbox on the local-board handoff). A brief ease reads as one physical
-      // tilt instead of a 2D/3D flash. This is gesture-driven, never a standing
-      // render loop, and a newer settle replaces any pending frame.
-      adaptiveCameraFrame = nextFrame(() => {
-        adaptiveCameraFrame = null
-        if (disposed || !map.isStyleLoaded()) return
+    adaptiveCameraSettle = createMapCameraSettle(
+      map,
+      nextFrame,
+      id => { window.cancelAnimationFrame(id); ownedRafs.delete(id) },
+      (pitch, bearing) => {
         wakeManagedRendering(ISOMETRIC_CAMERA_TRANSITION_MS + MANAGED_CAMERA_SETTLE_MS)
         map.easeTo({
           pitch,
@@ -3946,9 +3933,15 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           duration: ISOMETRIC_CAMERA_TRANSITION_MS,
           essential: true,
         })
-      })
-    }
+      },
+    )
+    const cancelAdaptiveCameraSettle = adaptiveCameraSettle.cancel
+    mapCamera.__cancelAdaptiveCameraSettle = cancelAdaptiveCameraSettle
+    const settleAdaptiveCamera = adaptiveCameraSettle.request
     const enforceHybridPitch = () => {
+      // Landmark loading and policy changes also call this during a flight.
+      // Neither the pitch correction nor a landmark zoom clamp may stop it.
+      if (map.isMoving()) return
       if (MAP_2D) {
         adaptiveIsometric = false
         setThreeDLayerVisibility(false)
@@ -4081,7 +4074,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // same settled selection epoch instead of doubling a gesture query.
       threeDVisibilityRetry.retryOnSettled()
       buildingCullScheduler.onIdle(
-        lastThreeDLayerVisibility === true && adaptiveCameraFrame == null,
+        lastThreeDLayerVisibility === true && !adaptiveCameraSettle?.pending,
       )
     }
     map.on('movestart', queueBuildingCullRefresh)
@@ -4097,7 +4090,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // genuinely settled. If a gesture/ease is active, the pending scheduler
       // epoch is consumed by that movement's one ordinary idle instead.
       if (lastThreeDLayerVisibility === true
-        && adaptiveCameraFrame == null
+        && !adaptiveCameraSettle?.pending
         && !map.isMoving()) {
         buildingCullScheduler.onIdle(true)
       }
@@ -7097,10 +7090,12 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     zoomVelocityRef.current = 0
     initialCameraInteractionRef.current = true
     live.__claimCamera?.()
-    live.__cancelAdaptiveCameraSettle?.()
     stopOrbitRef.current()
     live.__cinematic = false
     live.stop()
+    // stop() can synchronously queue another adaptive tilt from its end
+    // events, so cancel after stopping as well as guarding the queued frame.
+    live.__cancelAdaptiveCameraSettle?.()
     if (direction === 'out') { applyZoom(ZOOM_MIN); return }
 
     const point = requestedPoint ?? focusedMapPointRef.current
