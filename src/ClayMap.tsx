@@ -1,3 +1,4 @@
+import { MAP_BUILDING_EXPERIMENT_ENABLED } from './mapBuildingExperiment'
 import { normalizeViewerFix } from './viewerFix'
 import ShellOverlayPortal from './ShellOverlayPortal'
 import { installCloseMapTimeout } from './closeMapTimeout'
@@ -3761,6 +3762,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       forceApply = false,
       refreshSelection = false,
     ): boolean => {
+      // Full-density trial: no camera-radius, height, sample or count selection.
+      // The layer already includes all source buildings except replaced landmarks.
+      if (MAP_BUILDING_EXPERIMENT_ENABLED) return true
       if (!map.isStyleLoaded() || !map.getLayer('clay-buildings-3d')) return false
       const performanceMode = PoplurPerformanceManager.policy.mode
       const radiusM = mapBuildingExtrusionRadiusM(map.getZoom(), performanceMode)
@@ -4854,12 +4858,14 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         // zero-radius expression is deliberately empty: style load can never
         // flash a city-wide batch of extrusion geometry while the camera and
         // performance budget are still being resolved.
-        const initialBuildingFilter = boundedBuildingExtrusionFilter(
+        const initialBuildingFilter = (MAP_BUILDING_EXPERIMENT_ENABLED
+          ? notALandmarkBuilding()
+          : boundedBuildingExtrusionFilter(
           [map.getCenter().lng, map.getCenter().lat],
           0,
           mapBuildingExtrusionMinHeightM(PoplurPerformanceManager.policy.mode),
           [],
-        ) as never
+        )) as never
         // Per-building pop scale driven by feature-state (see pop system below)
         const popScale = ['coalesce', ['feature-state', 'popScale'], 1] as never
         const poppedHeight = ['*', clayHeight, popScale] as never
