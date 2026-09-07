@@ -19,6 +19,16 @@ A second physical-device report showed a black camera. Saved native camera recor
 
 ## Validation status
 
-The guarded native bundle release and sustained-use validation are in progress. Do not describe overheating as eliminated based on these component checks or an idle-only gate. A physical unplugged active session longer than the reported onset, with foreground intervals and thermal transitions retained, is required to confirm the user-visible outcome.
+The guarded native bundle release passed without skips. Native iOS build/signature checks, Android release assembly and Android unit/debug checks passed. All 1,054 frozen web files were verified in both packages. Runtime commits `854ca53` (web), `6aa104cd` (iOS) and `7bdeb91` (Android) were pushed. The iPhone installation was verified and the user confirmed a live camera preview. The iPad installation was verified, but it disconnected before launch. The Android phone was disconnected and its package is not installed there.
+
+The 15-minute physical follow-up, 17:40:51–17:55:51 UTC, **failed the thermal outcome**. It started warm at `fair`, reached `serious` at 17:45:21 during repeated Map/Camera/Feed/Profile navigation, and returned to `fair` at 17:48:41. The camera recovery is a functional fix; overheating is not resolved.
+
+There were 764 seconds of paired foreground samples. Foreground main WebContent CPU averaged 7.56% of one core, GPU-process CPU 2.62%, and device-wide GPU utilization 5.69%. Main WebContent footprint peaked at 1,469 MiB. These averages include long quiet periods and different actions from the baseline; do not express them as a causal percentage improvement. A 15-second navigation window still reached 65.5% main WebContent CPU and 45.5% device-wide GPU utilization. The session began charging and is not an unplugged-only validation.
+
+## Follow-up Map startup experiment
+
+The adaptive map still constructed the classic Dark/Mercator style at street zoom 14.8 on every return, then immediately jumped to its intended world-scale view. That bootstrap was a workaround for the retired Standard/globe style. Constructing the current style directly at its intended zoom removes the discarded street-tile load.
+
+Two before and two after desktop browser runs measured mean renderer-thread CPU duration of 1.899 seconds and 1.497 seconds respectively over each 20-second arrival window (about 21% less). The two street-vector requests were eliminated; total `.pbf` requests, including glyphs and the icon set, fell from eight to four. Each run reached a parked map without runtime exceptions. A native macOS WKWebView screenshot confirmed a visible map with the same artwork. These are startup-operation measurements, not iPhone thermal proof. This follow-up still requires the guarded release and device validation.
 
 Raw local evidence: `/Users/matrix/Developer/.codex/profiling/sustained-heat-20260907/`.

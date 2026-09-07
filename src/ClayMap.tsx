@@ -1696,11 +1696,10 @@ export function mapboxFeaturesToCandidates(payload: unknown, query: string): Spo
     }]
   })
 }
-// Ordinary Map launches begin at the zoom rail's true world end-stop. Keep
-// this separate from the Mapbox constructor's close zoom: constructing the
-// Standard style at world scale can prevent its load event, so the camera
-// moves here only after the style is ready. Focused pick/radius launches still
-// use INTRO_LANDING_ZOOM and therefore keep their task-specific close framing.
+// Ordinary Map launches begin at the zoom rail's true world end-stop. The
+// current classic Dark style in Mercator can load at that scale directly;
+// the old street-level bootstrap belonged to the retired Standard globe.
+// Focused pick/radius launches keep their task-specific close framing.
 const DEFAULT_MAP_LAUNCH_ZOOM = MAP_MIN_ZOOM
 // Journey mode intentionally drops below the manual diorama ceiling so the
 // clay roads and buildings read from an eye-level chase camera.
@@ -2838,11 +2837,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         maxTileCacheSize: MAP_2D || SHARED_ADAPTIVE_MAP ? 12 : MAP_LITE || iosNativeMap ? 16 : isNativeShell() ? 24 : 48,
         style: 'mapbox://styles/mapbox/dark-v11',
         center: HOME_CENTER,
-        // Constructed at street zoom deliberately: the Standard style never
-        // reports isStyleLoaded() when the map is *created* at globe zoom, so
-        // `load` never fires and no clay layers get added. The load handler jumps
-        // straight out to space, then flies back down — same launch, no stall.
-        zoom: 14.8,
+        // Start the adaptive map where its first visible frame belongs. Every
+        // return used to parse/upload street tiles at 14.8 before immediately
+        // discarding them for the wide view. Classic Dark + Mercator does not
+        // need the old Standard/globe street-level bootstrap.
+        zoom: adaptiveIOSLaunch ? DEFAULT_MAP_LAUNCH_ZOOM : 14.8,
         // Hard ceiling: pinch/scroll can't go deeper than the toy-diorama level.
         maxZoom: ZOOM_MAX,
         // Unlike the old globe, Mercator has a real north/south edge. Clamp
