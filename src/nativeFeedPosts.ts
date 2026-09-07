@@ -348,7 +348,9 @@ function watchAccountForOwnPosts(): void {
 }
 
 function startRealtimeFeed(): void {
-  if (unsubscribeRealtime || realtimeState === 'connecting' || realtimeState === 'live') return
+  // A native forward is already a live subscription. Joining it from Feed,
+  // Profile or Map must not erase the snapshot and restart the bridge.
+  if (unsubscribeRealtime || realtimeState !== 'idle') return
   // Inside a native shell the shell's forward is the authority: it holds the
   // signed-in Firestore session and now streams a live listener. Racing it
   // against the page's own unauthenticated client meant that whenever that
@@ -405,8 +407,11 @@ function failRealtimeFeed(): void {
 /** Legacy entry point retained for Home/native compatibility. Firestore is the
  * authority; this only starts the native request after that listener fails. */
 export function requestNativeFeedPosts(): void {
+  const alreadyNative = realtimeState === 'fallback'
   startRealtimeFeed()
-  if (realtimeState === 'fallback') requestNativeFallback()
+  // startRealtimeFeed sends the initial request itself. Explicit refreshes
+  // ask once while retaining the last delivered list until its replacement.
+  if (alreadyNative) requestNativeFallback()
 }
 
 export function onNativeFeedPosts(listener: () => void): () => void {

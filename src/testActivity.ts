@@ -217,7 +217,9 @@ export async function loadTestSimulationFeed(): Promise<BetaSimulationFeed> {
   const afterEventAtMs = uid ? readSimulationCursor(uid) : 0
   const result = await callTestActivity<unknown>({ action: 'simulationFeed', afterEventAtMs })
   const feed = normalizeSimulationFeed(result)
-  setLiveSimulationEnabled(feed.enabled)
+  // This endpoint controls delivery of private runner events, not whether
+  // tester posts are enabled. Its disabled response must not override the
+  // separate simulation configuration and empty Feed every time it polls.
   return feed
 }
 
@@ -418,7 +420,7 @@ export function useTestActivityReporter(screen: string): void {
       const now = Date.now()
       if (now - lastSimulationSyncAt < SIMULATION_SYNC_MS) return
       lastSimulationSyncAt = now
-      void loadTestSimulation().catch(() => setLiveSimulationEnabled(false))
+      void loadTestSimulation().catch(() => { /* retain the last confirmed configuration while offline */ })
     }
     let simulationFeedTimer = 0
     const syncSimulationFeedTimer = () => {

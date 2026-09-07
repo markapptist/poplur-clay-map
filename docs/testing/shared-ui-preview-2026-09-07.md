@@ -124,5 +124,24 @@ the fix, so it is not claimed as a reproduction of WebKit's crash.
 The controls checkpoint is installed on iPhone and Android, with package
 verification and existing Android app data preserved. The Profile correction
 uses `.codex/install-reports/shared-ui-profile-20260907/` for its separate
-guarded build and install receipts. The heat test remains paused until this
-correction is confirmed on the iPhone.
+guarded build and install receipts. The user confirmed Profile works on the
+updated iPhone; Android also displays the account photo and both posts.
+
+## Feed content stability
+
+The devices received tester posts across 14 channels, but a private runner-event
+response (`enabled: false`, `runner-events-are-private`) overwrote the separate
+server simulation configuration (`enabled: true`). Each poll could remove the
+tester posts from Feed's reach filter. Event delivery now leaves that configuration
+alone, and a failed configuration fetch retains the last confirmed setting.
+
+Joining the native Feed store from another screen also treated its already-active
+native listener as a new connection and published an empty list. Subscriptions
+are now idempotent; an explicit refresh keeps the current posts until the next
+native snapshot. A real empty snapshot still removes deleted posts.
+
+Three regression tests fail before these changes and pass after them. All 43
+focused tests across 11 suites and TypeScript pass. The renewed heat recording
+was stopped after 120 seconds when the content instability was reported; it is
+not an endurance result. This correction uses the parent workspace report
+`.codex/install-reports/feed-channel-loading-20260907/`.
