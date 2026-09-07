@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import ProfilePostPreview from './ProfilePostPreview'
 import { askForMotion } from './motionPermission'
 import { createPortal } from 'react-dom'
 import styles from './ProfileTwin.module.css'
@@ -702,14 +703,6 @@ export default function ProfileTwin({
     const timer = window.setTimeout(() => setLitTiles(null), 4_200)
     return () => window.clearTimeout(timer)
   }, [highlightPops, viewUser])
-  const [readyTiles, setReadyTiles] = useState<Set<string>>(() => new Set())
-  // Tiles whose static overlay has finished fading — it is then unmounted so the
-  // grid doesn't keep 15 animating layers alive forever (the feed does the same:
-  // static covers the buffer, then it's gone). The static is a cheap CSS noise
-  // sweep, NOT a <video>: a decoder per tile (a 4.7MB clip ×15) froze the main
-  // thread for ~6s on open, which also stalled the poster onLoads so the tiles
-  // stayed black. Grid previews are stills; video belongs to the viewer only.
-  const [staticGone, setStaticGone] = useState<Set<string>>(() => new Set())
   const [capturing, setCapturing] = useState(false)
   // The profile picture, PERSISTED. This tab unmounts every time the cube
   // turns (HomeTwin gates it on committedTab), so plain state meant a photo
@@ -1187,20 +1180,6 @@ export default function ProfileTwin({
       return index >= 0 ? index : null
     })
   }, [accountUid, realtimePosts, viewUser, viewUserId])
-
-  const markTileReady = useCallback((key: string) => {
-    setReadyTiles(current => (current.has(key) ? current : new Set(current).add(key)))
-  }, [])
-
-  // Retire each tile's static shortly after its preview arrives.
-  useEffect(() => {
-    const timers = [...readyTiles]
-      .filter(key => !staticGone.has(key))
-      .map(key => window.setTimeout(() => {
-        setStaticGone(current => new Set(current).add(key))
-      }, 620))
-    return () => timers.forEach(window.clearTimeout)
-  }, [readyTiles, staticGone])
 
   const contentRef = useRef<HTMLDivElement>(null)
   const pullRef = useRef<HTMLDivElement>(null)
@@ -2846,31 +2825,7 @@ export default function ProfileTwin({
                   data-synthetic-post-id={post.syntheticPostId}
                   onClick={() => { playPop(); setViewerIdx(i) }}
                 >
-                  {/* the post's own first frame… */}
-                  <img
-                    // A cached poster can finish decoding before React attaches
-                    // onLoad, so also check `complete` when the node mounts —
-                    // otherwise the tile sits empty behind its static forever.
-                    ref={el => { if (el?.complete) markTileReady(postTileKey(post, i)) }}
-                    className={readyTiles.has(postTileKey(post, i)) ? `${styles.tilePreview} ${styles.tilePreviewReady}` : styles.tilePreview}
-                    src={postPoster(post)}
-                    alt=""
-                    decoding="async"
-                    draggable="false"
-                    onLoad={() => markTileReady(postTileKey(post, i))}
-                    // A missing/failed poster must still clear its static, or the
-                    // tile stays a black box forever.
-                    onError={() => markTileReady(postTileKey(post, i))}
-                  />
-                  {/* …under live TV static, like the feed between signals: a cheap
-                      composited CSS noise sweep covers the buffer, fades when the
-                      post arrives, then unmounts (no per-tile video decoder). */}
-                  {!staticGone.has(postTileKey(post, i)) && (
-                    <span
-                      className={readyTiles.has(postTileKey(post, i)) ? `${styles.tileStatic} ${styles.tileStaticOut}` : styles.tileStatic}
-                      aria-hidden="true"
-                    />
-                  )}
+                  <ProfilePostPreview src={postPoster(post)} />
                   <span className={styles.tileScan} aria-hidden="true" />
                   <span className={styles.tileCh}>{post.ch}</span>
                 </button>

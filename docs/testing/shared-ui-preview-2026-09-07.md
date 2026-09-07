@@ -104,3 +104,25 @@ The initial iPhone recording was stopped when the controls failed; it is not
 a completed heat test. Corrected release evidence is in the parent workspace
 `.codex/install-reports/shared-ui-controls-20260907/`. A physical endurance
 result must be recorded separately after these controls are usable.
+
+## Profile cached-thumbnail crash
+
+The iPhone confirmed working Feed controls and tilt, then entering Profile
+failed with React error 185 at the cached poster callback ref. The callback
+was recreated on each Profile render and scheduled Profile state from the
+commit phase. Thumbnails now own their readiness and finite static-overlay
+timer in `ProfilePostPreview`, whose ref stays stable across parent updates.
+Loading a thumbnail no longer updates the entire Profile component.
+
+37 focused tests pass, including a populated cached-thumbnail Profile,
+realtime refresh, 60 parent rerenders without repeated cached-image checks,
+failed-poster cleanup, Profile/Settings mounting, photos, Feed controls and
+navigator tilt. TypeScript and governed loops pass. The device crash is the
+failure evidence; the broad cached-Profile fixture alone also passes before
+the fix, so it is not claimed as a reproduction of WebKit's crash.
+
+The controls checkpoint is installed on iPhone and Android, with package
+verification and existing Android app data preserved. The Profile correction
+uses `.codex/install-reports/shared-ui-profile-20260907/` for its separate
+guarded build and install receipts. The heat test remains paused until this
+correction is confirmed on the iPhone.
