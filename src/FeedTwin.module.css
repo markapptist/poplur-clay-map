@@ -1,4 +1,5 @@
 .feed {
+  --poplur-action-rail-top: calc(var(--poplur-map-control-top) + 56px);
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -707,6 +708,8 @@
   position: absolute;
   inset: 0;
   z-index: 40;
+  /* barely there: enough to lift the text, not enough to hide the post */
+  background: rgba(8, 3, 12, 0.18);
 }
 
 /* End-of-clip roll: the same drifting credits, lower third, no input row —
@@ -747,6 +750,8 @@
   display: flex;
   flex-direction: column;
   padding: 0 15px 16px;
+  /* no panel at all — the text carries itself over the video */
+  background: none;
   animation: commentDrop 0.5s cubic-bezier(0.2, 1.3, 0.4, 1) both;
 }
 
@@ -868,8 +873,7 @@
 }
 
 .commentTitle {
-  margin: 0;
-  flex: 1;
+  margin: 4px 0 10px;
   color: #fff2f8;
   font: 900 14px/1 system-ui, -apple-system, sans-serif;
   letter-spacing: 0.4px;
@@ -877,30 +881,6 @@
   text-shadow:
     0 1px 0 rgba(0, 0, 0, 0.95),
     0 2px 7px rgba(0, 0, 0, 0.85);
-}
-
-.commentHeading {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 4px 0 10px;
-}
-
-.commentClose {
-  flex: none;
-  width: 36px;
-  height: 36px;
-  font: 900 26px/1 system-ui, sans-serif;
-}
-
-.commentClose:active { transform: scale(.92); }
-
-/* Keep the authored compact geometry while the shared News control supplies
-   the material, border and press treatment. */
-.commentHeading .commentClose {
-  width: 36px;
-  height: 36px;
-  font-size: 26px;
 }
 
 .commentRow {
@@ -924,6 +904,20 @@
 }
 
 .commentInput::placeholder { color: rgba(20, 10, 4, 0.4); }
+
+.commentToast {
+  position: absolute;
+  left: 50%;
+  bottom: 168px;
+  z-index: 41;
+  transform: translateX(-50%);
+  padding: 9px 17px;
+  border-radius: 999px;
+  background: rgba(255, 247, 251, 0.95);
+  color: #23131e;
+  font: 900 12px/1 system-ui, -apple-system, sans-serif;
+  box-shadow: 0 10px 26px rgba(57, 0, 30, 0.4), inset 0 1px 0 #fff;
+}
 
 /* Edge tap zones: step between the users posting on this channel. A tall
    column down each edge — tapping the side of the picture is the feed's own
@@ -1114,22 +1108,6 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Phone comments are visually centred, not merely centred as a wide box with
-   every row left-aligned inside it. This keeps avatars/text out from under the
-   side-control rail. Tablets retain their authored left-corner posture below. */
-@media (max-width: 699px) {
-  .endComments .commentLine,
-  .commentWindow .commentLine {
-    justify-content: center;
-  }
-
-  .endComments .commentText,
-  .commentWindow .commentText {
-    flex: 0 1 auto;
-    max-width: min(68vw, 290px);
-  }
-}
-
 @media (min-width: 700px) {
   .endComments {
     left: 18px;
@@ -1270,5 +1248,4 @@
 }
 
 .railHead { position: relative; }
-.railHead .mediaTimer { position: absolute; top: 12px; left: 48px; pointer-events: none; }
-:global([data-poplur-control-rail="right"]) .railHead .mediaTimer { left: auto; right: 48px; }
+.feedHeaderCopy .mediaTimer { margin-top: 5px; align-self: center; pointer-events: none; }

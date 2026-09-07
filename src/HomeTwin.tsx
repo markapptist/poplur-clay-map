@@ -3089,7 +3089,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         if (typeof event.data.totalReachKm === 'number' && Number.isFinite(event.data.totalReachKm)) {
           setAccountTotalReachKm(event.data.totalReachKm)
         }
-        const totalRadiusKm = Number(event.data.radiusKm)
+        const totalRadiusKm = Number(event.data.totalReachKm ?? event.data.radiusKm)
         if (Number.isFinite(totalRadiusKm)) {
           authoritativeAccountRadiusKmRef.current = publishAccountRadiusKm(totalRadiusKm)
         }
@@ -4610,7 +4610,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       if (!data || ![data.radiusKm, data.totalReachKm, data.postCount].every(v => typeof v === 'number' && Number.isFinite(v) && v >= 0)) return
       setNativeAccountTotals(data)
       setAccountTotalReachKm(data.totalReachKm)
-      authoritativeAccountRadiusKmRef.current = publishAccountRadiusKm(data.radiusKm)
+      authoritativeAccountRadiusKmRef.current = publishAccountRadiusKm(data.totalReachKm)
     }
     window.addEventListener('poplur-native-account-radius', receive)
     return () => window.removeEventListener('poplur-native-account-radius', receive)
@@ -5493,13 +5493,11 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // …and the profile's own layers (viewer, share sheet, photo capture, a
     // visited profile) answer the cube rather than carrying their own ✕.
     if (activeTab === 'profile' && profileBackRef.current?.()) { playPop(); return }
-    // On the unobstructed profile the cube opens your stats: TOTAL RADIUS,
-    // who is online and how many pops you have posted — the popup the RADIUS
-    // card opens, reached from the cube as well.
+    // On the unobstructed profile the cube opens the full Stats page.
     if (activeTab === 'profile') {
       playPop()
       setPopping(true)
-      setStatsOpen(true)
+      openStatsScreen()
       return
     }
     if (activeTab === 'post') {

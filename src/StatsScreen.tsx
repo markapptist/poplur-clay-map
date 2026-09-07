@@ -4,6 +4,7 @@ import pullStyles from './PullToRefresh.module.css'
 import { radiusStats, RADIUS_CHANGE_EVENT } from './radiusLedger'
 import { usePullToRefresh } from './usePullToRefresh'
 import { onFrame } from './frameGovernor'
+import { radiusTrophyColor } from './radiusTrophies'
 
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -198,7 +199,7 @@ export default function StatsScreen({ onClose }: { onClose: () => void }) {
   const summary = funnySummary(stats)
 
   return (
-    <div ref={screenRef} className={styles.screen}>
+    <div ref={screenRef} className={styles.screen} data-poplur-screen="stats">
       <div className={pullStyles.panel} ref={pullPanelRef} data-pull-panel aria-hidden="true">
         <div className={pullStyles.head} ref={pullHeadRef}>
           <img src="sprites/poplur_mark_head_navigator_y0_p0_s640.png" alt="" draggable={false} />
@@ -215,8 +216,8 @@ export default function StatsScreen({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className={`${styles.card} ${styles.cardTop}`}>
-          <span className={styles.cardValue}>
-            <AnimNum value={stats.radiusKm} run={globeReady} delay={100} />
+          <span className={styles.cardValue} style={{ background: 'none', WebkitTextFillColor: radiusTrophyColor(stats.radiusKm, '#f63b9a'), color: radiusTrophyColor(stats.radiusKm, '#f63b9a') }}>
+            {stats.radiusKm.toLocaleString('en-US', { maximumFractionDigits: 1 })}
           </span>
           <span className={styles.cardLabel}>RADIUS KM</span>
           <div className={styles.miniFlow}>
@@ -325,7 +326,7 @@ export default function StatsScreen({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      <div ref={lineRef} className={`${styles.chartSection} ${lineVisible ? styles.visible : ''}`}>
+      <div ref={lineRef} className={`${styles.chartSection} ${styles.growthSection} ${lineVisible ? styles.visible : ''}`}>
         <h3 className={styles.chartTitle}>Radius Growth</h3>
         <div className={styles.lineWrap}>
           <svg viewBox={`0 0 ${svgW} ${svgH}`} className={styles.lineSvg}>

@@ -80,7 +80,7 @@
 
 /* Centre the fixed-size post controls inside the same safe rail as the map. */
 .fill {
-  top: var(--poplur-map-control-top);
+  top: var(--poplur-action-rail-top, var(--poplur-map-control-top));
   bottom: calc(var(--poplur-home-clearance) + var(--rail-reserve-below, 0px));
   align-content: center;
 }

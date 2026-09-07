@@ -1907,17 +1907,11 @@ export default function Camera({
         </div>
       )}
 
-      {/* Fill, as the feed's rail does: this column now carries the stepper
-          under it (the shared arrow cluster — the same four arrows doing the
-          camera's jobs), so the two blocks share the feed's tile formula and
-          land on the same bottom line. The reserve is the stepper's own
-          block: four arrow tiles, two readouts, their gaps, and the seam. The
-          ten-row size is set at the camera root (.poplur-camera-rail). */}
+      {/* The D-pad is centred independently; the rail owns this whole column. */}
       <TabControlRail
         side={controlSide}
         label="Camera controls"
         fill
-        fillReserveBelow="calc(4 * var(--poplur-feed-ctl) + 2 * var(--poplur-feed-number) + 5 * var(--poplur-feed-gap) + var(--poplur-feed-seam))"
       >
         {/* Which camera you are holding. The Kodak is the photo camera and the
             camcorder the video camera — the two objects the cube wears for

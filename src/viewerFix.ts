@@ -38,16 +38,23 @@ function nativeShell(w: FixWindow): boolean {
   return Boolean(w.PoplurNative || w.__poplurNative || w.webkit?.messageHandlers?.poplur)
 }
 
+/** Missing shell coordinates are not the real geographic origin (0, 0). */
+export function normalizeViewerFix(value: unknown): ViewerFix | null {
+  if (!value || typeof value !== 'object') return null
+  const row = value as { latitude?: unknown; longitude?: unknown }
+  const coordinate = (v: unknown): number => (
+    typeof v === 'number' || (typeof v === 'string' && v.trim() !== '')
+      ? Number(v) : Number.NaN
+  )
+  const latitude = coordinate(row.latitude)
+  const longitude = coordinate(row.longitude)
+  return Number.isFinite(latitude) && Math.abs(latitude) <= 90
+    && Number.isFinite(longitude) && Math.abs(longitude) <= 180
+    ? { latitude, longitude } : null
+}
+
 export function readViewerFix(): ViewerFix | null {
-  const w = fixWindow()
-  const row = w?.__poplurNativeLocation
-  const latitude = Number(row?.latitude)
-  const longitude = Number(row?.longitude)
-  if (Number.isFinite(latitude) && Math.abs(latitude) <= 90
-    && Number.isFinite(longitude) && Math.abs(longitude) <= 180) {
-    return { latitude, longitude }
-  }
-  return null
+  return normalizeViewerFix(fixWindow()?.__poplurNativeLocation)
 }
 
 /**
@@ -71,10 +78,9 @@ export function currentViewerCoords(): [number, number] | null {
 export function publishViewerFix(fix: { latitude: unknown; longitude: unknown }, source: string): boolean {
   const w = fixWindow()
   if (!w) return false
-  const latitude = Number(fix.latitude)
-  const longitude = Number(fix.longitude)
-  if (!Number.isFinite(latitude) || Math.abs(latitude) > 90
-    || !Number.isFinite(longitude) || Math.abs(longitude) > 180) return false
+  const normalized = normalizeViewerFix(fix)
+  if (!normalized) return false
+  const { latitude, longitude } = normalized
   const current = readViewerFix()
   if (current && current.latitude === latitude && current.longitude === longitude) return false
   const location = { type: 'poplur-location', latitude, longitude, source }

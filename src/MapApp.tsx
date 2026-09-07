@@ -313,7 +313,7 @@ import ConquerGlance from './ConquerGlance'
 import ConquerScreen from './ConquerScreen'
 import type { MapConquerSnapshot } from './mapConquer'
 import { KM_TO_MI, shouldUseMiles } from './units'
-import { currentViewerCoords, publishViewerFix } from './viewerFix'
+import { currentViewerCoords, normalizeViewerFix, publishViewerFix } from './viewerFix'
 import { playClaimDecay, playClaimGrowth } from './motionEffectsAudio'
 import styles from './App.module.css'
 import dropStyles from './ClayMap.module.css'
@@ -785,11 +785,7 @@ function nativeLocationFrom(value: unknown): NativeLocation | null {
   if (!value || typeof value !== 'object') return null
   const payload = value as { latitude?: unknown; longitude?: unknown; detail?: unknown }
   if (payload.detail && typeof payload.detail === 'object') return nativeLocationFrom(payload.detail)
-  const latitude = Number(payload.latitude)
-  const longitude = Number(payload.longitude)
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
-  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null
-  return { latitude, longitude }
+  return normalizeViewerFix(payload)
 }
 
 export default function MapApp() {
@@ -3236,7 +3232,7 @@ export default function MapApp() {
       () => setAccountRadiusSnapshot({ radiusKm: 0, totalReachKm: 0, postCount: 0 }),
     )
   }, [nativeShell, ownUid, rnWebShellRoute])
-  const accountRadiusKm = accountRadiusSnapshot.radiusKm
+  const accountRadiusKm = accountRadiusSnapshot.totalReachKm
   const accountPostCount = accountRadiusSnapshot.postCount
   const accountTotalReachKm = accountRadiusSnapshot.totalReachKm
   useEffect(() => {
@@ -3759,11 +3755,13 @@ export default function MapApp() {
    *  same way every other cross-component camera request here does. */
   const zoomTravel = useCallback((direction: 'in' | 'out') => {
     playPop(0.25)
+    stopTour()
+    const point = mapPointRouteRef.current.find(candidate => candidate.key === focusedMapPointKeyRef.current)
     const live = mapRef.current as unknown as {
-      __poplurZoomTravel?: (direction: 'in' | 'out') => void
+      __poplurZoomTravel?: (direction: 'in' | 'out', point?: MapCyclePoint | null) => void
     } | null
-    live?.__poplurZoomTravel?.(direction)
-  }, [mapRef])
+    live?.__poplurZoomTravel?.(direction, point)
+  }, [mapRef, stopTour])
 
   const cycleMapPoint = useCallback((direction: -1 | 1) => {
     const route = mapPointRouteRef.current

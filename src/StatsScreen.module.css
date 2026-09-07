@@ -622,3 +622,34 @@
   .lineArea { animation: none; opacity: 1; }
   .lineDot { animation: none; opacity: 1; }
 }
+
+/* Tablets use the available width instead of stretching a phone column. */
+@media (min-width: 700px) {
+  .screen {
+    padding-left: 28px;
+    padding-right: 28px;
+    padding-bottom: calc(var(--poplur-home-clearance, 170px) + 24px);
+  }
+  .pullInner {
+    display: grid;
+    grid-template-columns: minmax(340px, 1fr) minmax(270px, 1fr);
+    max-width: 1120px;
+    gap: 28px;
+    align-items: start;
+  }
+  .globeSection { max-width: 460px; justify-self: center; }
+  .summary { width: 100%; max-width: none; align-self: center; text-align: left; padding: 20px 4px; }
+  .summaryTitle { text-align: left; }
+  .summaryLine { font-size: 16px; line-height: 1.65; }
+  .chartSection { width: 100%; max-width: none; margin: 0; box-sizing: border-box; }
+  .growthSection { grid-column: 1 / -1; }
+  .spacer { display: none; }
+}
+@media (min-width: 1000px) {
+  .pullInner { gap: 36px; }
+  .globeSection { max-width: 480px; }
+  .card { width: 122px; }
+  .cardTop { width: 164px; }
+  .cardLabel { font-size: 10px; }
+  .summaryLine { font-size: 18px; }
+}

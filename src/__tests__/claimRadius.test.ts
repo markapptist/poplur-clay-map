@@ -28,15 +28,17 @@ describe('claim radius entitlement', () => {
     expect(claimRadiusLimitKm(5.5)).toBe(5.5)
   })
 
-  it('offers everything the account has earned, and never more', () => {
-    expect(claimRadiusLimitKm(12.3)).toBe(12)
-    expect(clampClaimRadiusKm(25, 12.3)).toBe(12)
+  it('offers the exact account total, including a partial final step', () => {
+    expect(claimRadiusLimitKm(90.432)).toBe(90.432)
+    expect(clampClaimRadiusKm(90.432, 90.432)).toBe(90.432)
+    expect(claimRadiusLimitKm(12.3)).toBe(12.3)
+    expect(clampClaimRadiusKm(25, 12.3)).toBe(12.3)
     // The per-drop ceiling was 25 km, so an owner holding 72.8 km was offered
     // 25 (user-ordered 6 Sep). What you earned is what you may claim.
-    expect(claimRadiusLimitKm(41.8)).toBe(41.5)
-    expect(clampClaimRadiusKm(99, 41.8)).toBe(41.5)
-    expect(claimRadiusLimitKm(72.8)).toBe(72.5)
-    expect(clampClaimRadiusKm(75, 72.8)).toBe(72.5)
+    expect(claimRadiusLimitKm(41.8)).toBe(41.8)
+    expect(clampClaimRadiusKm(99, 41.8)).toBe(41.8)
+    expect(claimRadiusLimitKm(72.8)).toBe(72.8)
+    expect(clampClaimRadiusKm(75, 72.8)).toBe(72.8)
     // The planet is still the ceiling: no account claims past the world.
     expect(claimRadiusLimitKm(99_999)).toBe(6_371)
   })

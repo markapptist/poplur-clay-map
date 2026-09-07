@@ -2375,10 +2375,9 @@ export default function FeedTwin({
           // under it is the bottom-centre cluster now — so the rail runs the
           // full height instead of reserving room for a block that left.
           reserveBelow="0px"
-          // Block and the media timer came off the channel dial's shoulder
-          // into this rail; delete uses the rail's own onDelete, which was
-          // always there. The dial opposite is only a dial now.
-          head={post && (canBlockPoster || post.live || remainingSeconds !== null) ? (
+          // Block and delete belong to the action rail. The countdown sits
+          // under the username, and the opposite rail is the channel dial.
+          head={post && canBlockPoster ? (
             <span className={styles.railHead}>
               {/* Block wears the supplied clay art (global.block) through the
                   registry, like every other side control. A plain button so
@@ -2394,16 +2393,6 @@ export default function FeedTwin({
                 >
                   <SideControlIconImage icon="global.block" displaySize={44} fluid />
                 </button>
-              )}
-              {/* The timer only exists while something is counting down. An
-                  unlimited photo used to wear an "∞" chip here and a video
-                  showed "–:––" until its duration was known; neither is a
-                  time, so neither is drawn (user-ordered 5 Sep). LIVE keeps
-                  its chip: it is the one non-number that IS a state of time. */}
-              {(post.live || remainingSeconds !== null) && (
-                <output className={styles.mediaTimer} aria-label="Media time remaining" data-feed-timer="">
-                  {post.live ? 'LIVE' : mediaTimeLabel(remainingSeconds)}
-                </output>
               )}
             </span>
           ) : undefined}
@@ -2521,6 +2510,11 @@ export default function FeedTwin({
                 </span>
               </div>
               )}
+              {(post.live || remainingSeconds !== null) && (
+                <output className={styles.mediaTimer} aria-label="Media time remaining" data-feed-timer="">
+                  {post.live ? 'LIVE' : mediaTimeLabel(remainingSeconds)}
+                </output>
+              )}
               {/* The DM action moved to the control rail (feed.dm, the mail
                   icon): a pill under the byline covered the video and read as
                   part of the headline rather than as an action. */}
@@ -2588,11 +2582,10 @@ export default function FeedTwin({
 
       {/* Comment box drops from the top, in the app's clay/glass language. */}
       {commentOpen && post && (
-        <div className={`${styles.commentScrim} ${surfaceStyles.scrim}`} onClick={closeComments}>
+        <div className={styles.commentScrim} onClick={closeComments}>
           <div
             className={[
               styles.commentWindow,
-              surfaceStyles.surface,
               commentClosing ? styles.commentWindowOut : '',
             ].filter(Boolean).join(' ')}
             role="dialog"
@@ -2626,10 +2619,7 @@ export default function FeedTwin({
               </div>
             </div>
 
-            <div className={`${styles.commentHeading} ${surfaceStyles.header}`}>
-              <div className={styles.commentTitle}>Comment on {post.user}</div>
-              <button type="button" className={`${styles.commentClose} ${surfaceStyles.close}`} onClick={closeComments} aria-label="Close comments">×</button>
-            </div>
+            <div className={styles.commentTitle}>Comment on {post.user}</div>
             <div className={styles.commentRow}>
               <input
                 className={styles.commentInput}

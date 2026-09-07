@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { PREVIEW_VIEWER_COORDS, currentViewerCoords, publishViewerFix, readViewerFix } from '../viewerFix'
+import { PREVIEW_VIEWER_COORDS, currentViewerCoords, normalizeViewerFix, publishViewerFix, readViewerFix } from '../viewerFix'
 
 // vitest runs in node (no document): stand in a bare EventTarget for `window`
 // so the module's reads, writes and `poplur-location` dispatch can be observed.
@@ -36,4 +36,16 @@ describe('one viewer fix for Map and Feed', () => {
     expect(publishViewerFix({ latitude: 91, longitude: 1 }, 'map')).toBe(false)
     expect(readViewerFix()).toBeNull()
   })
+  it('does not turn missing or empty native coordinates into an ocean destination', () => {
+    for (const value of [null, undefined, '', ' ', false, []]) {
+      const missing = { latitude: value, longitude: value }
+      expect(normalizeViewerFix(missing)).toBeNull()
+      expect(publishViewerFix(missing, 'native')).toBe(false)
+      ;(globalThis.window as unknown as Record<string, unknown>).__poplurNativeLocation = missing
+      expect(readViewerFix()).toBeNull()
+    }
+    expect(normalizeViewerFix({ latitude: 0, longitude: 0 })).toEqual({ latitude: 0, longitude: 0 })
+    expect(normalizeViewerFix({ latitude: '43.7', longitude: '-79.4' })).toEqual({ latitude: 43.7, longitude: -79.4 })
+  })
+
 })

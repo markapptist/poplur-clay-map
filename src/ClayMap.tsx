@@ -1,3 +1,4 @@
+import { normalizeViewerFix } from './viewerFix'
 import ShellOverlayPortal from './ShellOverlayPortal'
 import { installCloseMapTimeout } from './closeMapTimeout'
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
@@ -123,7 +124,6 @@ import styles from './ClayMap.module.css'
 import surfaceStyles from './TransientPopupSurface.module.css'
 import { dropNewsMessage, MESSAGE_MAX } from './newsMessages'
 import {
-  CLAIM_RADIUS_STEP_KM,
   CLAIM_RADIUS_SEED_KM,
   clampClaimRadiusKm,
   formatClaimRadiusKm,
@@ -1432,11 +1432,8 @@ function readBridgeLocation(value: unknown): [number, number] | null {
   if (!value || typeof value !== 'object') return null
   const payload = value as { latitude?: unknown; longitude?: unknown; detail?: unknown }
   if (payload.detail && typeof payload.detail === 'object') return readBridgeLocation(payload.detail)
-  const latitude = Number(payload.latitude)
-  const longitude = Number(payload.longitude)
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
-  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null
-  return [longitude, latitude]
+  const fix = normalizeViewerFix(payload)
+  return fix ? [fix.longitude, fix.latitude] : null
 }
 
 // ── Reach ring: how far YOUR total radius reaches from where you stand ──────
@@ -7088,25 +7085,38 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
    * Going in centers the selected pin at building level with a 3D pitch.
    * Radius remains the pin's reach; it no longer limits the camera zoom.
    */
-  const travelCamera = useCallback((direction: 'in' | 'out') => {
-    const live = mapRef.current as (mapboxgl.Map & { __cinematic?: boolean }) | null
+  const travelCamera = useCallback((direction: 'in' | 'out', requestedPoint?: MapCyclePoint | null) => {
+    const live = mapRef.current as (mapboxgl.Map & {
+      __cinematic?: boolean; __claimCamera?: () => void; __cancelAdaptiveCameraSettle?: () => void
+    }) | null
+    if (!live) return
+    // A slider spring calls setZoom, which cancels easeTo. Retire it before
+    // the arrow takes ownership, including a spring parked by a tab change.
+    if (zoomAnimationRef.current) cancelAnimationFrame(zoomAnimationRef.current)
+    zoomAnimationRef.current = 0
+    zoomVelocityRef.current = 0
     initialCameraInteractionRef.current = true
+    live.__claimCamera?.()
+    live.__cancelAdaptiveCameraSettle?.()
     stopOrbitRef.current()
-    if (live) { live.__cinematic = false; live.stop() }
+    live.__cinematic = false
+    live.stop()
     if (direction === 'out') { applyZoom(ZOOM_MIN); return }
 
-    const point = focusedMapPointRef.current
+    const point = requestedPoint ?? focusedMapPointRef.current
+
     const subject = point?.kind === 'pin'
       ? (pinsRef.current ?? []).find(candidate => candidate.id === point.id) ?? null
       : point?.kind === 'current' && (accountRadiusKmRef.current ?? 0) > 0
         ? { coords: point.coords, radiusKm: accountRadiusKmRef.current as number }
         : null
-    if (!live) return
-    const center = subject?.coords ?? point?.coords ?? live.getCenter().toArray()
+    const center = subject?.coords ?? point?.coords ?? nativeLocationRef.current ?? live.getCenter().toArray()
     const landmarkFrame = point?.kind === 'landmark' ? landmarkTourCameraFrame(point.id) : null
     const zoom = landmarkFrame?.zoom ?? ZOOM_TRAVEL_BUILDING_LEVEL
     const pad = framePaddingFor(live.getContainer())
     wakeManagedRendering(900 + MANAGED_CAMERA_SETTLE_MS)
+    live.setMinPitch(0)
+    live.setMaxPitch(Math.max(MAP_BROWSE_3D_MAX_PITCH, landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH))
     live.easeTo({
       center: landmarkFrame?.center ?? [center[0], center[1]],
       pitch: landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH,
@@ -7124,7 +7134,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   useEffect(() => {
     const map = mapRef.current
     if (!map || mapEpoch === 0) return
-    const holder = map as mapboxgl.Map & { __poplurZoomTravel?: (direction: 'in' | 'out') => void }
+    const holder = map as mapboxgl.Map & { __poplurZoomTravel?: (direction: 'in' | 'out', point?: MapCyclePoint | null) => void }
     holder.__poplurZoomTravel = travelCamera
     return () => { delete holder.__poplurZoomTravel }
   }, [mapEpoch, mapRef, travelCamera])
@@ -7453,7 +7463,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
                 type="range"
                 min={CLAIM_RADIUS_SEED_KM}
                 max={claimRadiusMaxKm}
-                step={CLAIM_RADIUS_STEP_KM}
+                step="any"
                 value={composeRadiusKm}
                 onInput={(e) => setComposeRadiusKm(clampClaimRadiusKm(
                   parseFloat(e.currentTarget.value),

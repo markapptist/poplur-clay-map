@@ -652,10 +652,9 @@ export default function HoldMenuTwin({
         onCloseRef.current('dismiss')
         return true
       }
-      // TV Guide labels the persistent TV/cube as its back control. It has no
-      // nested native handler, so explicitly return to Feed here instead of
-      // letting Home fall through to the Feed suggestion action.
-      if (activeScreen?.screen === 'feed-tvguide') {
+      // These pages use the persistent cube as Back. Consume that press
+      // before Home can run the underlying Map, Feed or Profile action.
+      if (activeScreen && ['feed-tvguide', 'map-conquer', 'profile-stats'].includes(activeScreen.screen)) {
         subscreenNavigationPopRef.current = true
         activeScreenRef.current = null
         setActiveScreen(null)

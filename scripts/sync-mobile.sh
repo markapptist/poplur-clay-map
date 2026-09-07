@@ -22,11 +22,8 @@ export VITE_MAPBOX_TOKEN
 
 IOS_DEST="/Users/matrix/Developer/Poplur2025-iOS/ClayMapWeb"
 ANDROID_DEST="/Users/matrix/Developer/Poplur2025-Android/app/src/main/assets/claymap"
-RN_DEST="/Users/matrix/Developer/Poplur2025-ReactNative/src/assets/claymap/claymap.zip"
 BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/poplur-mobile-dist.XXXXXX")"
 PUBLISH_LOCK="${TMPDIR:-/tmp}/poplur-mobile-sync.lock"
-RN_TMP="$(mktemp "${TMPDIR:-/tmp}/poplur-claymap.zip.XXXXXX")"
-RN_VERIFY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/poplur-rn-verify.XXXXXX")"
 GATE_SERVER_LOG="$(mktemp "${TMPDIR:-/tmp}/poplur-gate-server.log.XXXXXX")"
 GATE_SERVER_PID=""
 LOCK_HELD=0
@@ -35,8 +32,6 @@ cleanup() {
   if [[ -n "$GATE_SERVER_PID" ]]; then kill "$GATE_SERVER_PID" 2>/dev/null || true; fi
   rm -f "$GATE_SERVER_LOG"
   rm -rf "$BUILD_DIR"
-  rm -f "$RN_TMP"
-  rm -rf "$RN_VERIFY_DIR"
   # A queued release may acquire the same directory immediately after this
   # process stops owning it. Never let a late cleanup remove that newer
   # owner's lock.
@@ -72,7 +67,7 @@ node scripts/verify-tab-model-quality.mjs
 ./node_modules/.bin/tsc --noEmit
 ./node_modules/.bin/vite build --outDir "$BUILD_DIR"
 # Phones never receive source models or the published feed/channel packs (the
-# rsync and RN archive below exclude them too). Drop them from the snapshot now
+# native bundle copies below exclude them too). Drop them from the snapshot now
 # so everything downstream of this line — including the thermal gate's
 # measurement — sees exactly the bytes a device will run. AR filters stay
 # bundled while that pack is explicitly pinned as unpublished.
@@ -286,50 +281,6 @@ sync_to() {
 sync_to "$IOS_DEST"
 sync_to "$ANDROID_DEST"
 
-# React Native serves the same Vite bundle from a loopback static server. Keep
-# its archive in this release path too; omitting it was why the RN device could
-# keep opening an older home/subscreen build after iOS and Android had moved on.
-rm -f "$RN_TMP"
-(
-  cd "$BUILD_DIR"
-  zip -qr "$RN_TMP" . \
-    -x 'models/*' \
-    -x 'feed/*' \
-    -x 'channels/*'
-)
-unzip -tq "$RN_TMP" >/dev/null
-unzip -qq "$RN_TMP" "${WARDROBE_ASSETS[@]}" "${FEED_SIDE_ICON_ASSETS[@]}" -d "$RN_VERIFY_DIR"
-verify_wardrobe_assets "$RN_VERIFY_DIR"
-verify_feed_side_icons "$RN_VERIFY_DIR"
-mv -f "$RN_TMP" "$RN_DEST"
-
-# The RN repo no longer TRACKS that zip (it is ~105MB rewritten on every web
-# change, and Git LFS stores whole copies — 135 of them exhausted the budget
-# and blocked the repo entirely). It tracks bundle.json instead, and its build
-# refuses to start when the zip on disk is not the one recorded there. So the
-# record has to be rewritten with the file, or the next RN build fails on a
-# bundle that is actually correct.
-RN_MANIFEST="/Users/matrix/Developer/Poplur2025-ReactNative/src/assets/claymap/bundle.json"
-if [ -f "$RN_MANIFEST" ]; then
-  RN_BYTES="$(/usr/bin/stat -f%z "$RN_DEST")"
-  RN_SHA="$(/usr/bin/shasum -a 256 "$RN_DEST" | cut -d' ' -f1)"
-  RN_VER="$(sed -n "s/.*BUNDLE_VERSION = '\([0-9]*\)'.*/\1/p" \
-    /Users/matrix/Developer/Poplur2025-ReactNative/src/screens/PostLoginHomeWebScreen.tsx | head -n 1)"
-  python3 - "$RN_MANIFEST" "$RN_BYTES" "$RN_SHA" "$RN_VER" <<'PYEOF'
-import json, sys
-path, byte_count, digest, version = sys.argv[1:5]
-with open(path) as handle:
-    manifest = json.load(handle)
-manifest['bytes'] = int(byte_count)
-manifest['sha256'] = digest
-if version:
-    manifest['bundleVersion'] = version
-with open(path, 'w') as handle:
-    json.dump(manifest, handle, indent=2)
-    handle.write('\n')
-PYEOF
-  echo "  updated RN bundle.json -> v${RN_VER} ${RN_BYTES} bytes"
-fi
-
-echo "Synced clay map bundle:"
-du -sh "$IOS_DEST" "$ANDROID_DEST" "$RN_DEST"
+# The workspace release policy excludes Expo/React Native on every platform.
+echo "Synced native clay map bundles:"
+du -sh "$IOS_DEST" "$ANDROID_DEST"

@@ -132,6 +132,7 @@
    this spacing twelve rows need more column than there is, which is what the
    compressing formula exists to solve. */
 .poplur-camera-rail {
+  --poplur-action-rail-top: calc(var(--poplur-map-control-top) + 56px);
   --poplur-feed-ctl: clamp(
     44px,
     calc((var(--poplur-feed-column) - 9 * 12px) / 10),

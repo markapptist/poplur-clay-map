@@ -57,7 +57,7 @@ describe('Profile side-button bridge contracts', () => {
     expect(profileSource).toContain('viewUserId = null')
     expect(profileSource).toContain('explicitRecipientId')
     expect(feedSource).toContain('ownerId: post.ownerId')
-    expect(feedSource).toContain('onOpenProfile?.(current.user, current.ownerId)')
+    expect(feedSource).toContain('onOpenProfile?.(own ? null : current.user, current.ownerId, radiusPostId(ch.id, current))')
     expect(homeSource).toContain('viewUserId={viewingUserId}')
     expect(mapSource).toContain('userId: pin.ownerId')
   })
