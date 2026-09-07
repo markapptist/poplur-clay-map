@@ -95,7 +95,7 @@ describe('every surface answers one owner list', () => {
     // stops than the wash it replaced. The ground fill and the boundary line
     // are real geometry and carry territory out there instead.
     expect(clayMap).toMatch(/const CLAIM_SURFACE_MIN_ZOOM = 13/)
-    expect(clayMap).toContain('map.getZoom() < CLAIM_SURFACE_MIN_ZOOM ? [] : visibleGroundClaims(map)')
+    expect(clayMap).toContain('map.getZoom() >= CLAIM_SURFACE_MIN_ZOOM || isWorldRadiusKm(claim.radiusKm)')
   })
 
   it('repaints the surfaces when the camera crosses that zoom', () => {

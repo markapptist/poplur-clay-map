@@ -114,28 +114,15 @@ const EARTH_CIRCUMFERENCE_KM = 40_075
  *  be. Same rule the reach ring and the reach predicate use. */
 const WORLD_DRAW_KM = EARTH_RADIUS_KM * Math.PI * 0.995
 
-/**
- * Does this claim describe GROUND, or only reach?
- *
- * A claim at the top of the radius scale reaches everyone, everywhere. That is
- * a statement about delivery, not about territory, and painting it as terrain
- * makes it the only thing on the map: it covers every viewport at every zoom,
- * so it can only ever bury the claims underneath it. Measured 4 Sep — three
- * world-radius posts on ONE account turned the whole board that account's
- * colour and hid fifteen real claims (8.9km to 157km) beneath it, which reads
- * as "the map is broken" rather than as "somebody holds the world".
- *
- * Reach is untouched: such a post still intercepts every feed, still stands
- * its pin, and still counts toward the planet scoreboard. It just cannot be
- * drawn as land, because land you cannot see past is not information.
- */
+/** Only the selected pin paints territory. At world radius its coverage is
+ * global; unselected claims remain in the ledger without obscuring the map. */
 let selectedGroundPin: string | null | undefined
 let selectedGroundColor: string | undefined
 function groundSelected(claim: Claim): boolean {
   return selectedGroundPin === undefined || claim.id === selectedGroundPin
 }
 function paintsGround(claim: Claim): boolean {
-  return groundSelected(claim) && !isWorldRadiusKm(claim.radiusKm)
+  return groundSelected(claim) && (!isWorldRadiusKm(claim.radiusKm) || claim.id === selectedGroundPin)
 }
 function displayedClaim(claim: Claim): Claim {
   return claim.id === selectedGroundPin && selectedGroundColor
@@ -451,6 +438,7 @@ interface RankedClaim {
 /** Approximate intersection with the current camera footprint, including a
  * claim whose centre is just off-screen but whose claimed ground reaches in. */
 function claimTouchesViewport(map: mapboxgl.Map, claim: Claim): boolean {
+  if (isWorldRadiusKm(claim.radiusKm)) return true
   try {
     const bounds = map.getBounds()
     if (!bounds) return true
@@ -590,9 +578,8 @@ export function claimsWithinCollection(): GeoJSON.FeatureCollection {
  * evaluate for polygons, and measured to the claim's centre it needs two
  * coordinates per claim rather than a 145-vertex ring.
  *
- * Bounded the same way the building expression is: world-radius claims describe
- * reach rather than land (see `paintsGround`), and only claims that can touch
- * the settled camera are worth carrying. Returns null when nothing is claimed
+ * Bounded the same way the building expression is: only selected claims that
+ * can touch the settled camera are worth carrying. A world claim is constant. Returns null when nothing is claimed
  * here, which is the caller's signal to paint the plain palette rather than
  * wrap it in a test that can only ever be false.
  */
@@ -600,7 +587,7 @@ export function claimedGroundTest(map: mapboxgl.Map): unknown | null {
   const here = visibleGroundClaims(map)
   if (!here.length) return null
   return ['any', ...here.map(claim => (
-    ['<=', ['distance', { type: 'Point', coordinates: claim.center }], claim.radiusKm * 1000]
+    isWorldRadiusKm(claim.radiusKm) ? true : ['<=', ['distance', { type: 'Point', coordinates: claim.center }], claim.radiusKm * 1000]
   ))]
 }
 
@@ -616,8 +603,8 @@ export function claimedGroundTest(map: mapboxgl.Map): unknown | null {
  * been owner-aware; roads, parks, water and the ground now ask the same
  * question, of the same list, in the same order.
  *
- * World-radius claims are excluded (see `paintsGround`): they describe reach,
- * not land, and one of them would otherwise recolour every surface on Earth.
+ * Only the selected pin paints ground. Its world tier deliberately reaches
+ * every viewport; ordinary radii keep their local intersection test.
  */
 export function visibleGroundClaims(map: mapboxgl.Map): Claim[] {
   return [...claims.values()]

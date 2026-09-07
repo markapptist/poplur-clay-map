@@ -8,7 +8,7 @@ const post = (id: string, data: Record<string, unknown>) => ({ id, data: () => d
 
 describe('authoritative account post radius', () => {
   it('is exactly zero for a fresh account', () => {
-    expect(accountRadiusSnapshotFromDocuments([])).toEqual({ radiusKm: 0, postCount: 0 })
+    expect(accountRadiusSnapshotFromDocuments([])).toEqual({ radiusKm: 0, totalReachKm: 0, postCount: 0 })
   })
 
   it('sums every authored post rather than a capped public-map feed', () => {
@@ -17,6 +17,7 @@ describe('authoritative account post radius', () => {
     }))
     expect(accountRadiusSnapshotFromDocuments(documents)).toEqual({
       radiusKm: 0.5,
+      totalReachKm: 0.5,
       postCount: 180,
     })
   })
@@ -55,4 +56,11 @@ describe('entitlement counts earned radius, never a seed', () => {
     expect(radiusKmFromAccountPost({ radius: 7_000, seedRadiusMeters: 5_000 })).toBe(2)
     expect(radiusKmFromAccountPost({ radius: 3_000, seedRadiusMeters: 5_000 })).toBe(0)
   })
+})
+
+it('reports the sum of full post reach separately from earned claim allowance', () => {
+  expect(accountRadiusSnapshotFromDocuments([
+    post('seeded', { radius: 44566, seedRadiusMeters: 23500, organicRadiusMeters: 21066 }),
+    post('legacy', { radius: 21827, organicRadiusMeters: 21827 }),
+  ])).toEqual({ radiusKm: 42.893, totalReachKm: 66.393, postCount: 2 })
 })

@@ -832,6 +832,7 @@
 
 /* ── Drop console: one molded control dock over the selected map point ── */
 .composeDismissLayer {
+  pointer-events: auto;
   position: absolute;
   inset: 0;
   z-index: 39;
@@ -856,6 +857,7 @@
 }
 
 .composeBubble {
+  pointer-events: auto;
   position: absolute;
   left: 50%;
   top: 48%;

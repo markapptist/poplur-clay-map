@@ -40,6 +40,7 @@ export default function PoplurDialog({
   dataId,
   ariaLabel,
   variant = 'card',
+  mediaBadge,
 }: {
   eyebrow?: string
   title: string
@@ -65,6 +66,7 @@ export default function PoplurDialog({
    * (user-ordered 6 Sep). The title still ships, for screen readers.
    */
   variant?: 'card' | 'media'
+  mediaBadge?: string
 }) {
   const mediaFirst = variant === 'media'
   const stop = (event: { stopPropagation: () => void }) => event.stopPropagation()
@@ -136,6 +138,7 @@ export default function PoplurDialog({
           <button type="button" className={styles.close} aria-label="Close" onClick={onClose}>×</button>
         )}
         <div className={mediaFirst ? `${styles.panel} ${styles.panelMedia}` : styles.panel}>
+          {mediaFirst && mediaBadge && <p className={styles.mediaBadge}>{mediaBadge}</p>}
           {eyebrow && !mediaFirst && <p className={styles.eyebrow}>{eyebrow}</p>}
           {mediaFirst
             ? <h2 className={styles.srOnly}>{title}</h2>

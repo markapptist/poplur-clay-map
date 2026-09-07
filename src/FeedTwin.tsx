@@ -1872,6 +1872,7 @@ export default function FeedTwin({
     if (!current) return
     showPopup({
       kind: 'suggestion',
+      fullscreen: true,
       card: feedSuggestionFor({
         ...channel,
         user: current.user,

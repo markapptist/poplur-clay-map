@@ -1,3 +1,4 @@
+import { isWorldRadiusKm } from './worldRadius'
 import { dominancePower } from './mapDominance'
 
 /**
@@ -121,5 +122,6 @@ export function claimSurfaceColorExpression(
  * are the one geometry `within` actually answers for.)
  */
 function claimReachTest(center: [number, number], radiusKm: number): unknown {
+  if (isWorldRadiusKm(radiusKm)) return true
   return ['<=', ['distance', { type: 'Point', coordinates: center }], radiusKm * 1000]
 }

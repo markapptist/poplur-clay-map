@@ -26,13 +26,8 @@ export interface RadiusTrophy {
    *  under public/models/, which never ships to a phone; only the baked
    *  sprite does. */
   model: string
-  /** The metal, as one flat colour a label can be written in. Taken from the
-   *  mid stop of the medal gradients the TV guide already strikes its top
-   *  three in, so a radius label and a leaderboard medal are the same bronze.
-   *  Platinum and diamond continue the run past them: a pale cool white, then
-   *  the ice blue the map's radius label has always been written in — so the
-   *  very top of the tower is where the old fixed colour turns out to have
-   *  belonged all along. */
+  /** Label swatch for the supplied trophy material. Diamond uses its
+   * pale lavender/silver sprite, rather than the old fixed cyan HUD colour. */
   color: string
 }
 
@@ -41,7 +36,7 @@ export const RADIUS_TROPHIES: readonly RadiusTrophy[] = [
   { tier: 'silver',   name: 'Silver',   km: 10,              color: '#c2cdd9', model: 'models/poplur_trophy_silver.glb' },
   { tier: 'gold',     name: 'Gold',     km: 100,             color: '#f0b429', model: 'models/poplur_trophy_gold.glb' },
   { tier: 'platinum', name: 'Platinum', km: 1_000,           color: '#e6f0ff', model: 'models/poplur_trophy_platinum.glb' },
-  { tier: 'diamond',  name: 'Diamond',  km: EARTH_RADIUS_KM, color: '#7fe3ff', model: 'models/poplur_trophy_diamond.glb' },
+  { tier: 'diamond',  name: 'Diamond',  km: EARTH_RADIUS_KM, color: '#c8c1d5', model: 'models/poplur_trophy_diamond.glb' },
 ]
 
 /** The sprite view every trophy is baked at. One view, so the knob swaps

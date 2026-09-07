@@ -1,3 +1,5 @@
+import ShellOverlayPortal from './ShellOverlayPortal'
+import { installCloseMapTimeout } from './closeMapTimeout'
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import mapboxgl, { type PointLike } from 'mapbox-gl'
 import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
@@ -45,6 +47,7 @@ import {
   WORLD_LANDMARK_OVERVIEW_SPRITES,
   WORLD_LANDMARK_THUMB_SPRITES,
   landmarkCameraFrame as resolveLandmarkCameraFrame,
+  landmarkTourCameraFrame,
   landmarkRendererCompanions,
   landmarkRendererRootId,
   landmarkNearZoom,
@@ -682,7 +685,8 @@ function claimedSurfaceSets(
   // line are real geometry, drawn from the claim polygon itself, and they are
   // what carries territory at scoreboard zooms. The surface recolour is the
   // close-in treatment, and it starts exactly where it can tell the truth.
-  const here = map.getZoom() < CLAIM_SURFACE_MIN_ZOOM ? [] : visibleGroundClaims(map)
+  const here = visibleGroundClaims(map).filter(claim =>
+    map.getZoom() >= CLAIM_SURFACE_MIN_ZOOM || isWorldRadiusKm(claim.radiusKm))
   const plain: ClaimSurfacePalette = {
     land: palette.land,
     park: palette.park,
@@ -1597,10 +1601,9 @@ const TOUR_SUBJECTS: Array<[number, number]> = [
   [-122.4783, 37.8199],// Golden Gate, SF
 ]
 
-// At globe-scale zoom a pitched Mercator camera can see past the finite
-// north/south map plane. Keep the sheet larger than a phone/tablet viewport;
-// App uses this same floor for every programmatic cross-country flight.
-export const MAP_MIN_ZOOM = MAP_2D || SHARED_ADAPTIVE_MAP ? 3 : 1
+// Wide views are flat, so the globe end of the rail can show substantially
+// more than the former z3 continent view. Cross-country flights share this floor.
+export const MAP_MIN_ZOOM = 1
 const ZOOM_MIN = MAP_MIN_ZOOM
 // Slider top end. Zoom 16.x still reads like a satellite overview; 18.x gets
 // close enough for Mapbox Standard's 3D building massing to be obvious.
@@ -3955,6 +3958,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         if (map.getMinPitch() !== 0) map.setMinPitch(0)
         if (map.getMaxPitch() !== 0) map.setMaxPitch(0)
         return
+      }
+      const point = focusedMapPointRef.current
+      const subjectFrame = point?.kind === 'landmark' ? landmarkTourCameraFrame(point.id) : null
+      if (subjectFrame && map.getZoom() > subjectFrame.zoom + 0.01) {
+        map.setZoom(subjectFrame.zoom)
       }
       const performanceMode = PoplurPerformanceManager.policy.mode
       if ((map as unknown as { __cinematic?: boolean }).__cinematic) {
@@ -7000,7 +7008,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   }
 
   const commitZoom = (value: number) => {
-    const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value))
+    const point = focusedMapPointRef.current
+    const ceiling = point?.kind === 'landmark' ? landmarkTourCameraFrame(point.id)?.zoom ?? ZOOM_MAX : ZOOM_MAX
+    const next = Math.max(ZOOM_MIN, Math.min(ceiling, value))
     zoomValueRef.current = next
     setZoomValue(next)
     mapRef.current?.setZoom(next)
@@ -7016,7 +7026,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       let remaining = Math.min(0.1, Math.max(1 / 240, (now - zoomLastFrameRef.current) / 1000))
       zoomLastFrameRef.current = now
       let current = zoomValueRef.current
-      const target = zoomTargetRef.current
+      const point = focusedMapPointRef.current
+      const ceiling = point?.kind === 'landmark' ? landmarkTourCameraFrame(point.id)?.zoom ?? ZOOM_MAX : ZOOM_MAX
+      const target = Math.min(zoomTargetRef.current, ceiling)
       let velocity = zoomVelocityRef.current
 
       // A lightly under-damped, short-travel spring: it takes the hard digital
@@ -7091,12 +7103,15 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         : null
     if (!live) return
     const center = subject?.coords ?? point?.coords ?? live.getCenter().toArray()
-    const zoom = ZOOM_TRAVEL_BUILDING_LEVEL
+    const landmarkFrame = point?.kind === 'landmark' ? landmarkTourCameraFrame(point.id) : null
+    const zoom = landmarkFrame?.zoom ?? ZOOM_TRAVEL_BUILDING_LEVEL
     const pad = framePaddingFor(live.getContainer())
     wakeManagedRendering(900 + MANAGED_CAMERA_SETTLE_MS)
     live.easeTo({
-      center: [center[0], center[1]],
-      pitch: MAP_BROWSE_3D_PITCH,
+      center: landmarkFrame?.center ?? [center[0], center[1]],
+      pitch: landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH,
+      bearing: landmarkFrame?.bearing ?? live.getBearing(),
+      offset: landmarkFrame?.offset,
       zoom,
       padding: pad,
       duration: 900,
@@ -7113,6 +7128,19 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     holder.__poplurZoomTravel = travelCamera
     return () => { delete holder.__poplurZoomTravel }
   }, [mapEpoch, mapRef, travelCamera])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || mapEpoch === 0 || radiusPreviewLaunch) return
+    return installCloseMapTimeout(map, () => {
+      stopOrbitRef.current()
+      ;(map as mapboxgl.Map & { __cinematic?: boolean }).__cinematic = false
+      map.stop()
+      map.setMinPitch(0)
+      wakeManagedRendering(900 + MANAGED_CAMERA_SETTLE_MS)
+      map.easeTo({ zoom: 12.2, pitch: 0, duration: 900, essential: true })
+    })
+  }, [mapEpoch, mapRef, radiusPreviewLaunch])
 
   // Screen Y → zoom. The rail runs globe (bottom) to street (top), so the
   // ratio is inverted against the usual top-down reading.
@@ -7298,6 +7326,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           location to post somewhere else". The picker keeps the veil for depth
           and gives up its click: the canvas's own handler below already
           answers a picker tap with exactly the same re-pick. */}
+      <ShellOverlayPortal>
       {composeAt && focusedPickerLaunch && (
         <div aria-hidden="true" className={`${styles.composeDismissLayer} ${styles.composePickerVeil}`} />
       )}
@@ -7618,6 +7647,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           </div>
         </div>
       )}
+
+      </ShellOverlayPortal>
 
       {/* Turn banner — shows the current maneuver during eye-level navigation. */}
       {navBanner && (

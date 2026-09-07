@@ -78,11 +78,10 @@
 
 .scroll::-webkit-scrollbar { display: none; }
 
-/* Full-height post rails share the map's 44px controls and 12px gaps.
-   Extra screen height stays empty, keeping every button on the same grid. */
+/* Centre the fixed-size post controls inside the same safe rail as the map. */
 .fill {
   top: var(--poplur-map-control-top);
   bottom: calc(var(--poplur-home-clearance) + var(--rail-reserve-below, 0px));
-  align-content: start;
+  align-content: center;
 }
 .fill > * img { width: 100%; height: 100%; object-fit: contain; }

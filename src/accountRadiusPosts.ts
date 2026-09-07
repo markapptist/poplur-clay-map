@@ -18,10 +18,12 @@ export interface AccountRadiusPostDocument {
 
 export interface AccountRadiusSnapshot {
   radiusKm: number
+  totalReachKm: number
   postCount: number
 }
 
 function finite(value: unknown): number | null {
+  if (value == null) return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
 }
@@ -55,8 +57,10 @@ export function accountRadiusSnapshotFromDocuments(
 ): AccountRadiusSnapshot {
   return documents.reduce<AccountRadiusSnapshot>((snapshot, document) => ({
     radiusKm: snapshot.radiusKm + radiusKmFromAccountPost(document.data()),
+    totalReachKm: snapshot.totalReachKm + clampRadiusMeters(
+      finite(document.data().radiusMeters ?? document.data().radius) ?? 0) / 1_000,
     postCount: snapshot.postCount + 1,
-  }), { radiusKm: 0, postCount: 0 })
+  }), { radiusKm: 0, totalReachKm: 0, postCount: 0 })
 }
 
 /**
@@ -70,7 +74,7 @@ export function subscribeAccountRadiusPosts(
   onError: (error: Error) => void = () => {},
 ): Unsubscribe {
   if (!ownUid) {
-    listener({ radiusKm: 0, postCount: 0 })
+    listener({ radiusKm: 0, totalReachKm: 0, postCount: 0 })
     return () => {}
   }
 
@@ -83,7 +87,7 @@ export function subscribeAccountRadiusPosts(
       snapshot.docs as QueryDocumentSnapshot<DocumentData>[],
     ))
   }, error => {
-    listener({ radiusKm: 0, postCount: 0 })
+    listener({ radiusKm: 0, totalReachKm: 0, postCount: 0 })
     onError(error instanceof Error ? error : new Error('Account radius is unavailable.'))
   })
 }

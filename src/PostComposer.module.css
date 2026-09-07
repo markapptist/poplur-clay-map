@@ -1212,3 +1212,18 @@
 }
 .viewTiming input[type='range'] { width: 100%; accent-color: #ff238a; }
 .viewTiming small { color: #edbdd7; line-height: 1.4; }
+
+.viewTimeOptions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.viewTimeOptions button {
+  min-height: 44px; padding: 10px; border: 1px solid #b74783;
+  border-radius: 12px; background: #281320; color: #f5d4e6;
+  font: 850 14px/1.2 system-ui, sans-serif;
+}
+.viewTimeOptions button[aria-pressed='true'] {
+  background: linear-gradient(150deg, #ef388e, #a90859); color: white;
+  border-color: #ffb2d8; box-shadow: inset 0 1px 0 #ffd5e9, 0 3px 0 #650732;
+}
+.viewTimeDuration { display: grid; gap: 9px; padding: 12px; border-radius: 12px; background: #ffffff08; }
+.viewTimeDuration > span { display: flex; justify-content: space-between; gap: 8px; font: 700 12px/1.3 system-ui, sans-serif; letter-spacing: 0; }
+.viewTimeDuration strong { color: #9eeaff; }
+.viewTimeRangeLabels { display: flex; justify-content: space-between; letter-spacing: 0; }

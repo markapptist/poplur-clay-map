@@ -15,7 +15,7 @@ export interface SuggestionPrimaryAction {
 export interface CommerceSuggestionWindowProps {
   card: SmartCard
   action?: SuggestionPrimaryAction
-  variant?: 'popup' | 'camera'
+  variant?: 'popup' | 'camera' | 'fullscreen'
   onClose: () => void
   /** Stops a transient popup expiring after the user begins interacting. */
   onInteract?: () => void
@@ -110,6 +110,8 @@ export default function CommerceSuggestionWindow({
 
   return (
     <PoplurDialog
+      variant={variant === 'fullscreen' ? 'media' : 'card'}
+      mediaBadge={variant === 'fullscreen' ? 'Sponsored · Poplur Ad' : undefined}
       dataId={`ad:${card.headline}`}
       eyebrow="POPLUR AD"
       title={card.headline}

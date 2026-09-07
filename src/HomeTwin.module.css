@@ -1585,9 +1585,12 @@
 }
 
 .statsCard {
-  width: min(286px, calc(100vw - 36px));
-  max-height: min(76vh, 700px);
-  overflow: hidden;
+  font-family: system-ui, -apple-system, "SF Pro Rounded", sans-serif;
+  width: min(340px, calc(100vw - 36px));
+  max-height: min(78dvh, 700px);
+  overflow-y: auto;
+  padding: 12px;
+  box-sizing: border-box;
   /* The stats screen in miniature: its dark ground and its globe, not a
      second window style. */
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -1654,9 +1657,24 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  text-align: left;
+  align-items: center;
+  text-align: center;
+  min-width: 0;
+  padding: 12px 8px;
+  border: 1px solid #ffffff18;
+  border-radius: 12px;
+  background: #ffffff06;
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
 }
+
+.statsRows { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.statsRow .statLabel { font-size: 10px; letter-spacing: .07em; white-space: normal; }
+.statsRow .statValue { font-size: 30px; line-height: 1.2; }
+.statsRow .statSub { font-size: 11px; line-height: 1.4; }
+.statsGlobeReading .statValue { font-size: 38px; }
+.statsGlobeReading .statMax { font-size: 24px; }
+.statsGlobeReading .statLabel { font-size: 12px; }
+.statsGlobeReading .statSub { font-size: 13px; }
 
 .statsUnits {
   display: flex;
@@ -1693,3 +1711,6 @@
   font: 900 13px/1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
 }
 .statsClose:active { transform: translateY(2px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32), 0 1px 0 #8f0b4f; }
+
+.statsCard .statLabel { filter: none; -webkit-text-stroke: 0; }
+.statsCard .statSub { -webkit-text-stroke: 0; text-shadow: none; }

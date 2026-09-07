@@ -3145,8 +3145,10 @@ export default function MapApp() {
   const [liveMapPostsReady, setLiveMapPostsReady] = useState(false)
   const [accountRadiusSnapshot, setAccountRadiusSnapshot] = useState({
     radiusKm: 0,
+    totalReachKm: 0,
     postCount: 0,
   })
+  const [nativeAccountTotals, setNativeAccountTotals] = useState<{ radiusKm: number; totalReachKm: number; postCount: number } | null>(null)
   useEffect(() => {
     if (rnWebShellRoute) return undefined
     return onUser(user => setOwnUid(user?.uid ?? null))
@@ -3160,7 +3162,7 @@ export default function MapApp() {
     if (rnWebShellRoute || nativeShell) {
       const receiveForwardedPosts = (event: MessageEvent) => {
         if (event.origin !== window.location.origin || event.source !== window.parent) return
-        const payload = event.data as { type?: unknown; posts?: unknown[]; ownUid?: unknown } | null
+        const payload = event.data as { type?: unknown; posts?: unknown[]; ownUid?: unknown; accountTotals?: { radiusKm: number; totalReachKm: number; postCount: number } } | null
         if (!payload || payload.type !== 'poplur-native-map-posts') return
         const nextUid = typeof payload.ownUid === 'string' && payload.ownUid.trim()
           ? payload.ownUid.trim().slice(0, 128)
@@ -3172,6 +3174,7 @@ export default function MapApp() {
           { allowSyntheticOnboarding: rnWebShellRoute },
         )
         setOwnUid(nextUid)
+        setNativeAccountTotals(payload.accountTotals ?? null)
         setLiveMapPosts(nativeFeedPostsToMapPins(posts, nextUid, { syntheticOnly: rnWebShellRoute }))
         setLiveMapPostsReady(true)
       }
@@ -3208,6 +3211,7 @@ export default function MapApp() {
   }, [])
   useEffect(() => {
     if (!rnWebShellRoute && !nativeShell) return
+    if (nativeAccountTotals) { setAccountRadiusSnapshot(nativeAccountTotals); return }
     const mine = liveMapPosts.filter(pin => pin.mine)
     setAccountRadiusSnapshot({
       // EARNED radius only, the same sum the web path takes
@@ -3217,9 +3221,10 @@ export default function MapApp() {
       // server would accept and the drop came back "Missing or insufficient
       // permissions" — worse after every post, since each one widened the gap.
       radiusKm: mine.reduce((sum, pin) => sum + earnedRadiusKmFromPin(pin), 0),
+      totalReachKm: mine.reduce((sum, pin) => sum + Math.max(0, pin.radiusKm), 0),
       postCount: mine.length,
     })
-  }, [liveMapPosts, nativeShell, rnWebShellRoute])
+  }, [liveMapPosts, nativeShell, nativeAccountTotals, rnWebShellRoute])
   useEffect(() => {
     // webDb() is for documents with no native bridge behind them. A device has
     // one, and asking the unauthenticated web client for `posts where userID
@@ -3228,19 +3233,21 @@ export default function MapApp() {
     return subscribeAccountRadiusPosts(
       ownUid,
       setAccountRadiusSnapshot,
-      () => setAccountRadiusSnapshot({ radiusKm: 0, postCount: 0 }),
+      () => setAccountRadiusSnapshot({ radiusKm: 0, totalReachKm: 0, postCount: 0 }),
     )
   }, [nativeShell, ownUid, rnWebShellRoute])
   const accountRadiusKm = accountRadiusSnapshot.radiusKm
   const accountPostCount = accountRadiusSnapshot.postCount
+  const accountTotalReachKm = accountRadiusSnapshot.totalReachKm
   useEffect(() => {
     const publishedRadiusKm = publishAccountRadiusKm(accountRadiusKm)
     window.parent?.postMessage({
       type: 'poplur-account-radius',
       radiusKm: publishedRadiusKm,
+      totalReachKm: accountTotalReachKm,
       postCount: accountPostCount,
     }, '*')
-  }, [accountPostCount, accountRadiusKm])
+  }, [accountPostCount, accountRadiusKm, accountTotalReachKm])
   const [pinRadiusPulse, setPinRadiusPulse] = useState<{
     id: string
     deltaKm: number
@@ -4074,14 +4081,14 @@ export default function MapApp() {
       ownPostsTotal: accountPostCount,
       ownPostsArea: ownNearby.length,
       ownPostIds: ownNearby.map(claim => claim.id),
-      totalRadiusKm: accountRadiusKm,
+      totalRadiusKm: accountTotalReachKm,
       popRadiusKm: pin.radiusKm,
       onlineUsers: mapAreaOnline(pin.coords, ownNearby.length),
       popId: pin.id,
     }, '*')
 
     showPinContentCard(pin)
-  }, [accountPostCount, accountRadiusKm, focusMapPointForPin, liveMapPosts, showPinContentCard])
+  }, [accountPostCount, accountRadiusKm, accountTotalReachKm, focusMapPointForPin, liveMapPosts, showPinContentCard])
 
   /** Where the radius bench has planted its pin, if it has. Dev-only; null in
    *  every shipped build because the bench that sets it cannot render there. */
@@ -4154,7 +4161,7 @@ export default function MapApp() {
       const onlineUsers = scope === 'world' || scope === 'current'
         ? MAP_GLOBAL_ONLINE
         : mapAreaOnline(center, ownArea.length)
-      const totalRadius = accountRadiusKm
+      const totalRadius = accountTotalReachKm
       // Every pop's radius, not just your own. The camera settles a beat after
       // an arrow step, and this report is what the shell trusts last — leaving
       // it own-pins-only sent popRadiusKm undefined for somebody else's pin,
@@ -4192,7 +4199,7 @@ export default function MapApp() {
       map.off('zoomend', onCameraSettle)
       offSettle()
     }
-  }, [accountPostCount, accountRadiusKm, liveMapPosts, mapLive])
+  }, [accountPostCount, accountRadiusKm, accountTotalReachKm, liveMapPosts, mapLive])
 
   const handleIntroComplete = useCallback((landingCenter?: [number, number]) => {
     // Readiness belongs exclusively to handleGlobeReady, which now follows a

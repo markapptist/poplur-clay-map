@@ -1,3 +1,5 @@
+// Map dialogs portal into this document and need their scoped stylesheet here.
+import './ClayMap.module.css'
 import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import { myPinColor, onMyPinColor } from './myPinColor'
 import { PIN_COLOR_SWATCH } from './pinColors'
@@ -1008,6 +1010,7 @@ const TAB_TRANSITION_LEASE_MS = 900
 export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, initialTab = 'map', initialHoldOpen = false, initialCameraPage = 'viewfinder' }: { onOpen: (view: HarnessView) => void; onTabChange?: (tab: CubeTab) => void; onVisibleScreenChange?: (screen: TestActivityScreen) => void; initialTab?: CubeTab; initialHoldOpen?: boolean; initialCameraPage?: 'viewfinder' | 'roll' }) {
   // Tabs render inline: the pills switch map / feed / camera(post) / profile
   // content within this one home view instead of routing to separate screens.
+  const [nativeAccountTotals, setNativeAccountTotals] = useState<{ radiusKm: number; totalReachKm: number; postCount: number } | null>(null)
   const [activeTab, setActiveTab] = useState<CubeTab>(initialTab)
   const [mapDaypart, setMapDaypart] = useState<MapDaypart>(clockMapDaypart)
   const [mapMoon, setMapMoon] = useState<'full' | 'crescent'>(() => moonPhase(new Date()).model)
@@ -3083,6 +3086,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           : null)
       }
       if (event.data.type === 'poplur-account-radius') {
+        if (typeof event.data.totalReachKm === 'number' && Number.isFinite(event.data.totalReachKm)) {
+          setAccountTotalReachKm(event.data.totalReachKm)
+        }
         const totalRadiusKm = Number(event.data.radiusKm)
         if (Number.isFinite(totalRadiusKm)) {
           authoritativeAccountRadiusKmRef.current = publishAccountRadiusKm(totalRadiusKm)
@@ -3214,7 +3220,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         const ownPostsArea = Number(event.data.ownPostsArea)
         const onlineUsers = Number(event.data.onlineUsers)
         if (scope && Number.isFinite(totalRadiusKm) && Number.isFinite(onlineUsers)) {
-          authoritativeAccountRadiusKmRef.current = publishAccountRadiusKm(totalRadiusKm)
+          setAccountTotalReachKm(totalRadiusKm)
           const ownPostIds = Array.isArray(event.data.ownPostIds)
             ? (event.data.ownPostIds as unknown[]).filter((value): value is string => typeof value === 'string')
             : []
@@ -3710,8 +3716,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       type: 'poplur-native-map-posts',
       posts: interceptingFeedPosts,
       ownUid,
+      accountTotals: nativeAccountTotals,
     }, window.location.origin)
-  }, [interceptingFeedPosts, mapReady, ownUid])
+  }, [interceptingFeedPosts, mapReady, ownUid, nativeAccountTotals])
   // …and the phone's location fix, for the same reason. Swift posts the fix
   // into the map iframe only at the moment CoreLocation answers, which is
   // normally before the Map has mounted at all — so the Map's reach test had
@@ -4596,6 +4603,18 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const [mapPopRadiusKm, setMapPopRadiusKm] = useState<number | null>(null)
   /** Sum of every pop's radius whenever no individual map pop is the subject. */
   const [mapWorldTotalKm, setMapWorldTotalKm] = useState<number | null>(null)
+  const [accountTotalReachKm, setAccountTotalReachKm] = useState<number | null>(null)
+  useEffect(() => {
+    const receive = (event: Event) => {
+      const data = (event as CustomEvent).detail
+      if (!data || ![data.radiusKm, data.totalReachKm, data.postCount].every(v => typeof v === 'number' && Number.isFinite(v) && v >= 0)) return
+      setNativeAccountTotals(data)
+      setAccountTotalReachKm(data.totalReachKm)
+      authoritativeAccountRadiusKmRef.current = publishAccountRadiusKm(data.radiusKm)
+    }
+    window.addEventListener('poplur-native-account-radius', receive)
+    return () => window.removeEventListener('poplur-native-account-radius', receive)
+  }, [])
   /** The pin an explicit map-point traversal landed on, held apart from the
    *  camera-derived scope so a later world/area report cannot silently
    *  replace the radius the user just asked to see. */
@@ -4637,6 +4656,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             // your radius over their grid.
             : activeTab === 'profile' && visitedTotals != null
               ? visitedTotals.radiusKm
+            : activeTab === 'profile' ? accountTotalReachKm ?? earnedRadiusKm
             : (activeTab === 'map' && mapPopRadiusKm != null ? mapPopRadiusKm : earnedRadiusKm)
 
   if (import.meta.env.DEV && typeof window !== 'undefined') {
@@ -4650,7 +4670,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   }
   // The popup's TOTAL: every pop combined — the map's world tally when the
   // map has reported one, else the ledger's earned total.
-  const statsTotalShown = (mapWorldTotalKm ?? earnedRadiusKm) * (unitMi ? KM_TO_MI : 1)
+  const statsTotalShown = (accountTotalReachKm ?? mapWorldTotalKm ?? earnedRadiusKm) * (unitMi ? KM_TO_MI : 1)
+  const statsPostCount = nativeAccountTotals?.postCount ?? profilePostCount
   const statsTotalText = statsTotalShown >= 1_000
     ? Math.round(statsTotalShown).toLocaleString()
     : statsTotalShown.toFixed(1)
@@ -6101,7 +6122,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               <div className={styles.statsGlobe} aria-hidden="true" />
               <div className={styles.statsGlobeReading}>
                 <span className={styles.statLabel}>TOTAL RADIUS ◆</span>
-                <span className={`${styles.statValue} ${styles.radiusValueAccum}`} data-counter-value={statsTotalText}>
+                <span className={`${styles.statValue} ${styles.radiusValueAccum}`} data-counter-value={statsTotalText}
+                  style={{ color: radiusTrophyColor(statsTotalShown / (unitMi ? KM_TO_MI : 1), ownRadiusColor), WebkitTextFillColor: radiusTrophyColor(statsTotalShown / (unitMi ? KM_TO_MI : 1), ownRadiusColor) }}>
                   {statsTotalText}<span className={styles.statUnit}> {unitMi ? 'mi' : 'km'}</span>
                 </span>
                 <span className={styles.statSub}>of <span className={styles.statMax}>{statsCeilingText}</span> {unitMi ? 'mi' : 'km'}</span>
@@ -6113,9 +6135,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                 <AnimatedOnlineCount value={onlineAudience} active />
                 <span className={styles.statSub}>{onlineIsGlobal ? 'users in app' : 'users in this area'}</span>
               </div>
-              <div className={styles.statsRow} aria-label={`${profilePostCount} posts published`}>
+              <div className={styles.statsRow} aria-label={`${statsPostCount} posts published`}>
                 <span className={styles.statLabel}>YOUR POPS ◆</span>
-                <AnimatedPostCount value={profilePostCount} active />
+                <AnimatedPostCount value={statsPostCount} active />
                 <span className={styles.statSub}>posts published</span>
               </div>
             </div>

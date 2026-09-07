@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import CameraRoll from './CameraRoll'
+import PoplurDialog from './PoplurDialog'
+import ShellOverlayPortal from './ShellOverlayPortal'
 import CameraScanButton from './CameraScanButton'
 import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import { readCameraAiVoice, writeCameraAiVoice, onCameraPreferenceChange } from './cameraPreferences'
@@ -342,15 +344,13 @@ export default function Camera({
   useEffect(() => onLiveStore(() => setOnAir(isLive())), [])
   const onAirRadiusRef = useRef(onAirRadiusKm)
   onAirRadiusRef.current = onAirRadiusKm
-  // On iPhone the viewfinder is a native AVCapture layer behind a transparent
-  // WebView (NATIVE_CAMERA_PREVIEW), so this document never holds a
-  // MediaStream and there is nothing here to put on air. Going live anyway
-  // would light the button and broadcast a blank tile, which is a worse
-  // answer than saying so: the button stays dark there until the shell can
-  // hand its frames to the web layer. Android and the browser use
-  // getUserMedia and go live for real.
+  // The iPhone preview is native and cannot supply a web MediaStream.
+  // Keep LIVE reachable in video mode and explain its availability without
+  // turning on a blank broadcast or inventing viewer counts.
+  const [liveInfoOpen, setLiveInfoOpen] = useState(false)
   const canGoLive = !NATIVE_CAMERA_PREVIEW
   const toggleLive = useCallback(() => {
+    if (NATIVE_CAMERA_PREVIEW) { setLiveInfoOpen(true); return }
     if (isLive()) { stopBroadcast(); return }
     const source = streamRef.current
     if (!source) return
@@ -2077,9 +2077,9 @@ export default function Camera({
             ? 'End the live broadcast'
             : canGoLive
               ? 'Go live from this camera'
-              : 'Going live is not available from this camera yet'}
+              : 'Open live video'}
           aria-pressed={onAir}
-          disabled={captureMode !== 'video' || !canGoLive}
+          disabled={captureMode !== 'video'}
           data-camera-live={onAir ? 'on' : 'off'}
           onPointerDown={event => event.stopPropagation()}
           onClick={event => { event.stopPropagation(); playPop(); toggleLive() }}
@@ -2142,7 +2142,7 @@ export default function Camera({
       {/* ONE persistent AI line. Keep the latest real reading between the
           deliberately sparse native analysis samples; before the first one,
           say that AI is scanning instead of leaving a mysterious blank. */}
-      {real && (() => {
+      {real && detectOn && (() => {
         const sceneReads = currentCameraReads.length ? currentCameraReads : lastCameraReads
         const detected = sceneReads.find(read => read.user) ?? sceneReads[0] ?? null
         const recognizedSelf = Boolean(detected?.isUser && detected.user)
@@ -2150,9 +2150,7 @@ export default function Camera({
         // COOLING. Cut by request: the label read as the app complaining. The
         // line already survives on sparse samples, so a parked scan simply
         // keeps showing the latest real reading until sampling resumes.
-        const primaryLabel = !detectOn
-          ? 'TAP SCAN'
-          : detected
+        const primaryLabel = detected
             ? (detected.user?.name ?? detected.user?.handle ?? detected.label.replace(/_/g, ' ').toUpperCase())
             : 'AI SCANNING'
         const contextLabel = detectOn && detected
@@ -2196,28 +2194,6 @@ export default function Camera({
         </div>
       )}
 
-      {/* Lens presets, riding just above the cube: 0.5× (iOS ultra-wide),
-          1× and 2×. The lit one is whichever preset the current zoom is
-          nearest, so pinching keeps the row honest. */}
-      {real && (
-        <div className={styles.camZoomPresets} role="group" aria-label="Zoom presets">
-          {ZOOM_PRESETS.map(preset => {
-            const nearest = ZOOM_PRESETS.reduce((best, v) =>
-              Math.abs(v - zoom) < Math.abs(best - zoom) ? v : best, ZOOM_PRESETS[0])
-            return (
-              <button
-                key={preset}
-                type="button"
-                className={preset === nearest ? `${styles.camZoomPreset} ${styles.camZoomPresetOn}` : styles.camZoomPreset}
-                aria-pressed={preset === nearest}
-                onClick={() => { playPop(); applyZoomValue(preset) }}
-              >
-                {preset === 0.5 ? '.5' : `${preset}`}<small>×</small>
-              </button>
-            )
-          })}
-        </div>
-      )}
     </section>
   )
 
@@ -2259,6 +2235,14 @@ export default function Camera({
           bindBack={fn => { composerBackRef.current = fn }}
         />
       )}
+
+      {liveInfoOpen && <ShellOverlayPortal>
+        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: 24, pointerEvents: 'auto', background: 'rgba(0,0,0,.65)' }}>
+          <PoplurDialog title="Live video" eyebrow="LIVE" subtitle="Live broadcasting is not connected yet. You can record a video and post it to TV."
+            primaryAction={{ label: 'Record a video', onActivate: () => setLiveInfoOpen(false) }}
+            onClose={() => setLiveInfoOpen(false)} />
+        </div>
+      </ShellOverlayPortal>}
 
       {/* Asked before the real one. The native layer holds the viewfinder shut
           until this is answered, so the OS prompt only ever appears to someone

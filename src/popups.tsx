@@ -72,6 +72,7 @@ export interface PopupItem {
   text?: string
   icon?: string
   card?: SmartCard
+  fullscreen?: boolean
   /** The actual post standing on a map claim. This is deliberately separate
    *  from a suggestion: a pop shows its own media, while an AI-highlighted
    *  place with no pop shows a commerce card. */
@@ -333,7 +334,7 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
             ? `${styles.engage} ${surfaceStyles.surface}`
             : item.kind === 'banner'
               ? styles.bannerWrap
-            : item.kind === 'mapContent'
+            : item.kind === 'mapContent' || item.fullscreen
               ? styles.mapContentWrap
               : styles.suggestWrap}
           style={item.kind === 'engagement' ? { animationDuration: `${item.ttl}ms` } : undefined}
@@ -409,6 +410,7 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
           ) : item.card ? (
             <CommerceSuggestionWindow
               card={item.card}
+              variant={item.fullscreen ? 'fullscreen' : 'popup'}
               action={item.action}
               onClose={() => dismissPopup(item.id)}
               onInteract={() => keepPopupOpen(item.id)}

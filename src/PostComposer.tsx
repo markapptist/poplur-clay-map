@@ -1072,15 +1072,18 @@ export default function PostComposer({
           <section className={`${styles.fieldLabel} ${styles.viewTiming}`} aria-label="Media view time">
             <span>VIEW TIME</span>
             {media.kind === 'photo' ? <>
-              <select aria-label="Photo view time" value={photoSeconds === null ? 'unlimited' : 'timed'}
-                onChange={event => setPhotoSeconds(event.target.value === 'unlimited' ? null : 10)}>
-                <option value="unlimited">Unlimited</option>
-                <option value="timed">Timed view (up to 60 seconds)</option>
-              </select>
-              {photoSeconds !== null && <span>Seconds: {photoSeconds}
+              <div className={styles.viewTimeOptions} role="group" aria-label="Photo view time">
+                <button type="button" aria-pressed={photoSeconds === null}
+                  onClick={() => setPhotoSeconds(null)}>Unlimited</button>
+                <button type="button" aria-pressed={photoSeconds !== null}
+                  onClick={() => setPhotoSeconds(seconds => seconds ?? 10)}>Timed view</button>
+              </div>
+              {photoSeconds !== null && <div className={styles.viewTimeDuration}>
+                <span>Advance after <strong>{photoSeconds} seconds</strong></span>
                 <input aria-label="Photo view seconds" type="range" min="1" max="60" step="1"
                   value={photoSeconds} onChange={event => setPhotoSeconds(photoViewSeconds(Number(event.target.value)))} />
-              </span>}
+                <div className={styles.viewTimeRangeLabels}><small>1 second</small><small>60 seconds</small></div>
+              </div>}
             </> : <small>Counts down the video's playback time, then advances by radius.</small>}
           </section>
 

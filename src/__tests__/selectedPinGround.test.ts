@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest'
-import { clearClaims, getClaims, seedClaims, selectGroundPin, visibleGroundClaims } from '../mapClaims'
+import mapboxgl from 'mapbox-gl'
+import { clearClaims, getClaims, seedClaims, selectGroundPin, visibleGroundClaims, claimedGroundTest } from '../mapClaims'
 
 it('shows only the selected territory without removing other posts from the ledger', () => {
   const sources = new Map<string, { setData: (data: unknown) => void }>()
@@ -17,16 +18,23 @@ it('shows only the selected territory without removing other posts from the ledg
   }
   const posts = [
     { id: 'red', center: [-79, 44] as [number, number], radiusKm: 2, color: '#ff0000' },
+    { id: 'world', center: [139, 36] as [number, number], radiusKm: 6371, color: '#ff0000' },
     { id: 'purple', center: [-79, 44] as [number, number], radiusKm: 5, color: '#9900ff' },
   ]
   seedClaims(map as never, posts)
   selectGroundPin(map as never, 'red', '#ff2222')
   expect(visibleGroundClaims(map as never).map(c => [c.id, c.color])).toEqual([['red', '#ff2222']])
-  expect(getClaims()).toHaveLength(2)
+  expect(getClaims()).toHaveLength(3)
   selectGroundPin(map as never, 'purple', '#9900ff')
   expect(visibleGroundClaims(map as never).map(c => c.id)).toEqual(['purple'])
+  selectGroundPin(map as never, 'world', '#dd0000')
+  expect(visibleGroundClaims(map as never).map(c => c.id)).toEqual(['world'])
+  expect(claimedGroundTest(map as never)).toEqual(['any', true])
+  const oppositeSide = { ...map, getCenter: () => new mapboxgl.LngLat(-79, 44),
+    getBounds: () => new mapboxgl.LngLatBounds([-80, 43], [-78, 45]) }
+  expect(visibleGroundClaims(oppositeSide as never).map(c => c.id)).toEqual(['world'])
   selectGroundPin(map as never, null)
   expect(visibleGroundClaims(map as never)).toEqual([])
-  expect(getClaims()).toHaveLength(2)
+  expect(getClaims()).toHaveLength(3)
   clearClaims(map as never)
 })
