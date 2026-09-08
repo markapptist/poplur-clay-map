@@ -66,12 +66,10 @@ acquire_publish_lock() {
 node scripts/verify-tab-model-quality.mjs
 ./node_modules/.bin/tsc --noEmit
 ./node_modules/.bin/vite build --outDir "$BUILD_DIR"
-# Phones never receive source models or the published feed/channel packs (the
-# native bundle copies below exclude them too). Drop them from the snapshot now
-# so everything downstream of this line — including the thermal gate's
-# measurement — sees exactly the bytes a device will run. AR filters stay
-# bundled while that pack is explicitly pinned as unpublished.
-rm -rf "$BUILD_DIR/models" "$BUILD_DIR/feed" "$BUILD_DIR/channels"
+# Source models are never shipped. Feed and channel artwork are core UI and
+# now stay bundled, so a storage outage cannot remove whole screen assets.
+# The thermal gate measures the exact snapshot that every device receives.
+rm -rf "$BUILD_DIR/models"
 
 # A detached/clean release worktree can contain raw Git LFS pointer text when
 # the corresponding object has not been hydrated locally. Vite copies those
@@ -263,16 +261,13 @@ sync_to() {
   mkdir -p "$dest"
   # rsync protects excluded paths from --delete, so clear any copies left by
   # an older sync both before and after publishing the new snapshot.
-  rm -rf "$dest/models" "$dest/feed" "$dest/channels"
-  # These are root-level downloadable content packs. Anchor the exclusions:
-  # an unanchored `feed/` also strips poplur-side-buttons/.../feed, leaving
-  # the Feed rail's controls present but their seven images broken.
+  rm -rf "$dest/models"
+  # Only authoring models are excluded. Core Feed/channel assets must match
+  # the local paths in the shipped asset manifest.
   rsync -a --delete \
     --exclude '/models/' \
-    --exclude '/feed/' \
-    --exclude '/channels/' \
     "$BUILD_DIR/" "$dest/"
-  rm -rf "$dest/models" "$dest/feed" "$dest/channels"
+  rm -rf "$dest/models"
   verify_wardrobe_assets "$dest"
   verify_feed_side_icons "$dest"
   shasum -a 256 public/logo_icon.png "$dest/logo_icon.png" | awk 'NR == 1 { expected = $1 } NR == 2 && $1 != expected { exit 1 }'

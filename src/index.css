@@ -321,6 +321,12 @@ html.native-map-live,
   box-shadow: none !important;
 }
 
+/* The stage texture is a sibling of the map viewport, not an ancestor.
+   Hide only that texture while the native renderer supplies the background. */
+[data-poplur-native-map-ground] > [data-poplur-stage-backdrop] {
+  visibility: hidden;
+}
+
 /* ── perf-lite, feed layer (native app shell) ──────────────────────────────
    The feed stacks three full-screen per-frame effects over the playing video:
    scenePulse (animates `filter` on the video layer — the compositor re-filters

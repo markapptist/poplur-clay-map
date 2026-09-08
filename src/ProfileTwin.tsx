@@ -2628,7 +2628,7 @@ export default function ProfileTwin({
             onClick={() => showPostOnMap(locatedPost)}
             aria-label={visiting ? `See where ${shownName} posted on the map` : 'See where you posted on the map'}
           >
-            <SideControlIconImage icon="profile.map" displaySize={44} />
+            <img src="profile-controls/map-pin.png" alt="" draggable="false" />
           </button>
         )}
         {/* Somebody else's profile: Block (or report) above Message, the way
@@ -2663,7 +2663,7 @@ export default function ProfileTwin({
             onClick={() => { playPop(); window.dispatchEvent(new CustomEvent('poplur-open-store')) }}
             aria-label="Store"
           >
-            <img src="holdmenu/ShoppingBag.png" alt="" draggable="false" />
+            <img src="profile-controls/shopping-cart.png" alt="" draggable="false" />
           </button>
         )}
       </TabControlRail>

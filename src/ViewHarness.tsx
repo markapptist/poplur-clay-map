@@ -216,7 +216,7 @@ export default function ViewHarness({ initialView }: { initialView: HarnessView 
   return (
     <div className={styles.stage}>
       <div className={styles.phone}>
-        <div className={styles.backdrop} />
+        <div className={styles.backdrop} data-poplur-stage-backdrop />
         <main className={styles.viewport} aria-label={`${VIEW_LABELS[view]} test view`}>
           <div key={baseView} className={styles.screenSurface}>
             {screen}

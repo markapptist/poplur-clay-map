@@ -140,6 +140,7 @@ export default defineConfig(({ command }) => ({
   // before the fetched manifest exists.
   define: {
     __POPLUR_ASSET_BASE__: JSON.stringify(ASSET_PACK_BASE),
+    __POPLUR_ASSET_LOCAL_PATHS__: JSON.stringify(MANIFEST.localPaths ?? {}),
     __POPLUR_SUBSCREENS_REV__: JSON.stringify(SUBSCREENS_PACK_REV),
   },
   // NOTE: no COOP/COEP here on purpose. The Arcade's emulator core is pinned to

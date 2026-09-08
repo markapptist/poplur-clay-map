@@ -54,6 +54,10 @@ export const MANIFEST_URL = 'asset-manifest.json'
 declare const __POPLUR_ASSET_BASE__: string | undefined
 const BUILT_IN_PACK_BASE =
   typeof __POPLUR_ASSET_BASE__ === 'string' ? __POPLUR_ASSET_BASE__ : ''
+declare const __POPLUR_ASSET_LOCAL_PATHS__: Record<string, string> | undefined
+const BUILT_IN_LOCAL_PATHS = typeof __POPLUR_ASSET_LOCAL_PATHS__ === 'object'
+  ? __POPLUR_ASSET_LOCAL_PATHS__ : {}
+const localPackPath = (id: string) => manifest?.localPaths?.[id] ?? BUILT_IN_LOCAL_PATHS[id]
 
 /** Injected by vite.config from the manifest's subscreens pack entry. */
 declare const __POPLUR_SUBSCREENS_REV__: string | undefined
@@ -99,7 +103,7 @@ export async function ensurePack(pack: AssetPack): Promise<boolean> {
   const run = (async () => {
     // Served from public/ until packs are uploaded: already on the device, so
     // there is nothing to fetch or cache.
-    if (manifest?.localPaths?.[pack.id]) { states.set(pack.id, 'ready'); return true }
+    if (localPackPath(pack.id)) { states.set(pack.id, 'ready'); return true }
     if (await isPackReady(pack)) { states.set(pack.id, 'ready'); return true }
     if (!cachesAvailable()) { states.set(pack.id, 'ready'); return true }  // uncached, still usable
 
@@ -151,7 +155,7 @@ export async function ensurePack(pack: AssetPack): Promise<boolean> {
  * before the manifest arrives still gets a working file.
  */
 export function packBase(packId: string, fallback: string): string {
-  const local = manifest?.localPaths?.[packId]
+  const local = localPackPath(packId)
   if (local) return local
   // The fetched manifest first, then the base baked in at build time. That
   // second step is what makes this honest for callers that resolve before any
@@ -189,7 +193,7 @@ export function channelUrl(file: string): string {
 
 /** Resolve a file inside a pack to a URL the app can use, cached or not. */
 export function packUrl(pack: AssetPack, file: string): string {
-  const local = manifest?.localPaths?.[pack.id]
+  const local = localPackPath(pack.id)
   if (local) return `${local}/${file}`
   // The digest (falling back to the version) rides along as a query param so a
   // published pack update is a genuinely NEW url. Without it, a header fix —
@@ -200,7 +204,7 @@ export function packUrl(pack: AssetPack, file: string): string {
   // `immutable, max-age=31536000`, so a response cached before the fix is
   // never revisited by either layer. A changed url has no stale entry to hit.
   const rev = pack.digest ?? String(pack.version)
-  return `${manifest?.baseUrl ?? ''}/${pack.id}/${file}?v=${rev}`
+  return `${manifest?.baseUrl ?? BUILT_IN_PACK_BASE}/${pack.id}/${file}?v=${rev}`
 }
 
 // ---- eviction ---------------------------------------------------------------
