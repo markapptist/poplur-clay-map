@@ -296,8 +296,10 @@ import {
 } from './regionAudio'
 import {
   announceMapTour, getRadioPlaybackState, isMapRadioActive, isRadioBackgroundEnabled,
-  nowPlayingStation, startRadioForMap, startDefaultMapRadio, setMapRadioEnabled, stopMapRadio, subscribeRadioPlayback, tuneLiveRadio,
+  nowPlayingStation, startRadioForMap, setMapRadioEnabled, stopMapRadio, subscribeRadioPlayback, tuneLiveRadio,
+  tuneMapRadioLocation,
 } from './mapRadio'
+import { publishMapRadioLocation } from './mapRadioLocation'
 import { isNativeShell, isRNWebShellRoute, postNativeEvent, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { onAudioFocusChange } from './audioFocus'
@@ -1467,6 +1469,7 @@ export default function MapApp() {
 
   const flyToPlace = useCallback((center: [number, number], name: string) => {
     playPop(0.3)
+    publishMapRadioLocation(center)
     searchInterruptRef.current()
     manualDestinationGuardUntilRef.current = Date.now() + MANUAL_DESTINATION_ENGAGEMENT_GRACE_MS
     setCurrentPlace(displayPlaceName(name))
@@ -1960,6 +1963,7 @@ export default function MapApp() {
   ) => {
     const map = mapRef.current
     if (!map) return false
+    publishMapRadioLocation(center)
     const mapCamera = map as unknown as {
       __cinematic?: boolean
       __tripping?: boolean
@@ -2391,10 +2395,6 @@ export default function MapApp() {
     return timer
   }, [])
   const tourStartedRef = useRef(false)
-  /** Radio starts itself once per map, the way the button would have. Only
-   *  once: a person who then presses STOP has made a choice, and a later
-   *  landing must not overrule it. */
-  const radioAutoStartedRef = useRef(false)
   const clearTourTimers = useCallback(() => {
     tourTimers.current.forEach(timer => window.clearTimeout(timer))
     tourTimers.current.clear()
@@ -3561,6 +3561,11 @@ export default function MapApp() {
   const focusedMapPointKeyRef = useRef<string | null>(null)
   const [focusedMapPoint, setFocusedMapPoint] = useState<MapCyclePoint | null>(null)
   useEffect(() => {
+    if (!focusedMapPoint) return
+    publishMapRadioLocation(focusedMapPoint.coords)
+    if (!isEmbedded) tuneMapRadioLocation(focusedMapPoint.coords[1], focusedMapPoint.coords[0])
+  }, [focusedMapPoint?.coords[0], focusedMapPoint?.coords[1], isEmbedded])
+  useEffect(() => {
     const map = mapRef.current
     if (!map || !mapLive) return
     selectGroundPin(map, focusedMapPoint?.kind === 'pin' ? focusedMapPoint.id : null, focusedMapPoint?.color)
@@ -4227,17 +4232,7 @@ export default function MapApp() {
       return
     }
 
-    // Radio is ON by default in the app. The same call the rail's Radio
-    // button makes, made for you on arrival — the packaged bed at once, the
-    // nearest real station as soon as the directory answers. Respects the
-    // master mute (a muted app starts nothing, and the unmute below starts it
-    // then) and the standalone map (the thermal gate drives that one
-    // headless, and a bed it never asked for would be measured as heat).
-    if (isEmbedded && !radioAutoStartedRef.current && !isMapRadioActive() && !isGateMuted()) {
-      radioAutoStartedRef.current = true
-      const [autoLng, autoLat] = landingCenter ?? DEFAULT_NAV_ORIGIN
-      startDefaultMapRadio(autoLat, autoLng)
-    }
+    publishMapRadioLocation(landingCenter ?? DEFAULT_NAV_ORIGIN)
 
     // Begin looking up the local station now, but do not sound it yet. The
     // greeting below gets the first beat; its mixer feathers Radio underneath
@@ -4816,19 +4811,12 @@ export default function MapApp() {
       />
 
       {discovery.page?.enabled && !tourOn && !focusedPostPicker && <MapDiscoveryLayers map={mapRef.current} cells={discovery.page.cells} pins={pinsForRenderer} onOpen={openClickedMapPinContent} />}
-      {!tourOn && discovery.page?.enabled && !discovery.error && !discovery.page.nextCursor && (
-        <span style={{ position: 'absolute', top: '23%', left: '50%', transform: 'translateX(-50%)', zIndex: 19,
-          maxWidth: '60%', borderRadius: 16, padding: '6px 12px', textAlign: 'center', pointerEvents: 'none',
-          fontSize: 12, fontWeight: 800, color: '#8fe7ff', background: '#251223d9' }}>
-          {discovery.page.mode === 'regions' ? (discovery.page.pins.some(pin => pin.competition?.status === 'winner') ? 'Regional pops · Zoom in for more' : 'New pops · Zoom in for more') : discovery.page.mode === 'cells' ? 'Area pops · ≈5 km sections' : 'Pops in this area'}
-        </span>
-      )}
       {!tourOn && (discovery.error || discovery.page?.nextCursor) && (
         <button type="button" onClick={discovery.error ? discovery.retry : discovery.nextPage} disabled={discovery.loading}
           style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', top: '23%', zIndex: 20,
             maxWidth: '60%', padding: '8px 14px', borderRadius: 18, background: '#251223ed', color: '#8fe7ff',
             border: '2px solid #ee409b', fontWeight: 800, fontSize: 13 }}>
-          {discovery.loading ? 'Loading…' : discovery.error || 'More pops in this area →'}
+          {discovery.loading ? 'Loading…' : discovery.error || 'More →'}
         </button>
       )}
 
@@ -4921,12 +4909,6 @@ export default function MapApp() {
             setMuted(next)
             if (next) return
             playPop(0.2)
-            // Unmuting an app that was muted on arrival is the arrival the
-            // default-on radio was waiting for.
-            if (isEmbedded && !radioAutoStartedRef.current && !isMapRadioActive()) {
-              radioAutoStartedRef.current = true
-              startDefaultMapRadio(navigationOrigin[1], navigationOrigin[0])
-            }
           }}
         />
         <MapRadioButton
@@ -5245,19 +5227,6 @@ export default function MapApp() {
             </div>
           )}
           <MapRadioStatusLabel className={styles.mapRadioLabel} />
-          {/* Your pops standing in this area, in the same outlined-blue voice
-              as the place line above it. Standalone has no profile to open, so
-              the line is informational here; the embedded shell owns the
-              clickable version (see HomeTwin). */}
-          {!mapPointLabelActive && !tourOn && areaPops && (
-            <div className={styles.areaPops} key={`area-${areaPops.count}-${areaPops.ids[0] ?? ''}`}>
-              {areaPops.overall
-                ? `${areaPops.count} pops posted overall`
-                : areaPops.count === 1
-                  ? '1 pop posted in this area'
-                  : `${areaPops.count} pops posted in this area`}
-            </div>
-          )}
         </div>
       )}
 

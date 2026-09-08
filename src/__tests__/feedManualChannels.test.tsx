@@ -3,6 +3,7 @@ import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import FeedTwin from '../FeedTwin'
+import { setUserMuted } from '../audioGate'
 
 const store = vi.hoisted(() => ({ posts: [] as any[], listeners: new Set<() => void>() }))
 vi.mock('../nativeFeedPosts', () => ({
@@ -27,7 +28,7 @@ let root: Root
 let host: HTMLDivElement
 function Harness() {
   const [index, setIndex] = useState(0)
-  return <FeedTwin index={index} onIndexChange={setIndex} />
+  return <FeedTwin index={index} onIndexChange={setIndex} autoPlayOnMount />
 }
 function channel() { return Number(host.querySelector('[data-test-channel]')?.getAttribute('data-test-channel')) }
 function arrow(label: string) {
@@ -36,6 +37,8 @@ function arrow(label: string) {
 }
 
 beforeEach(async () => {
+  window.localStorage?.removeItem('poplur.feed.muted')
+  setUserMuted(false)
   vi.useFakeTimers()
   // happy-dom omits the constructor constants that browsers expose.
   Object.assign(HTMLMediaElement, { HAVE_NOTHING: 0, HAVE_CURRENT_DATA: 2, NETWORK_EMPTY: 0 })
@@ -89,6 +92,19 @@ describe('Feed startup and interruption recovery', () => {
     })
     return host.querySelector<HTMLVideoElement>('video[data-feed-media]')!
   }
+  it('starts a newly granted decoder with sound without a video tap', async () => {
+    const video = await mountVideo()
+    expect(video).not.toBeNull()
+    expect(video.muted).toBe(false)
+    expect(host.querySelector('button[aria-label="Mute feed video"]')).not.toBeNull()
+  })
+  it('keeps Feed audible when Map audio is muted', async () => {
+    await act(async () => setUserMuted(true))
+    const video = await mountVideo()
+    expect(video.muted).toBe(false)
+    await act(async () => { setUserMuted(false); setUserMuted(true) })
+    expect(video.muted).toBe(false)
+  })
   it('unmutes the video from the sound button without requiring a second tap', async () => {
     const video = await mountVideo()
     let button = host.querySelector<HTMLButtonElement>('button[aria-label="Unmute feed video"]')

@@ -1,4 +1,4 @@
-import { isGateMuted, onGateChange } from './audioGate'
+import { isGateMuted, onGateChange, setUserMuted } from './audioGate'
 import { currentAudioOwner, holdThroughSilence, registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
 import { setMusicPlayback } from './musicPlayback'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -227,6 +227,19 @@ export function startRadioOnBoot(_lat = HOME[1], _lng = HOME[0]): void {
 }
 
 const MAP_RADIO_ENABLED_KEY = 'poplur.mapRadio.enabled'
+const MAP_RADIO_DEFAULT_VERSION = 'poplur.mapRadio.default.v2'
+let mapRadioDefaultApplied = false
+function applyMapRadioDefault(): void {
+  if (mapRadioDefaultApplied) return
+  mapRadioDefaultApplied = true
+  try {
+    if (window.localStorage.getItem(MAP_RADIO_DEFAULT_VERSION) === '1') return
+    // Correct earlier trial builds once; subsequent manual off/mute choices persist.
+    window.localStorage.setItem(MAP_RADIO_DEFAULT_VERSION, '1')
+    window.localStorage.setItem(MAP_RADIO_ENABLED_KEY, '1')
+  } catch { /* The requested default still applies for this session. */ }
+  setUserMuted(false)
+}
 export function mapRadioEnabledByDefault(): boolean {
   try { return window.localStorage.getItem(MAP_RADIO_ENABLED_KEY) !== '0' } catch { return true }
 }
@@ -235,8 +248,11 @@ export function setMapRadioEnabled(on: boolean): void {
 }
 /** Arrival on Map starts radio unless the listener explicitly switched it off. */
 export function startDefaultMapRadio(lat = HOME[1], lng = HOME[0]): void {
+  applyMapRadioDefault()
   if (!mapRadioEnabledByDefault() || isGateMuted() || isMapRadioActive()) return
-  startAutomaticRadioSession(lat, lng)
+  const owner = currentAudioOwner()
+  if (owner === 'voice' || owner === 'feed' || owner === 'ipod') return
+  startRadioForMap(lat, lng)
 }
 
 /** Start Radio when its physical deck is on screen, regardless of scope. */
@@ -250,11 +266,22 @@ export function startRadioForVisibleScreen(lat = HOME[1], lng = HOME[0]): void {
  * local-station lookup may replace it when a suitable stream is available.
  */
 export function startRadioForMap(lat = HOME[1], lng = HOME[0]): void {
+  startMapRadio({ mediaOnly: true })
+  tuneMapRadioLocation(lat, lng)
+}
+
+let mapTuneLocationKey = ''
+/** Retune an existing Map session only. A hidden or stopped Map cannot restart it. */
+export function tuneMapRadioLocation(lat: number, lng: number): void {
+  if (!isMapRadioActive() || !validRadioCoordinates(lat, lng)) return
   const safeLat = validRadioCoordinates(lat, lng) ? lat : HOME[1]
   const safeLng = validRadioCoordinates(lat, lng) ? lng : HOME[0]
-  // Fence any passive boot selection as soon as the person presses Radio.
+  const locationKey = `${safeLat.toFixed(2)},${safeLng.toFixed(2)}`
+  if (mapTuneLocationKey === locationKey) return
+  mapTuneLocationKey = locationKey
+  lastTuneCoords = { lat: safeLat, lng: safeLng }
+  // A new selected location supersedes boot and earlier directory lookups.
   stationSelectionGeneration += 1
-  startMapRadio({ mediaOnly: true })
   void mapNearbyRadioController.start(safeLat, safeLng)
 }
 
@@ -1211,6 +1238,8 @@ export function startMapRadio({ mediaOnly = false }: { mediaOnly?: boolean } = {
 
 export function stopMapRadio() {
   soundWanted = false
+  mapTuneLocationKey = ''
+  bootTuneLocationKey = ''
   mapNearbyRadioController.stop()
   setMusicPlayback('radio', false)
   // Do not let a slow launch directory response resurrect a station after the

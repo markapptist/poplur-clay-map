@@ -108,13 +108,14 @@ import {
   getRadioPlaybackState,
   isMapRadioActive,
   startRadioForMap,
-  startDefaultMapRadio,
   isRadioBackgroundEnabled,
   setMapRadioEnabled,
   startRadioOnBoot,
   stopMapRadio,
   subscribeRadioPlayback,
 } from './mapRadio'
+import { readMapRadioLocation, type MapRadioLocation } from './mapRadioLocation'
+import { useMapRadio } from './useMapRadio'
 import {
   cancelManagedRenderingWake,
   isIOSNativeShell,
@@ -1170,7 +1171,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // Preserve the best location across a map iframe remount. An already-active
   // opt-in radio session can reassert itself when that child becomes ready,
   // without falling back to the generic home coordinate or retuning a station.
-  const radioLocationRef = useRef<{ lat: number; lng: number } | null>(null)
+  const radioLocationRef = useRef<MapRadioLocation | null>(null)
+  const selectedRadioLocationRef = useRef<MapRadioLocation | null>(null)
+  const [mapRadioLocation, setMapRadioLocation] = useState<MapRadioLocation | null>(null)
   const mapRadioState = useSyncExternalStore(
     subscribeRadioPlayback,
     getRadioPlaybackState,
@@ -1188,6 +1191,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       const lng = Number(nested?.longitude)
       if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return
       radioLocationRef.current = { lat, lng }
+      if (!selectedRadioLocationRef.current) setMapRadioLocation({ lat, lng })
       if (NATIVE_ADAPTIVE_MAP) setNativeMapCoordinate({ latitude: lat, longitude: lng })
       startRadioOnBoot(lat, lng)
     }
@@ -3057,6 +3061,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       // this shell still had no CoreLocation fix. Publish it here as THE fix,
       // so the Feed measures reach from the same place the Map does — a pin
       // that stands on the map must stand in the feed too.
+      if (event.data.type === 'poplur-map-radio-location') {
+        const location = readMapRadioLocation(event.data)
+        if (location && mapFrontRef.current) {
+          selectedRadioLocationRef.current = location
+          setMapRadioLocation(location)
+        }
+      }
       if (event.data.type === 'poplur-map-location') {
         publishViewerFix({ latitude: event.data.latitude, longitude: event.data.longitude }, 'map')
       }
@@ -3624,21 +3635,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     subscreenRequested,
     permissionOpen: activePermission !== null,
   })
-  // Native MapKit has no MapApp iframe to start its default radio.
-  useEffect(() => {
-    if (!NATIVE_ADAPTIVE_MAP || nativeMapWebFallback || activeTab !== 'map' || committedTab !== 'map'
-      || !surfaceVisible || subscreenRequested || activePermission !== null || faceTimeActive) return
-    const start = () => {
-      const location = radioLocationRef.current
-      startDefaultMapRadio(location?.lat, location?.lng)
-    }
-    start()
-    const unsubscribe = onGateChange(start)
-    return () => {
-      unsubscribe()
-      if (!isRadioBackgroundEnabled()) stopMapRadio()
-    }
-  }, [activeTab, committedTab, surfaceVisible, subscreenRequested, activePermission, faceTimeActive, nativeMapWebFallback])
+  useMapRadio(activeTab === 'map' && committedTab === 'map' && surfaceVisible
+    && !subscreenRequested && activePermission === null && !faceTimeActive, mapRadioLocation)
 
   // The idle fade exists so the chrome stops obstructing a SUBSCREEN you are
   // reading (News, TV Guide, Radio, an RCL capture). On the home view itself the
@@ -5689,7 +5687,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                   stopMapRadio()
                   return
                 }
-                const location = radioLocationRef.current
+                const location = selectedRadioLocationRef.current ?? radioLocationRef.current
                 if (location) startRadioForMap(location.lat, location.lng)
                 else startRadioForMap()
               }}
@@ -6255,32 +6253,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             <span key={mapPlace} className={styles.mapTitleText}>
               {/* The eyebrow is what makes this the same object as the focused
                   point's card rather than a lookalike: type first, name second,
-                  and the area count as a sub-line inside the same card. */}
+                  with the selected place name beneath it. */}
               <em className={styles.mapTitleKind}>{mapAreaPops?.overall ? 'WORLD' : 'AREA'}</em>
               <strong className={styles.mapTitleName}>{mapPlace}</strong>
-              {!mapTourOn && mapAreaPops && (
-                <button
-                  type="button"
-                  data-poplur-native-hit-region
-                  key={`area-${mapAreaPops.overall ? 'world' : 'local'}-${mapAreaPops.count}-${mapAreaPops.ids[0] ?? ''}`}
-                  className={styles.mapAreaPops}
-                  disabled={mapAreaPops.ids.length === 0}
-                  onClick={() => {
-                    if (!mapAreaPops.ids.length) return
-                    playPop()
-                    setProfilePopFlash(prev => ({ ids: mapAreaPops.ids, seq: (prev?.seq ?? 0) + 1 }))
-                    setViewingUser(null)
-                    setViewingUserId(null)
-                    setActiveTab('profile')
-                  }}
-                >
-                  {mapAreaPops.overall
-                    ? `${mapAreaPops.count} pops posted overall`
-                    : mapAreaPops.count === 1
-                      ? '1 pop posted in this area'
-                      : `${mapAreaPops.count} pops posted in this area`}
-                </button>
-              )}
             </span>
           )}
           <MapRadioStatusLabel className={styles.mapRadioLabel} />

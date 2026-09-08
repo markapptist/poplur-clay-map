@@ -136,7 +136,7 @@ describe('unified Map point cycle', () => {
     expect(mapAppSource).toContain("type: 'poplur-map-point-focus'")
     expect(mapAppSource).toContain('active: mapPointLabelActive')
     expect(mapAppSource).toMatch(/!mapPointLabelActive && \([\s\S]*?className=\{styles\.aiTicker\}/)
-    expect(mapAppSource).toContain('!mapPointLabelActive && !tourOn && areaPops')
+    expect(mapAppSource).not.toContain('pops posted in this area')
     expect(mapAppSource).toContain('<MapRadioStatusLabel className={styles.mapRadioLabel} />')
 
     expect(homeTwinSource).toContain("event.data.type === 'poplur-map-point-focus'")
@@ -149,8 +149,8 @@ describe('unified Map point cycle', () => {
       homeTwinSource.indexOf('<span key={mapPlace} className={styles.mapTitleText}>'),
       homeTwinSource.indexOf('</span>', homeTwinSource.indexOf('<span key={mapPlace}')),
     )
-    expect(homeCard).toContain('!mapTourOn && mapAreaPops')
-    expect(homeCard).toContain('className={styles.mapAreaPops}')
+    expect(homeCard).not.toContain('pops posted in this area')
+    expect(homeCard).not.toContain('className={styles.mapAreaPops}')
     expect(homeTwinSource).toContain('<MapRadioStatusLabel className={styles.mapRadioLabel} />')
   })
 

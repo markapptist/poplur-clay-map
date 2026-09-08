@@ -32,6 +32,6 @@ export default function GestureNavigationDock({ onAction, label, hints, classNam
       if (action) onAction(action)
     }}
     onClick={event => event.stopPropagation()}>
-    <span>{label}</span><small>SWIPE TO NAVIGATE</small>
+    <span>{label}</span>
   </div>
 }

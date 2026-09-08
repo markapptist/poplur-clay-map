@@ -44,7 +44,7 @@ describe('MapRadioButton', () => {
 
     expect(app).toContain('<MapRadioStatusLabel className={styles.mapRadioLabel} />')
     expect(home).toContain('<MapRadioStatusLabel className={styles.mapRadioLabel} />')
-    expect(app.indexOf('<MapRadioStatusLabel')).toBeLessThan(app.indexOf('className={styles.areaPops}'))
+    expect(app).not.toContain('className={styles.areaPops}')
     // The area count moved inside the place card, so it now precedes the radio
     // label in source order. What this test actually guards is that the label is
     // mounted DIRECTLY in the title stack — never nested inside the card.

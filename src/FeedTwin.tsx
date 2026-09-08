@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { CAPTION_CUES } from './captionCues'
-import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
+import { isPlaybackBlocked, onGateChange } from './audioGate'
 import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudioFocus, requestAudioFocus, type AudioOwner } from './audioFocus'
 import { feedSuggestionFor } from './tourSmarts'
 import { feedUrl, channelUrl } from './assetPacks'
@@ -58,7 +58,7 @@ import { playPop, playPopAmbient } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
 import { createFeedLikeActivationGate } from './feedLikeActivation'
 import { showPopup, clearPopups, setPopupKindSuppressed, setPopupsSuppressed } from './popups'
-import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
+import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd, readFeedMuted, writeFeedMuted } from './feedPreferences'
 import { recordPostEngagement, recordVisiblePostView } from './feedEngagements'
 import styles from './FeedTwin.module.css'
 import surfaceStyles from './TransientPopupSurface.module.css'
@@ -180,8 +180,8 @@ function shouldUnlockFeedAudioOnMount(explicitNavigation: boolean): boolean {
   // absent and the picture ran muted until you happened to tap it. Nothing about
   // that was discoverable.
   //
-  // The rest of the decision is unchanged and still governs: `isGateMuted()`
-  // (user mute, backgrounded app) and whether Feed owns the audio floor — the
+  // Playback still respects the host/lifecycle gate, the Feed speaker choice
+  // and whether Feed owns the audio floor — the
   // radio or the AI voice still take the sound when they should.
   if (isNativeShell()) return true
   return explicitNavigation
@@ -465,7 +465,9 @@ export default function FeedTwin({
   const ownHandle = useMemo(() => (
     typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('username')
   ), [])
-  const [muted, setMuted] = useState(isUserMuted)
+  const [muted, setMuted] = useState(readFeedMuted)
+  const mutedRef = useRef(muted)
+  mutedRef.current = muted
   const suppressedRef = useRef(suppressed)
   suppressedRef.current = suppressed
   const frontMostRef = useRef(frontMost)
@@ -856,12 +858,13 @@ export default function FeedTwin({
       audioUnlockedRef.current = true
       setAudioUnlocked(true)
     }
-    setUserMuted(next)
+    mutedRef.current = next
+    writeFeedMuted(next)
     setMuted(next)
     const video = adVideoRef.current
     if (!next && video && frontMostRef.current && !suppressedRef.current && !deferToOwner(currentAudioOwner())) {
       requestAudioFocus('feed')
-      video.muted = isGateMuted()
+      video.muted = isPlaybackBlocked() || mutedRef.current
       video.volume = 0.85
       void video.play().catch(() => {})
     }
@@ -1611,11 +1614,9 @@ export default function FeedTwin({
     }
   }, [adReady, adSrc, completedAdSrc, suppressed, frontMost, mediaUnlocked, decoderGranted, markAdReady, advanceAdSource, retryAdPlayback, recoveryAttempt])
 
-  // Channel audio. The ad creative is the channel's soundtrack, so it plays
-  // aloud — but iOS/Safari block unmuted autoplay until the user has interacted,
-  // and the shared gate must still win (user mute, backgrounded app). So the
-  // element autoplays muted, then unmutes on the first gesture and re-applies
-  // whenever the gate changes.
+  // Apply sound after the decoder mounts as well as after source/focus changes.
+  // The decoder lease can arrive after the first render; an effect that ran
+  // only before that edge left the new video muted indefinitely.
   useEffect(() => {
     const apply = () => {
       const video = adVideoRef.current
@@ -1648,7 +1649,7 @@ export default function FeedTwin({
       // first frame while its own stop callback is still running.
       if (!deferToOwner(currentAudioOwner())) requestAudioFocus('feed')
       const audible = audioUnlockedRef.current
-        && !isGateMuted()
+        && !isPlaybackBlocked() && !mutedRef.current
         && currentAudioOwner() === 'feed'
       video.muted = !audible
       video.volume = 0.85
@@ -1690,7 +1691,7 @@ export default function FeedTwin({
       // visible screen instead of leaving Feed muted until the next gesture.
       if (currentAudioOwner() !== 'feed') requestAudioFocus('feed')
       video.muted = !audioUnlockedRef.current
-        || isGateMuted()
+        || isPlaybackBlocked() || mutedRef.current
         || currentAudioOwner() !== 'feed'
       // Focus callbacks used to restore only the mute bit. WKWebView can pause
       // the element when Voice/system audio takes the floor, so returning focus
@@ -1718,7 +1719,7 @@ export default function FeedTwin({
       setMusicPlayback('feed', false)
       releaseAudioFocus('feed')
     }
-  }, [adSrc, sourceKey, audioUnlocked, frontMost, retryAdPlayback])
+  }, [adSrc, sourceKey, audioUnlocked, muted, frontMost, decoderGranted, recoveryAttempt, retryAdPlayback])
 
   // One pointer path for touch, pen, and desktop mouse drag. Capturing the
   // pointer keeps the swipe alive when it finishes outside the feed. The
@@ -2098,11 +2099,11 @@ export default function FeedTwin({
     } else {
       if (audioUnlockedRef.current && !deferToOwner(currentAudioOwner())) requestAudioFocus('feed')
       video.muted = !audioUnlockedRef.current
-        || isGateMuted()
+        || isPlaybackBlocked() || mutedRef.current
         || currentAudioOwner() !== 'feed'
       if (completedAdRef.current !== adSrc) void video.play().catch(() => {})
     }
-  }, [suppressed, adSrc, sourceKey, audioUnlocked, frontMost])
+  }, [suppressed, adSrc, sourceKey, audioUnlocked, muted, frontMost, decoderGranted, recoveryAttempt])
 
   // Your comment belongs in the comments, on the post you left it on. Keyed by
   // the post rather than held in one list, or a comment written on the ramen
@@ -2209,7 +2210,7 @@ export default function FeedTwin({
           autoPlay
           // Ended media enters the cross-channel radius queue.
           loop={false}
-          muted
+          muted={muted || !audioUnlocked || isPlaybackBlocked() || suppressed || !frontMost || currentAudioOwner() !== 'feed'}
           playsInline
           controls={false}
           disablePictureInPicture
