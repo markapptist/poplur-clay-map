@@ -1,23 +1,3 @@
-/* The channel dial's window: one column on the rail edge, from the rail's
-   top to the home chrome's clearance line, the same span the tile column
-   used. The wheel inside it is sized by ClayWheel; this only positions and
-   hides. */
-.rail {
-  position: absolute;
-  top: var(--poplur-rail-top);
-  bottom: var(--poplur-home-clearance);
-  /* A tile and a little room: the bow curls back INTO the edge now, so the
-     lit tile stands at the apex a few px in from the edge and its neighbours
-     recede behind it toward the bezel. Any wider and the column would start
-     covering the edge-tap lane beside it. */
-  width: 72px;
-  z-index: 46;
-  pointer-events: auto;
-  transition: opacity 160ms ease;
-}
-/* A stack now: the head's controls, then the dial taking what is left. The
-   dial used to be the whole column. */
-.rail { display: flex; flex-direction: column; }
 .head {
   position: relative;
   top: calc(var(--poplur-feed-action-top) - var(--poplur-rail-top));
@@ -28,14 +8,6 @@
   padding: 0 0 8px;
   pointer-events: auto;
 }
-.wheelBox {
-  width: 100%;
-  flex: 1;
-  min-height: 0;
-}
-
-.railLeft { left: max(0px, calc(env(safe-area-inset-left, 0px) - 8px)); }
-.railRight { right: max(0px, calc(env(safe-area-inset-right, 0px) - 8px)); }
 .railHidden {
   opacity: 0;
   pointer-events: none;

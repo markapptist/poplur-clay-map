@@ -1,5 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import ClayWheel from './ClayWheel'
+import { SIDE_DIAL_PRESENTATION } from './sideDialPresentation'
+import dialStyles from './SideDial.module.css'
 import type { ControlSide } from './controlPlacement'
 import { AR_FILTERS } from './ARFilters'
 import {
@@ -80,7 +82,7 @@ export default function CameraARRail({
     // is its own column now, spanning the same band as the feed's channel
     // dial, so both wheels centre on the same line of the screen.
     <div
-      className={`${styles.rail} ${side === 'right' ? styles.railRight : styles.railLeft}`}
+      className={`${dialStyles.rail} ${side === 'right' ? dialStyles.right : dialStyles.left}`}
       data-camera-ar-rail=""
     >
       {/* The camera owns pinch and tap-to-focus on the surface beneath. The
@@ -88,7 +90,7 @@ export default function CameraARRail({
           gesture reaching the viewfinder so a scrub never refocuses the shot. */}
       {head && (
         <div
-          className={styles.head}
+          className={`${styles.head} ${side === 'right' ? styles.headRight : styles.headLeft}`}
           onPointerDown={event => event.stopPropagation()}
           onClick={event => event.stopPropagation()}
         >
@@ -96,7 +98,7 @@ export default function CameraARRail({
         </div>
       )}
       <div
-        className={styles.wheelBox}
+        className={dialStyles.wheelBox}
         onPointerDown={event => event.stopPropagation()}
         onClick={event => event.stopPropagation()}
       >
@@ -106,9 +108,8 @@ export default function CameraARRail({
           onSelect={id => { if (id !== active) onPick(id) }}
           ariaLabel="AR filters"
           side={side}
-          tileSize={46}
+          {...SIDE_DIAL_PRESENTATION}
           flipY
-          showLabels
         />
       </div>
     </div>
