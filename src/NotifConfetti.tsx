@@ -34,7 +34,7 @@ interface Particle {
   alpha: number
 }
 
-export default function NotifConfetti() {
+export default function NotifConfetti({ durationMs }: { durationMs?: number } = {}) {
   const boxRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -113,7 +113,13 @@ export default function NotifConfetti() {
     // a decision rather than letting the count drift up silently.
     let raf = 0
     let last = performance.now()
+    const startedAt = last
     const tick = (now: number) => {
+      if (durationMs !== undefined && now - startedAt >= durationMs) {
+        for (const p of particles) p.el.remove()
+        particles.length = 0
+        return
+      }
       // governor-ok: see the note above this effect.
       raf = requestAnimationFrame(tick)
       const dt = Math.min(0.05, Math.max(0, (now - last) / 1000))
@@ -138,7 +144,7 @@ export default function NotifConfetti() {
       for (const p of particles) p.el.remove()
       particles.length = 0
     }
-  }, [])
+  }, [durationMs])
 
   return <div className={styles.confetti} ref={boxRef} aria-hidden="true" />
 }

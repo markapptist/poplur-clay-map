@@ -28,11 +28,14 @@ export default function UploadStatusView({
       aria-label={complete ? 'Posted confirmation' : 'Post upload progress'}
     >
       <div className={styles.dotMap} aria-hidden='true' />
-      <img className={styles.globe} src='/sprites/zoom_globe_y20_p12_s256.png' alt='Poplur clay globe' />
+      {!complete && <NotifConfetti durationMs={6000} />}
       {!complete && <div className={styles.statusScroll}>
         <div className={styles.wordmark}>
           <img src='/logo_text.png' alt='Poplur' />
           <span>UPLOAD IN PROGRESS</span>
+        </div>
+        <div className={styles.globeSlot}>
+          <div className={styles.globe} role='img' aria-label='Spinning Poplur clay globe' />
         </div>
         <div className={styles.progressCard}>
           <p>Your capture is safe while Poplur posts it.</p>

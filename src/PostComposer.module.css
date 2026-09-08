@@ -27,6 +27,14 @@
   --composer-home-clearance: calc(18px + env(safe-area-inset-bottom));
 }
 
+/* Upload owns the entire viewport, with no editor or home navigator behind it. */
+.uploadStage {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  --composer-home-clearance: calc(30px + env(safe-area-inset-bottom));
+}
+
 .bar {
   flex: 0 0 auto;
   display: flex;

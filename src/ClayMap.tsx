@@ -7399,7 +7399,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           location to post somewhere else". The picker keeps the veil for depth
           and gives up its click: the canvas's own handler below already
           answers a picker tap with exactly the same re-pick. */}
-      <ShellOverlayPortal>
+      {composerVisible && !controlsObscured && <ShellOverlayPortal>
       {composeAt && focusedPickerLaunch && (
         <div aria-hidden="true" className={`${styles.composeDismissLayer} ${styles.composePickerVeil}`} />
       )}
@@ -7709,7 +7709,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         </div>
       )}
 
-      </ShellOverlayPortal>
+      </ShellOverlayPortal>}
 
       {/* Turn banner — shows the current maneuver during eye-level navigation. */}
       {navBanner && (

@@ -36,16 +36,25 @@
   mask-image: radial-gradient(circle at 50% 52%, #000, transparent 72%);
 }
 
+.globeSlot {
+  flex: 1;
+  display: grid;
+  place-items: center;
+}
+
 .globe {
-  position: absolute;
-  z-index: 1;
-  left: 50%;
-  top: 50%;
-  width: min(61vw, 266px);
-  height: auto;
-  transform: translate(-50%, -50%);
-  object-fit: contain;
+  --globe-size: min(61vw, 28dvh, 266px);
+  width: var(--globe-size);
+  height: var(--globe-size);
+  flex-shrink: 0;
+  background: url('/sprites/stats_globe_spin.png') no-repeat;
+  background-size: calc(var(--globe-size) * 40) var(--globe-size);
+  animation: uploadGlobeSpin 3s steps(40) infinite;
   filter: drop-shadow(0 25px 28px rgba(247, 42, 146, .42));
+}
+
+@keyframes uploadGlobeSpin {
+  to { background-position: calc(var(--globe-size) * -40) 0; }
 }
 
 .statusScroll {
@@ -315,5 +324,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .indeterminate i { animation: none; }
+  .indeterminate i, .globe { animation: none; }
 }
