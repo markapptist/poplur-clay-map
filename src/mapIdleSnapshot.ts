@@ -40,6 +40,11 @@ export function installMapIdleSnapshot(
   map: mapboxgl.Map,
   canvas: HTMLCanvasElement,
 ): MapIdleSnapshotController {
+  if (canvas.dataset.poplurNativeMap === 'true') {
+    // Native Mapbox retains its own drawable while idle. Copying the empty
+    // bridge canvas would cover it with a blank image and waste memory.
+    return { requestCapture() {}, park() {}, wake() {}, dispose() {} }
+  }
   const host = canvas.parentElement
   const createSnapshotImage = () => {
     const nextImage = document.createElement('img')

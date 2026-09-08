@@ -44,6 +44,7 @@ function installHarness() {
     insertBefore(node: unknown) { inserted.push(node) },
   }
   const liveCanvas = {
+    dataset: {} as Record<string, string>,
     width: 1179,
     height: 2556,
     style: { opacity: '' },
@@ -115,6 +116,15 @@ afterEach(() => {
 })
 
 describe('map idle snapshot', () => {
+  it('does not capture or cover the native map with the empty bridge canvas', () => {
+    const map = new FakeMap()
+    const canvas = { dataset: { poplurNativeMap: 'true' } } as unknown as HTMLCanvasElement
+    const controller = installMapIdleSnapshot(map as unknown as mapboxgl.Map, canvas)
+    controller.requestCapture(); controller.park(); controller.wake(); controller.dispose()
+    expect(map.listeners.size).toBe(0)
+    expect(map.triggerRepaint).not.toHaveBeenCalled()
+  })
+
   it('does no encoding or repaint on camera settle and asynchronously captures only at park', async () => {
     const { map, controller, blobCallbacks, dataset, diagnostics } = installHarness()
 
@@ -176,7 +186,9 @@ describe('map idle snapshot', () => {
     expect(clayMap).toContain('const stopAmbientSelfiePlayback = onAmbientSleepChange')
     expect(clayMap).toContain("document.addEventListener('visibilitychange', syncSelfiePlayback)")
     expect(clayMap).toContain('selfieVideo.autoplay = false')
-    expect(clayMap).toContain('syncAmbientMediaPlayback(')
+    expect(clayMap).toContain('selfiePlayback = createMapSelfiePlayback(')
+    expect(clayMap).toContain('selfiePlayback?.setActive(')
+    expect(clayMap).toContain('selfiePlayback?.dispose()')
     expect(clayMap).toContain('stopAmbientSelfiePlayback()')
     expect(clayMap).toContain("document.removeEventListener('visibilitychange', syncSelfiePlayback)")
   })

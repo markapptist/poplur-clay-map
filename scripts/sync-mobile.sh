@@ -20,8 +20,8 @@ if [[ ! "${VITE_MAPBOX_TOKEN:-}" =~ ^pk\. ]]; then
 fi
 export VITE_MAPBOX_TOKEN
 
-IOS_DEST="/Users/matrix/Developer/Poplur2025-iOS/ClayMapWeb"
-ANDROID_DEST="/Users/matrix/Developer/Poplur2025-Android/app/src/main/assets/claymap"
+IOS_DEST="${POPLUR_IOS_BUNDLE_DEST:-/Users/matrix/Developer/Poplur2025-iOS/ClayMapWeb}"
+ANDROID_DEST="${POPLUR_ANDROID_BUNDLE_DEST:-/Users/matrix/Developer/Poplur2025-Android/app/src/main/assets/claymap}"
 BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/poplur-mobile-dist.XXXXXX")"
 PUBLISH_LOCK="${TMPDIR:-/tmp}/poplur-mobile-sync.lock"
 GATE_SERVER_LOG="$(mktemp "${TMPDIR:-/tmp}/poplur-gate-server.log.XXXXXX")"

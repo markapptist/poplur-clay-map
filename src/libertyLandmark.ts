@@ -1,3 +1,4 @@
+import { installNativeMapLandmark } from './nativeMapLandmark'
 import mapboxgl from 'mapbox-gl'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
@@ -333,6 +334,8 @@ export function installNearLandmark3D(
     onModelRendered?: () => void
   } = {},
 ): NearLandmark3D {
+  const native = installNativeMapLandmark(map, cfg, opts)
+  if (native) return native
   const nearKm = cfg.nearKm ?? 8
   const nearZoom = cfg.nearZoom ?? 13
   const layerId = `landmark3d-${cfg.id}`

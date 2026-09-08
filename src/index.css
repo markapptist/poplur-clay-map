@@ -313,6 +313,14 @@ html.native-map-live,
   visibility: hidden !important;
 }
 
+/* Native Mapbox replaces only the map's pixels. Mark structural ancestors,
+   never cards/rails, so all production UI retains its current materials. */
+[data-poplur-native-map-ground] {
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
 /* ── perf-lite, feed layer (native app shell) ──────────────────────────────
    The feed stacks three full-screen per-frame effects over the playing video:
    scenePulse (animates `filter` on the video layer — the compositor re-filters

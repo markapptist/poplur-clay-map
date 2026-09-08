@@ -1,3 +1,5 @@
+import { nativeMapRendererEnabled } from './nativeMapMode'
+import { useNativeMapPresentation } from './nativeMapPresentation'
 import { useMapSelfieVideo } from './mapSelfieVideo'
 import './ClayNav.module.css'
 import { useImmersiveControls } from './useImmersiveControls'
@@ -871,6 +873,7 @@ const CLAY_MAP_SRC = (() => {
     ? new URLSearchParams(window.location.search)
     : new URLSearchParams()
   const front = '1'
+  const rendererQuery = nativeMapRendererEnabled() ? '&nativeMapRenderer=1' : ''
   const lite = parentParams.get('mapLite')
   const mapNight = parentParams.get('map-night')
   const weatherCycle = parentParams.get('weather-cycle')
@@ -906,8 +909,8 @@ const CLAY_MAP_SRC = (() => {
     ? '&radius-lab=1'
     : ''
   return typeof window !== 'undefined' && window.location.protocol.startsWith('http')
-    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}${radiusBenchQuery}`
-    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}${radiusBenchQuery}`
+    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}${radiusBenchQuery}${rendererQuery}`
+    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}${radiusBenchQuery}${rendererQuery}`
 })()
 
 /** The Map navigator's time of day from this document's own clock, used
@@ -4028,6 +4031,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [activeTab, committedTab, nativeMapCoordinate, nativeMapWebFallback])
+
+  useNativeMapPresentation(mapFrameRef, mapSurfaceVisible, holdOpen || overlayOpen || mapOverlayOpen || activePermission !== null
+    || subscreenFullscreen || composerOpen || feedAdSlotOpen || Boolean(incomingCall))
 
   // A transparent WKWebView is still a full-screen UIKit hit target. Report
   // the real, currently visible HUD rectangles to native; its managed WebView

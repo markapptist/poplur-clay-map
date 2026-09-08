@@ -33,12 +33,14 @@ export function useImmersiveControls(enabled: boolean, context: string) {
     const events = ['pointerdown', 'pointerup', 'wheel', 'keydown'] as const
     events.forEach(type => window.addEventListener(type, input, { capture: true, passive: true }))
     window.addEventListener('message', message)
+    window.addEventListener('poplur-native-map-tap', input)
     window.addEventListener('poplur-feed-reveal-controls', reveal)
     if (startsHidden) hide(); else wake()
     return () => {
       clearTimeout(timer)
       events.forEach(type => window.removeEventListener(type, input, true))
       window.removeEventListener('message', message)
+      window.removeEventListener('poplur-native-map-tap', input)
       window.removeEventListener('poplur-feed-reveal-controls', reveal)
       delete root.dataset.immersiveControls
       delete root.dataset.controlsIdle

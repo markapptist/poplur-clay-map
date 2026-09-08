@@ -2,6 +2,7 @@ import mapboxgl from 'mapbox-gl'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
+import { installMapModel } from './mapModel'
 
 export interface NavigationCar {
   setPose(coords: [number, number], bearing: number): void
@@ -11,6 +12,10 @@ export interface NavigationCar {
 /** One real GLB in Mapbox's existing context; no independent render clock. */
 export function createNavigationCar(map: mapboxgl.Map, initial: [number, number]): NavigationCar {
   const id = 'poplur-navigation-car'
+  if (map.getProjection().name === 'mercator') {
+    const model = installMapModel(map, { id, coords: initial, asset: 'native-map/navigation-car.glb', heightM: 1, yaw: 180 })
+    return { setPose(coords,bearing) { model.setPose(coords,180-bearing) }, remove: () => model.remove() }
+  }
   let coords = initial, heading = 0, disposed = false
   let renderer: THREE.WebGLRenderer | null = null
   let model: THREE.Object3D | null = null

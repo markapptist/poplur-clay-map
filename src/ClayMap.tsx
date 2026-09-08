@@ -1,3 +1,4 @@
+import { createMapRenderer, createMapMarker, nativeMapRendererEnabled } from './nativeMapRenderer'
 import { buildingDayMaterial } from './buildingDayStyle'
 import { MAP_BUILDING_EXPERIMENT_ENABLED } from './mapBuildingExperiment'
 import { normalizeViewerFix } from './viewerFix'
@@ -562,7 +563,7 @@ function applyStandardConfig(map: mapboxgl.Map, theme: MapTheme, night = mapNigh
     // arrive as either type:model layers or ids that carry "landmark", both
     // are hidden here so a style version bump does not silently reintroduce
     // the white column.
-    if ((layer as { type?: string }).type === 'model' || /landmark/i.test(layer.id)) {
+    if (!layer.id.startsWith('poplur-model-') && ((layer as { type?: string }).type === 'model' || /landmark/i.test(layer.id))) {
       setLayout(layer.id, 'visibility', 'none')
     }
   })
@@ -2812,7 +2813,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     //
     // Raising it again needs an on-device soak, not a gate pass.
     const iosNativeMap = isIOSNativeShell()
-    const dprCap = MAP_2D || SHARED_ADAPTIVE_MAP || MAP_LITE ? 1 : iosNativeMap ? 1.5 : isNativeShell() ? 2 : Infinity
+    const dprCap = nativeMapRendererEnabled() ? Infinity : MAP_2D || SHARED_ADAPTIVE_MAP || MAP_LITE ? 1 : iosNativeMap ? 1.5 : isNativeShell() ? 2 : Infinity
     if (window.devicePixelRatio > dprCap) {
       try {
         Object.defineProperty(window, 'devicePixelRatio', { value: dprCap, configurable: true })
@@ -2829,7 +2830,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     // 60fps direct-manipulation rate for all fifteen seconds.
     sustainManagedRendering(15_000)
     try {
-      map = new mapboxgl.Map({
+      map = createMapRenderer({
         container: containerRef.current,
         // Deterministic per-source LRU for off-screen tiles. Mapbox otherwise
         // sizes this cache from the viewport; this ceiling makes the phone's
@@ -3198,6 +3199,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     map.on('moveend', publishWorldCountry)
     map.on('zoomend', publishWorldCountry)
     map.on('idle', retryFirstWorldCountryOnIdle)
+    if (nativeMapRendererEnabled()) map.on('sourcedata', event => {
+      if ((event as unknown as {nativeQueryComplete?: boolean}).nativeQueryComplete) publishWorldCountry()
+    })
 
     // ── Visible airport → navigator airplane ─────────────────────────────────
     // The airport moment follows the camera, not the render loop. Query only
@@ -3252,6 +3256,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     map.on('moveend', publishAirport)
     map.on('zoomend', publishAirport)
     map.once('idle', publishAirport)
+    if (nativeMapRendererEnabled()) map.on('sourcedata', event => {
+      if ((event as unknown as {nativeQueryComplete?: boolean}).nativeQueryComplete) publishAirport()
+    })
 
     // ── World hover → navigator object ──────────────────────────────────────
     // At the exact outer end-stop, the pointer turns the shell's one navigator
@@ -4298,6 +4305,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       const launchSampleContext = launchSample.getContext('2d', { willReadFrequently: true })
       const launchFrameHasVisiblePixels = () => {
         if (!map.isStyleLoaded()) return false
+        if (nativeMapRendererEnabled()) return true
         // A missing 2D readback context is an unusual browser limitation. The
         // style lifecycle remains the safest available readiness signal there.
         if (!launchSampleContext) return true
@@ -4773,7 +4781,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             img.style.animationDelay = `${Math.random() * 0.3}s`
             img.draggable = false
             el.appendChild(img)
-            const mk = new mapboxgl.Marker({
+            const mk = createMapMarker({
               element: el,
               anchor: 'bottom',
               offset: [0, visibleBaseOffsetPx(
@@ -4800,6 +4808,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         // rendering, and the backup interval repeated the same full rendered-
         // feature query forever on a motionless phone.
         map.on('moveend', syncCityMarkers)
+        if (nativeMapRendererEnabled()) map.on('sourcedata', event => {
+          if ((event as unknown as {nativeQueryComplete?: boolean}).nativeQueryComplete) syncCityMarkers()
+        })
         map.on('zoomend', syncCityMarkers)
         map.once('remove', () => {
           cityMarkers.forEach(mk => mk.remove())
@@ -5263,7 +5274,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         el.className = styles.flyer
         el.style.width = `${f.width}px`
         el.innerHTML = `<div class="${styles.landmarkInner}">${f.kind === 'plane' ? SVG_PLANE : SVG_SATELLITE}</div>`
-        return new mapboxgl.Marker({
+        return createMapMarker({
           element: el,
           anchor: 'center',
           offset: [0, -f.alt],
@@ -5301,7 +5312,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           img.setAttribute('aria-hidden', 'true')
           el.append(img)
           setZoomVisible(el, worldLandmarkIconsVisible(map.getZoom()))
-          return new mapboxgl.Marker({
+          return createMapMarker({
             element: el,
             anchor: 'bottom',
             rotationAlignment: 'viewport',
@@ -5395,7 +5406,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         el.innerHTML = `<div class="${styles.landmarkInner}">${tree.palm ? SVG_PALM : SVG_TREE}</div>`
         // Keep the ground-tight SVG until the shared close-zoom swap below is
         // ready; that swap also compensates for the GLB canvas's alpha gutter.
-        return new mapboxgl.Marker({ element: el, anchor: 'bottom' })
+        return createMapMarker({ element: el, anchor: 'bottom' })
           .setLngLat(tree.coords)
           .addTo(map)
       })
@@ -5407,7 +5418,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         el.style.width = `${boat.width}px`
         el.innerHTML = `<div class="${styles.boatInner}">${SVG_BOAT}</div>`
         // The unified swap below installs the 3D boat and its ground offset.
-        return new mapboxgl.Marker({ element: el, anchor: 'bottom' })
+        return createMapMarker({ element: el, anchor: 'bottom' })
           .setLngLat(boat.coords)
           .addTo(map)
       })
@@ -5897,6 +5908,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
 
       map.on('idle', harvestCarPaths)
       map.on('moveend', harvestCarPaths)
+      if (nativeMapRendererEnabled()) map.on('sourcedata', event => {
+        if ((event as unknown as {nativeQueryComplete?: boolean}).nativeQueryComplete) harvestCarPaths()
+      })
       // No polling fallback: rendered roads only change after the camera/style
       // changes, and both paths already emit idle/moveend. The old 2.5s timer
       // queried every rendered road forever even while the phone sat untouched.
@@ -6450,7 +6464,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             face.draggable = false
             markerRoot.appendChild(face)
           }
-          marker = new mapboxgl.Marker({ element: markerRoot, anchor: 'bottom' })
+          marker = createMapMarker({ element: markerRoot, anchor: 'bottom' })
             .setLngLat(queuedCoords ?? coords)
             .addTo(map)
           queuedCoords = null
@@ -6573,7 +6587,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     dot.className = styles.mapPointHighlightDot
     dot.setAttribute('aria-hidden', 'true')
     root.append(halo, dot)
-    const marker = new mapboxgl.Marker({
+    const marker = createMapMarker({
       element: root,
       anchor: 'center',
       rotationAlignment: 'viewport',
@@ -6853,7 +6867,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         onPinOpenRef.current?.(pinsListRef.current.find(candidate => candidate.id === pin.id) ?? pin)
       })
       // The pin stands ON its coordinate, so the tip is the anchor.
-      const marker = new mapboxgl.Marker({ element: markerRoot, anchor: 'bottom' })
+      const marker = createMapMarker({ element: markerRoot, anchor: 'bottom' })
         .setLngLat(pin.coords)
         .addTo(map)
       publishSyntheticPostVisibility(pin, true)
