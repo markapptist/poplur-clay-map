@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExtern
 import mapboxgl, { type PointLike } from 'mapbox-gl'
 import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
 import { onFrame, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
-import { syncAmbientMediaPlayback } from './ambientMediaPlayback'
+import { createMapSelfiePlayback } from './mapSelfieVideo'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { SideControlIconImage } from './SideControlIcon'
 import type { WeatherIconId } from './sideControlIcons'
@@ -6371,11 +6371,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     let marker: mapboxgl.Marker | null = null
     let cancelled = false
     let selfieVideo: HTMLVideoElement | null = null
+    let selfiePlayback: ReturnType<typeof createMapSelfiePlayback> | null = null
     let ambientSleeping = false
     const syncSelfiePlayback = () => {
-      if (!selfieVideo) return
-      syncAmbientMediaPlayback(
-        selfieVideo,
+      selfiePlayback?.setActive(
         !cancelled && !ambientSleeping && document.visibilityState === 'visible',
       )
     }
@@ -6432,15 +6431,15 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           if (usableVideo) {
             selfieVideo = document.createElement('video')
             selfieVideo.className = `${styles.popPinSelfie} ${styles.popPinSelfieVideo}`
-            selfieVideo.src = usableVideo
             selfieVideo.poster = usablePhoto ?? ''
             selfieVideo.muted = true
             selfieVideo.loop = true
             selfieVideo.playsInline = true
             selfieVideo.autoplay = false
-            selfieVideo.preload = 'metadata'
+            selfieVideo.preload = 'none'
             selfieVideo.setAttribute('aria-hidden', 'true')
             markerRoot.appendChild(selfieVideo)
+            selfiePlayback = createMapSelfiePlayback(selfieVideo, usableVideo)
             syncSelfiePlayback()
           } else if (usablePhoto) {
             const face = document.createElement('img')
@@ -6484,11 +6483,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       window.removeEventListener('poplur-location', onLocation)
       window.removeEventListener('poplur-native-location', onLocation)
       window.removeEventListener('message', onMessage)
-      if (selfieVideo) {
-        selfieVideo.pause()
-        selfieVideo.removeAttribute('src')
-        selfieVideo.load()
-      }
+      selfiePlayback?.dispose()
       marker?.remove()
       marker = null
     }

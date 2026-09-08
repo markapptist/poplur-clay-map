@@ -1,3 +1,4 @@
+import { useMapSelfieVideo } from './mapSelfieVideo'
 import './ClayNav.module.css'
 import { useImmersiveControls } from './useImmersiveControls'
 import { installMapDiscoveryRelay } from './mapDiscoveryTransport'
@@ -3691,6 +3692,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const [ownSelfieVideo, setOwnSelfieVideo] = useState<string | null>(() => {
     try { return window.localStorage.getItem('poplur.profile.selfieVideo') } catch { return null }
   })
+  const [selfieRevision, setSelfieRevision] = useState(0)
+  const mapSelfieVideo = useMapSelfieVideo(ownSelfieVideo, selfieRevision)
   const [ownUid, setOwnUid] = useState<string | null>(() => accountSnapshot().uid)
   // The private desk owns the simulation switch; mirror it here once the
   // account is known so a reviewer's fresh install sees test mode too.
@@ -3712,7 +3715,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     const applyProfileMedia = (detail: ProfileMedia | undefined) => {
       if (typeof detail?.uid === 'string' || detail?.uid === null) setOwnUid(detail.uid ?? null)
       if (typeof detail?.photo === 'string' || detail?.photo === null) setOwnPhoto(detail.photo ?? null)
-      if (typeof detail?.video === 'string' || detail?.video === null) setOwnSelfieVideo(detail.video ?? null)
+      if (typeof detail?.video === 'string' || detail?.video === null) {
+        setOwnSelfieVideo(detail.video ?? null)
+        setSelfieRevision(value => value + 1)
+      }
       if (detail?.username?.trim()) {
         try { window.localStorage.setItem('poplur.username', detail.username.trim().replace(/^@/, '')) } catch { /* embedded */ }
       }
@@ -3732,23 +3738,16 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   }, [])
   // Re-sent on every map (re)load as well as every change: the iframe remounts
   // on tab changes and a message sent to a dead frame is simply lost. If React
-  // state is null but localStorage has a value (race between mount and native
-  // profile response), forward the localStorage copy so the map pin is never
-  // blank when the profile picture exists on disk.
+  // photo state is null but localStorage has a value, forward the stored photo.
+  // Video must come from the compact derivative hook, never the original cache.
   useEffect(() => {
     if (!mapReady) return
     let photo = ownPhoto
-    let video = ownSelfieVideo
+    const video = mapSelfieVideo
     if (!photo) {
       try {
         const raw = window.localStorage.getItem('poplur.profile.photo')
         if (raw && (raw.startsWith('data:image/') || /^https:\/\//i.test(raw))) photo = raw
-      } catch { /* embedded */ }
-    }
-    if (!video) {
-      try {
-        const raw = window.localStorage.getItem('poplur.profile.selfieVideo')
-        if (raw && (raw.startsWith('data:video/') || /^https:\/\//i.test(raw) || /^poplur-clay:\/\//i.test(raw))) video = raw
       } catch { /* embedded */ }
     }
     mapFrameRef.current?.contentWindow?.postMessage(
@@ -3760,7 +3759,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         video,
       }, '*',
     )
-  }, [ownPhoto, ownSelfieVideo, ownUid, mapReady])
+  }, [ownPhoto, mapSelfieVideo, ownUid, mapReady])
   // Hand the phone's posts across to the Map. Swift delivers them with
   // evaluateJavaScript, which lands in THIS document only — the Map is a nested
   // iframe that never sees that event, which is why the board stood empty on

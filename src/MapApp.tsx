@@ -3479,6 +3479,8 @@ export default function MapApp() {
     } catch { return null }
   })
   const [ownSelfieVideo, setOwnSelfieVideo] = useState<string | null>(() => {
+    // Home supplies the compact native derivative; never decode the stored original here.
+    if (isNativeShell()) return null
     try {
       const raw = window.localStorage.getItem('poplur.profile.selfieVideo')
       return raw && (raw.startsWith('data:video/') || /^https:\/\//i.test(raw) || /^poplur-clay:\/\//i.test(raw)) ? raw : null
