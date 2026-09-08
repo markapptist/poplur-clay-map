@@ -1,3 +1,4 @@
+import { useOnlinePeople } from './appPresence'
 import { nativeMapRendererEnabled } from './nativeMapMode'
 import { useNativeMapPresentation } from './nativeMapPresentation'
 import { useMapSelfieVideo } from './mapSelfieVideo'
@@ -655,8 +656,6 @@ function pageIsVisible(): boolean {
 
 // Sample data matching the rest of the harness: 128 posts, 41.8 km radius.
 const POST_COUNT = 128
-// Stable spoofed reach until presence is wired to the live audience service.
-const SPOOFED_ONLINE_AUDIENCE = 1_200_000
 // Radius describes the content currently playing, so it owns most of the HUD
 // cycle. Presence is a brief status beat, not an equal-priority alternate.
 const RADIUS_STAT_HOLD_MS = 10_000
@@ -670,7 +669,6 @@ interface MapHudContext {
   ownPostIds: string[]
   totalRadiusKm: number
   popRadiusKm: number | null
-  onlineUsers: number
 }
 
 /** Radius selections share one finite money-counter beat. Feed transitions
@@ -731,62 +729,6 @@ export function AnimatedRadiusMetrics({
   )
 }
 
-/** ONLINE NOW counts up with the same money-counter beat, ticks and motion trail
-    as RADIUS. The two cards share one slot and swap on alternate beats, so only
-    one is ever counting — the tick/done sounds never double up.
-    The count runs on the RAW number and is compacted every frame, so it reads
-    0 → 1.2M rather than animating the digits of an already-shortened string. */
-function AnimatedOnlineCount({ value, active }: { value: number; active: boolean }) {
-  const [progress, setProgress] = useState(active ? 0 : 1)
-  const [counting, setCounting] = useState(active)
-  const wasActive = useRef(false)
-
-  useEffect(() => {
-    // Only the false->true edge is an arrival; a value change under a card that
-    // is already showing snaps instead of replaying the whole count.
-    const arriving = active && !wasActive.current
-    wasActive.current = active
-    let raf = 0
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (!active || reduced || !arriving) {
-      setProgress(1)
-      setCounting(false)
-      return
-    }
-
-    setProgress(0)
-    setCounting(true)
-    const started = performance.now()
-    const frame = (now: number) => {
-      const raw = Math.max(0, Math.min(1, (now - started) / 880))
-      // Same easing as the radius counter: hard out of the gate, then clicks
-      // precisely onto the final figure instead of coasting past it.
-      const eased = 1 - Math.pow(1 - raw, 2.35)
-      setProgress(eased)
-      playRadiusCounterTick(eased)
-      if (raw < 1) {
-        raf = requestAnimationFrame(frame)
-      } else {
-        setProgress(1)
-        setCounting(false)
-        playRadiusCounterDone()
-      }
-    }
-    raf = requestAnimationFrame(frame)
-    return () => cancelAnimationFrame(raf)
-  }, [active, value])
-
-  const text = compactAudience(Math.round(value * progress))
-  return (
-    <span
-      className={`${styles.statValue} ${styles.onlineValueShader} ${motionStyles.radiusCounter}${counting ? ` ${motionStyles.radiusCounterRunning}` : ''}`}
-      data-counter-value={text}
-    >
-      {text}
-    </span>
-  )
-}
-
 function AnimatedPostCount({ value, active }: { value: number; active: boolean }) {
   const [progress, setProgress] = useState(active ? 0 : 1)
   const [counting, setCounting] = useState(active)
@@ -832,13 +774,6 @@ function AnimatedPostCount({ value, active }: { value: number; active: boolean }
       {text}
     </span>
   )
-}
-
-function compactAudience(value: number): string {
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(value % 1_000_000_000 === 0 ? 0 : 1)}B`
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`
-  if (value >= 1_000) return `${(value / 1_000).toFixed(value % 1_000 === 0 ? 0 : 1)}K`
-  return value.toString()
 }
 
 type PostLoginPermission = 'location' | 'photos' | 'notifications' | 'motion'
@@ -3240,8 +3175,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         const popRadiusKm = Number(event.data.popRadiusKm)
         const ownPostsTotal = Number(event.data.ownPostsTotal)
         const ownPostsArea = Number(event.data.ownPostsArea)
-        const onlineUsers = Number(event.data.onlineUsers)
-        if (scope && Number.isFinite(totalRadiusKm) && Number.isFinite(onlineUsers)) {
+        if (scope && Number.isFinite(totalRadiusKm)) {
           setAccountTotalReachKm(totalRadiusKm)
           const ownPostIds = Array.isArray(event.data.ownPostIds)
             ? (event.data.ownPostIds as unknown[]).filter((value): value is string => typeof value === 'string')
@@ -3253,7 +3187,6 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             ownPostIds,
             totalRadiusKm,
             popRadiusKm: scope === 'pop' && Number.isFinite(popRadiusKm) ? popRadiusKm : null,
-            onlineUsers,
           }
           setMapHudContext(context)
           setMapPopRadiusKm(context.popRadiusKm)
@@ -4696,13 +4629,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // accumulate behaviour and the trend line all have to agree about that or
   // the card contradicts itself.
   const profileHasPopSubject = activeTab === 'profile' && profileReachKm != null
-  const onlineAudience = activeTab === 'map'
-    ? (mapHudContext?.onlineUsers ?? SPOOFED_ONLINE_AUDIENCE)
-    : SPOOFED_ONLINE_AUDIENCE
-  const onlineIsGlobal = activeTab !== 'map'
-    || mapHudContext == null
-    || mapHudContext.scope === 'world'
-    || mapHudContext.scope === 'current'
+  const onlineAudience = useOnlinePeople()
+  const onlineText = onlineAudience == null ? '—' : onlineAudience.toLocaleString()
   const mapRadiusTrend = mapHudContext == null
     ? `${POST_COUNT} nearby`
     : mapHudContext.scope === 'world'
@@ -6143,10 +6071,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               </div>
             </div>
             <div className={styles.statsRows}>
-              <div className={styles.statsRow} aria-label={`${compactAudience(onlineAudience)} users online ${onlineIsGlobal ? 'in the app' : 'in this area'}`}>
-                <span className={styles.statLabel}>{onlineIsGlobal ? 'ONLINE NOW' : 'ONLINE HERE'}</span>
-                <AnimatedOnlineCount value={onlineAudience} active />
-                <span className={styles.statSub}>{onlineIsGlobal ? 'users in app' : 'users in this area'}</span>
+              <div className={styles.statsRow} aria-label={onlineAudience == null ? 'Online count unavailable' : `${onlineText} people online in Poplur`}>
+                <span className={styles.statLabel}>ONLINE NOW</span>
+                <span className={`${styles.statValue} ${styles.onlineValueShader}`}>{onlineText}</span>
+                <span className={styles.statSub}>{onlineAudience == null ? 'Live count unavailable' : onlineAudience === 1 ? 'person in app' : 'people in app'}</span>
               </div>
               <div className={styles.statsRow} aria-label={`${statsPostCount} posts published`}>
                 <span className={styles.statLabel}>YOUR POPS ◆</span>

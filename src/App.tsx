@@ -4,6 +4,7 @@ import PopupHost from './popups'
 import ViewHarness, { harnessViewFromLocation, type HarnessView } from './ViewHarness'
 import VolumeBars from './VolumeBars'
 import { useTestActivityReporter } from './testActivity'
+import { useAppPresenceReporter } from './appPresence'
 
 // Mapbox, its live-data graph, and every map controller stay out of the public
 // Home/Hold route. The internal map iframe pays that cost only when HomeTwin
@@ -46,6 +47,7 @@ function HarnessApp({ initialView }: { initialView: HarnessView }) {
 }
 
 export default function App() {
+  useAppPresenceReporter()
   const params = new URLSearchParams(window.location.search)
   const mapOnly = params.get('map') === '1'
   if (mapOnly) {

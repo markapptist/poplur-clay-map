@@ -626,7 +626,6 @@ const TOUR_MAP_READY_RETRY_MS = 160
 const TOUR_MAP_READY_MAX_ATTEMPTS = 32
 const TOUR_3D_REVEAL_START_ZOOM = 13.9
 const NO_MAP_PINS: PopPin[] = []
-const MAP_GLOBAL_ONLINE = 1_200_000
 
 // ── The pop-to-pop trip ─────────────────────────────────────────────────────
 // Climb, cross, descend (see flyToPop). Module-level because the trip is no
@@ -769,14 +768,6 @@ function accountPostedClaims(pins: readonly LiveMapPostPin[]) {
     coords: pin.coords,
     radiusKm: Math.max(0, pin.radiusKm),
   }))
-}
-
-/** Stable local presence until the live audience service replaces it. Keeping
- *  it coordinate-derived avoids a number that flickers every time moveend
- *  fires while still making different neighbourhoods feel different. */
-function mapAreaOnline(center: [number, number], popCount: number): number {
-  const seed = Math.abs(Math.round(center[0] * 1_000 * 31 + center[1] * 1_000 * 17))
-  return 24 + popCount * 29 + (seed % 83)
 }
 
 function destinationsForTopics(topics: readonly MapTourTopic[]): TourDestination[] {
@@ -4175,7 +4166,6 @@ export default function MapApp() {
       ownPostIds: ownNearby.map(claim => claim.id),
       totalRadiusKm: accountTotalReachKm,
       popRadiusKm: pin.radiusKm,
-      onlineUsers: mapAreaOnline(pin.coords, ownNearby.length),
       popId: pin.id,
     }, '*')
 
@@ -4311,9 +4301,6 @@ export default function MapApp() {
       const scope = atWorld ? 'world' : atPop ? 'pop' : atCurrent ? 'current' : 'area'
       const count = atWorld ? accountPostCount : ownArea.length
       const ids = atWorld ? ownPosts.map(claim => claim.id) : ownArea.map(claim => claim.id)
-      const onlineUsers = scope === 'world' || scope === 'current'
-        ? MAP_GLOBAL_ONLINE
-        : mapAreaOnline(center, ownArea.length)
       const totalRadius = accountTotalReachKm
       // Every pop's radius, not just your own. The camera settles a beat after
       // an arrow step, and this report is what the shell trusts last — leaving
@@ -4321,7 +4308,7 @@ export default function MapApp() {
       // which the shell reads as "no pop subject" and wipes the radius the
       // arrow just put on the card. The number is public post data either way.
       const popRadius = atPop ? nearestPin?.radiusKm : undefined
-      const signature = [scope, count, ids.join(','), totalRadius.toFixed(2), popRadius?.toFixed(2), onlineUsers].join('|')
+      const signature = [scope, count, ids.join(','), totalRadius.toFixed(2), popRadius?.toFixed(2)].join('|')
       if (!force && signature === previous) return
       previous = signature
 
@@ -4335,7 +4322,6 @@ export default function MapApp() {
         totalRadiusKm: totalRadius,
         popRadiusKm: popRadius,
         popId: atPop ? nearestPin?.id : undefined,
-        onlineUsers,
       }, '*')
     }
 
