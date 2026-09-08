@@ -412,7 +412,8 @@ const TAB_COACH: Record<CubeTab, { title: string; lines: string[]; split?: boole
   profile: {
     title: 'YOUR PROFILE',
     lines: [
-      'Tap the bell for notifications.',
+      'Tap your picture to record a new one.',
+      'Tap the bag for the Store.',
       'Pull down to refresh your grid.',
       'Hold the cube for mail, phone, stats and your avatar cube.',
     ],
