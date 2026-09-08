@@ -43,11 +43,11 @@ export default function SpriteNavigator(props: CubeTab3DProps) {
   // Reward faces are outcomes, not different viewing angles. Motion must
   // never replace a landed reward with another face from the sprite sheet.
   const frameRef = useRef(frames)
-  frameRef.current = props.diceRollFace ? frames.filter(frame => !frame.face || frame.face === props.diceRollFace) : frames
+  const visibleFrames = props.diceRollFace ? frames.filter(frame => !frame.face || frame.face === props.diceRollFace) : frames
+  frameRef.current = visibleFrames
   const neutralPitch = useRef<number>()
   const centre = IMAGE_URL.test(modelUrl) || modelUrl.startsWith('data:image/') ? modelUrl :
-    (props.diceRollFace && modelUrl === 'poplur_dice_lite.glb' ? frames.find(frame => frame.face === props.diceRollFace)?.src : undefined)
-      ?? nearestNavigatorFrame(frames, 0, 0)?.src
+    nearestNavigatorFrame(visibleFrames, 0, 0)?.src
 
   useEffect(() => {
     if (!props.diceRollPulse || !renderingVisible || !image.current) return

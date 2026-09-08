@@ -64,25 +64,30 @@ try {
   const models = readdirSync(join(root, 'public')).filter(name => name.endsWith('.glb') && statSync(join(root, 'public', name)).size < 2_000_000)
   models.push('games/poplurstation/console.glb', 'games/poplurstation/controller.glb')
   models.push(...['inverted', 'lens', 'split_diamond', 'swoosh'].map(name => `subscreens/store-models/poplur_card_${name}.glb`))
-  const swaying = new Set(['clay_tv.glb', 'poplur_mark_head_navigator.glb', 'poplur_female_head_navigator.glb',
-    'poplur_camera_kodak.glb', 'poplur_cube_camcorder.glb', 'poplur_clay_phone_lite.glb', 'poplur-globe-lite.glb',
-    'poplur_cube_v4.glb', 'poplur_cube_home.glb', 'poplur_cube_mailbox.glb'])
-  const requested = process.argv.slice(3)
-  const manifest = requested.length ? JSON.parse(readFileSync(join(root, 'src/navigatorSprites.json'), 'utf8')) : {}
+  const missingOnly = process.argv.includes('--missing-motion')
+  const requested = process.argv.slice(3).filter(arg => arg !== '--missing-motion')
+  const manifestPath = join(root, 'src/navigatorSprites.json')
+  const manifest = requested.length || missingOnly ? JSON.parse(readFileSync(manifestPath, 'utf8')) : {}
+  // Every navigator needs viewing angles, including those on subscreens.
+  // Dice outcomes each get their own angles so tilt cannot change the reward.
+  const angles = [-16, 0, 16].flatMap(pitch => [-24, -16, -8, 0, 8, 16, 24].map(yaw => ({ yaw, pitch })))
   mkdirSync(output, { recursive: true })
   for (const model of models) {
     if (requested.length && !requested.includes(model)) continue
-    const poses = model === 'poplur_dice_lite.glb' ? [1, 2, 3, 4, 5, 6].map(face => ({ yaw: 0, pitch: 0, face })) : swaying.has(model)
-      ? [-16, 0, 16].flatMap(pitch => [-24, -16, -8, 0, 8, 16, 24].map(yaw => ({ yaw, pitch })))
-      : [{ yaw: 0, pitch: 0 }]
+    const allPoses = model === 'poplur_dice_lite.glb'
+      ? [1, 2, 3, 4, 5, 6].flatMap(face => angles.map(angle => ({ ...angle, face }))) : angles
+    const existing = missingOnly ? manifest[model] ?? [] : []
+    const poses = allPoses.filter(pose => !existing.some(frame => frame.yaw === pose.yaw && frame.pitch === pose.pitch && frame.face === pose.face))
+    if (!poses.length) continue
     const frames = await evaluate(`window.bake(${JSON.stringify(model)}, ${JSON.stringify(poses)})`)
-    manifest[model] = frames.map(({ yaw, pitch, face, data }) => {
+    manifest[model] = [...existing, ...frames.map(({ yaw, pitch, face, data }) => {
       const filename = `${model.replace(/\.glb$/, '').replace(/[^a-z0-9_-]/gi, '_')}_y${yaw}_p${pitch}${face ? `_f${face}` : ''}.webp`
       writeFileSync(join(output, filename), Buffer.from(data.split(',')[1], 'base64'))
       return { yaw, pitch, ...(face ? { face } : {}), src: `navigator-sprites/${filename}` }
-    })
+    })]
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n')
     console.log(`${model}: ${frames.length} views`)
   }
-  writeFileSync(join(root, 'src/navigatorSprites.json'), JSON.stringify(manifest, null, 2) + '\n')
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n')
   console.log(`Baked ${Object.keys(manifest).length} models; runtime needs no GLB decode or WebGL context.`)
 } finally { cleanup() }

@@ -67,8 +67,8 @@ try {
     const React = ReactModule.default ?? ReactModule;
     const DOMModule = await import('/node_modules/.vite/deps/react-dom_client.js');
     const { createRoot } = DOMModule.default ?? DOMModule;
-    const Corner = (await import('/src/ClayCornerButton.tsx')).default;
-    const Mute = (await import('/src/ClayMuteButton.tsx')).default;
+    const Corner = (await import('/scripts/authoring/ClayCornerButton.tsx')).default;
+    const Mute = (await import('/scripts/authoring/ClayMuteButton.tsx')).default;
     const container = document.createElement('div'); document.body.appendChild(container);
     const root = createRoot(container);
     window.bakeControl = async (kind, active, tone) => {

@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SpriteNavigator, { nearestNavigatorFrame } from '../SpriteNavigator'
 import type { CubeTab3DProps } from '../CubeTab3D'
 import { postNativeEvent } from '../nativeBridge'
+import navigatorSprites from '../navigatorSprites.json'
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 vi.mock('../pop', () => ({ preloadPop: vi.fn(), primePopAudio: vi.fn() }))
 vi.mock('../motionEffectsAudio', () => ({ primeMotionAudio: vi.fn() }))
@@ -39,6 +42,31 @@ function pointer(type: string, x: number, y: number) {
 }
 
 describe('shared sprite navigator', () => {
+  it.each(Object.keys(navigatorSprites).filter(model => model !== 'poplur_dice_lite.glb'))('keeps %s responsive to tilt on subscreens', async modelUrl => {
+    await act(async () => root.render(createElement(SpriteNavigator, { ...callbacks, modelUrl })))
+    const initial = host.querySelector('img')?.getAttribute('src')
+    act(() => window.dispatchEvent(new CustomEvent('poplur-native-motion', { detail: { roll: 0.25, pitch: 1 } })))
+    const right = host.querySelector('img')?.getAttribute('src')
+    expect(right).not.toBe(initial)
+    expect(right).toContain('y24_p0')
+    act(() => {
+      vi.advanceTimersByTime(100)
+      window.dispatchEvent(new CustomEvent('poplur-native-motion', { detail: { roll: -0.25, pitch: 1.5 } }))
+    })
+    expect(host.querySelector('img')?.getAttribute('src')).toContain('y-24_p16')
+    expect(host.querySelector('canvas')).toBeNull()
+  })
+
+  it('ships every tilt view referenced by every stock navigator and reward face', () => {
+    for (const [model, frames] of Object.entries(navigatorSprites)) {
+      const outcomes = model === 'poplur_dice_lite.glb' ? [1, 2, 3, 4, 5, 6] : [undefined]
+      for (const face of outcomes) {
+        const views = frames.filter(frame => ('face' in frame ? frame.face : undefined) === face)
+        expect(new Set(views.map(frame => `${frame.yaw},${frame.pitch}`)).size, `${model} face ${face}`).toBe(21)
+        for (const frame of views) expect(existsSync(resolve('public', frame.src)), frame.src).toBe(true)
+      }
+    }
+  })
   it('responds to tilt without a touch and keeps responding after the old three-second cutoff', () => {
     const tilt = (roll: number) => act(() => window.dispatchEvent(new CustomEvent('poplur-native-motion', { detail: { roll, pitch: 1 } })))
     tilt(0.25)
@@ -156,12 +184,13 @@ describe('shared sprite navigator', () => {
     expect(callbacks.onTap).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps the awarded dice face when motion samples arrive', async () => {
-    await act(async () => root.render(createElement(SpriteNavigator, { ...callbacks, modelUrl: 'poplur_dice_lite.glb', diceRollFace: 5 })))
+  it.each([1, 2, 3, 4, 5, 6] as const)('tilts awarded dice face %s without changing the outcome', async diceRollFace => {
+    await act(async () => root.render(createElement(SpriteNavigator, { ...callbacks, modelUrl: 'poplur_dice_lite.glb', diceRollFace })))
     const landed = host.querySelector('img')?.getAttribute('src')
     pointer('pointerdown', 100, 100)
     act(() => window.dispatchEvent(new CustomEvent('poplur-native-motion', { detail: { roll: 0.4, pitch: 1.2 } })))
-    expect(host.querySelector('img')?.getAttribute('src')).toBe(landed)
+    expect(host.querySelector('img')?.getAttribute('src')).not.toBe(landed)
+    expect(host.querySelector('img')?.getAttribute('src')).toContain(`y24_p0_f${diceRollFace}.webp`)
   })
 
   it('selects a baked 3D view instead of skewing a flat image', () => {
