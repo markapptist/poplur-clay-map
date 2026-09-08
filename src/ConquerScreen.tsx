@@ -8,6 +8,9 @@ import {
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
 import styles from './ConquerScreen.module.css'
+import { accountSnapshot, onAccountChange } from './accountStore'
+import { useAuthoredPosts } from './useAuthoredPosts'
+import { conqueredLandmarks } from './landmarkConquest'
 
 const BOARD_PAGE_SIZE = 6
 
@@ -26,6 +29,12 @@ export default function ConquerScreen({
   const sourceSnapshot = previewSnapshot ?? snapshot
   const [displaySnapshot, setDisplaySnapshot] = useState(sourceSnapshot)
   const [boardPage, setBoardPage] = useState(0)
+  const [sectionPage, setSectionPage] = useState(0)
+  const [accountUid, setAccountUid] = useState(() => accountSnapshot().uid)
+  useEffect(() => onAccountChange(account => setAccountUid(account.uid)), [])
+  const authored = useAuthoredPosts(accountUid, sectionPage === 1)
+  const landmarks = useMemo(() => conqueredLandmarks(authored.snapshot?.claims ?? []), [authored.snapshot])
+  const conqueredCount = landmarks.filter(landmark => landmark.covered).length
   const [flipRevision, setFlipRevision] = useState(0)
   const boardRef = useRef<HTMLElement>(null)
   const pullInnerRef = useRef<HTMLDivElement>(null)
@@ -62,7 +71,7 @@ export default function ConquerScreen({
   // ranked page and re-runs the split-flap reveal. The timer exists only while
   // this screen is mounted and parks whenever the document is hidden.
   useEffect(() => {
-    if (!rows.length) return
+    if (!rows.length || sectionPage !== 0) return
     let timer = 0
     const start = () => {
       if (document.hidden || timer) return
@@ -85,7 +94,7 @@ export default function ConquerScreen({
       stop()
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [displaySnapshot?.generatedAt, pageCount, rows.length])
+  }, [displaySnapshot?.generatedAt, pageCount, rows.length, sectionPage])
 
   const refresh = useCallback(() => {
     // Pulling re-reads the newest snapshot delivered by the map and restarts
@@ -94,7 +103,13 @@ export default function ConquerScreen({
     setDisplaySnapshot(sourceSnapshot)
     setBoardPage(0)
     setFlipRevision(revision => revision + 1)
-  }, [sourceSnapshot])
+    if (sectionPage === 1) authored.retry()
+  }, [sourceSnapshot, sectionPage, authored.retry])
+
+  const showPage = (page: number) => {
+    setSectionPage(page)
+    if (boardRef.current) boardRef.current.scrollTop = 0
+  }
 
   usePullToRefresh({
     scrollRef: boardRef,
@@ -114,17 +129,6 @@ export default function ConquerScreen({
       data-standalone={onClose ? 'true' : undefined}
     >
       <div className={styles.terrain} aria-hidden="true" />
-      {onClose && (
-        <button
-          type="button"
-          className={styles.close}
-          aria-label="Close Conquer Board"
-          autoFocus
-          onClick={onClose}
-        >
-          <span aria-hidden="true">×</span>
-        </button>
-      )}
       <section ref={boardRef} className={styles.board} aria-labelledby="poplur-conquer-title">
         <div className={pullStyles.panel} ref={pullPanelRef} data-pull-panel aria-hidden="true">
           <div className={pullStyles.head} ref={pullHeadRef}>
@@ -141,12 +145,61 @@ export default function ConquerScreen({
               </span>
               <h1 id="poplur-conquer-title">Conquer Board</h1>
             </div>
-            {rows[0] && (
+            {sectionPage === 0 && rows[0] && (
               <strong style={{ '--conquer-color': rows[0].color } as React.CSSProperties}>
                 {rows[0].mine ? 'YOU' : rows[0].label}
               </strong>
             )}
           </header>
+
+          <nav className={styles.pagination} aria-label="Conquer Board pages">
+            <button type="button" className={styles.pageArrow} aria-label="Previous Conquer Board page"
+              disabled={sectionPage === 0} onClick={() => showPage(0)}>‹</button>
+            <button type="button" aria-current={sectionPage === 0 ? 'page' : undefined}
+              onClick={() => showPage(0)}><b>1</b> Rankings</button>
+            <button type="button" aria-current={sectionPage === 1 ? 'page' : undefined}
+              onClick={() => showPage(1)}><b>2</b> Landmarks</button>
+            <button type="button" className={styles.pageArrow} aria-label="Next Conquer Board page"
+              disabled={sectionPage === 1} onClick={() => showPage(1)}>›</button>
+          </nav>
+
+          {sectionPage === 1 ? (
+            <section className={styles.landmarks} aria-labelledby="conquer-landmarks-title">
+              <div className={styles.landmarkHeading}>
+                <div><span>YOUR LANDMARK WALL</span><h2 id="conquer-landmarks-title">Leave your mark.</h2></div>
+                <strong aria-label={authored.snapshot ? `${conqueredCount} of ${landmarks.length} landmarks conquered` : accountUid ? 'Landmark count loading' : 'Sign in for your landmark count'}>
+                  {authored.snapshot ? conqueredCount : '—'}<small> / {landmarks.length}</small>
+                </strong>
+              </div>
+              <p className={styles.landmarkIntro}>Your pops cover the world, one landmark at a time.</p>
+              <div className={styles.landmarkProgress} role="progressbar" aria-label="Landmarks currently conquered"
+                aria-valuemin={0} aria-valuemax={landmarks.length} aria-valuenow={authored.snapshot ? conqueredCount : undefined}>
+                <i style={{ width: `${conqueredCount / landmarks.length * 100}%` }} />
+              </div>
+              <p className={styles.landmarkStatus} role="status">
+                {!accountUid ? 'Sign in to see the landmarks your pops cover.'
+                  : authored.error ? 'Could not check your landmarks.'
+                    : authored.loading ? 'Checking your active pops…'
+                      : `${conqueredCount} currently conquered · ${landmarks.length - conqueredCount} to reach`}
+                {authored.error && <button type="button" onClick={authored.retry}>Try again</button>}
+              </p>
+              <ul className={styles.landmarkWall}>
+                {landmarks.map(landmark => (
+                  <li key={landmark.id} className={`${styles.landmarkTile} ${landmark.covered ? styles.landmarkCovered : styles.landmarkLocked}`}
+                    data-landmark={landmark.id} data-covered={landmark.covered}>
+                    <div className={styles.landmarkArt}>
+                      <img src={landmark.image} alt="" loading="lazy" decoding="async" width={320} height={320} draggable={false} />
+                      <span className={styles.landmarkBadge} aria-hidden="true">{landmark.covered ? '✓' : '◇'}</span>
+                    </div>
+                    <strong>{landmark.name}</strong>
+                    <span className={styles.landmarkPlace}>{landmark.place}</span>
+                    <em>{authored.snapshot ? landmark.covered ? 'CONQUERED' : 'NOT COVERED' : 'TO DISCOVER'}</em>
+                  </li>
+                ))}
+              </ul>
+              <p className={styles.landmarkRule}>A landmark fills in while an active pop’s radius covers it. If that coverage ends, its silhouette returns.</p>
+            </section>
+          ) : <>
 
           {simulatedPreview && (
             <div className={styles.previewNotice} role="status">
@@ -165,7 +218,7 @@ export default function ConquerScreen({
             <>
               <div className={styles.boardTicker}>
                 <span><i aria-hidden="true" /> {simulatedPreview ? 'PREVIEW ROTATION' : 'LIVE ROTATION'}</span>
-                <strong>BOARD {safePage + 1} / {pageCount}</strong>
+                <strong>RANKS {pageStart + 1}–{Math.min(rows.length, pageStart + BOARD_PAGE_SIZE)}</strong>
                 <em>PULL TO REFRESH</em>
               </div>
               <div className={styles.list} key={`board-${safePage}-${flipRevision}`}>
@@ -210,6 +263,7 @@ export default function ConquerScreen({
                 : 'The complete board is ready; live rankings will appear as soon as this map reports them.'}</span>
             </div>
           )}
+          </>}
         </div>
       </section>
       {!onClose && <p className={styles.cubeHint}>TAP THE CUBE TO RETURN TO MAP</p>}

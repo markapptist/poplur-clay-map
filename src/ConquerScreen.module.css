@@ -22,28 +22,6 @@
     calc(env(safe-area-inset-bottom, 0px) + 20px);
 }
 
-.close {
-  position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 14px);
-  right: max(14px, env(safe-area-inset-right, 0px));
-  z-index: 3;
-  width: 46px;
-  height: 46px;
-  display: grid;
-  place-items: center;
-  padding: 0 0 3px;
-  border: 2px solid rgba(255, 255, 255, .88);
-  border-radius: 16px;
-  color: #fff;
-  background: radial-gradient(circle at 34% 22%, #ff9dd1, #f63b9a 56%, #8f174f);
-  box-shadow: 0 5px 0 #72103f, 0 10px 22px rgba(0, 0, 0, .42), inset 0 1px 0 rgba(255, 255, 255, .7);
-  cursor: pointer;
-  font: 950 28px/1 system-ui, sans-serif;
-}
-
-.close:active { transform: translateY(2px); box-shadow: 0 3px 0 #72103f, 0 7px 16px rgba(0, 0, 0, .4); }
-.close:focus-visible { outline: 3px solid #7fe3ff; outline-offset: 3px; }
-
 .terrain {
   position: absolute;
   inset: 0;
@@ -97,6 +75,60 @@
   font-weight: 950;
   letter-spacing: -.045em;
 }
+
+.pagination {
+  display: grid;
+  grid-template-columns: 32px 1fr 1fr 32px;
+  gap: 6px;
+  margin: 20px 0 18px;
+}
+.pagination button {
+  min-height: 40px;
+  padding: 7px 5px;
+  border: 1px solid rgba(205, 83, 149, .2);
+  border-radius: 18px;
+  color: #8f486f;
+  background: rgba(255, 255, 255, .62);
+  font: 850 11px/1.2 system-ui, sans-serif;
+  cursor: pointer;
+}
+.pagination b { margin-right: 3px; }
+.pagination button[aria-current='page'] {
+  color: white;
+  border-color: #ffb8db;
+  background: radial-gradient(ellipse at 28% 0, #ffa7d7, #f82a93 55%, #b21668);
+  box-shadow: 0 4px 0 #8c1756, inset 0 2px 1px #ffd7ec, 0 7px 13px #d83a8626;
+}
+.pagination .pageArrow { font-size: 27px; line-height: 20px; padding-top: 4px; }
+.pagination button:disabled { opacity: .3; cursor: default; }
+.pagination button:focus-visible, .landmarkStatus button:focus-visible { outline: 3px solid #087a99; outline-offset: 3px; }
+.pagination button:active:not(:disabled) { transform: translateY(2px); }
+
+.landmarkHeading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.landmarks { padding-bottom: calc(var(--poplur-home-clearance, 160px) + 16px); }
+.landmarkHeading div > span { color: #c12b79; font-size: 9px; font-weight: 950; letter-spacing: .12em; }
+.landmarkHeading h2 { margin: 4px 0 0; color: #261021; font-size: clamp(23px, 6vw, 30px); letter-spacing: -.04em; line-height: 1; }
+.landmarkHeading > strong { font-size: 37px; letter-spacing: -.05em; color: #e32489; white-space: nowrap; }
+.landmarkHeading small { font-size: 15px; letter-spacing: -.03em; color: #91637e; }
+.landmarkIntro { margin: 9px 0 12px; color: #79546d; font-size: 12px; font-weight: 650; line-height: 1.5; }
+.landmarkProgress { height: 9px; overflow: hidden; border-radius: 99px; background: #e7d2e0; box-shadow: inset 0 2px 2px #70345b1a; }
+.landmarkProgress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #ff7bbd, #f12791); }
+.landmarkStatus { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin: 8px 0 16px; min-height: 16px; color: #925778; font-size: 10px; font-weight: 800; }
+.landmarkStatus button { padding: 0; border: 0; color: #097a96; background: none; font: inherit; text-decoration: underline; cursor: pointer; }
+.landmarkWall { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 0; margin: 0; list-style: none; }
+.landmarkTile { display: flex; flex-direction: column; align-items: center; padding: 9px 7px 12px; border: 1px solid #fff; border-radius: 24px; text-align: center; background: linear-gradient(155deg, #faf5fb, #eadce9); box-shadow: inset 0 1px 1px #fff, 0 6px 12px #6325460c; }
+.landmarkArt { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; }
+.landmarkArt img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.landmarkLocked .landmarkArt img { filter: brightness(0); opacity: .21; }
+.landmarkBadge { position: absolute; right: 1px; top: 1px; display: grid; place-items: center; width: 21px; height: 21px; border-radius: 50%; color: #a085a4; background: #e4d8e6; font-size: 13px; font-weight: 950; }
+.landmarkTile > strong { color: #705569; font-size: 12px; font-weight: 900; line-height: 1.22; }
+.landmarkPlace { display: block; margin-top: 4px; color: #9a7b90; font-size: 10px; font-weight: 700; }
+.landmarkTile em { margin-top: 9px; padding: 4px 8px; border-radius: 99px; color: #9a7b90; background: #e5d9e6; font-size: 7px; font-weight: 950; letter-spacing: .12em; font-style: normal; }
+.landmarkCovered { border-color: #ffc1df; background: radial-gradient(circle at 50% 30%, #fff 0%, #fbe8f4 48%, #f8d6e9 100%); box-shadow: inset 0 2px 2px #fff, 0 4px 0 #eaa7cf, 0 9px 15px #e8348614; }
+.landmarkCovered .landmarkBadge { color: #fff; background: #f72d95; box-shadow: 0 2px 0 #a61761; }
+.landmarkCovered > strong { color: #3e1a31; }
+.landmarkCovered em { color: #bd2173; background: #f8c8e3; }
+.landmarkRule { margin: 19px 4px 3px; font-size: 11px; font-weight: 650; color: #91677f; text-align: center; line-height: 1.55; }
 
 .heading > strong {
   max-width: 34%;
