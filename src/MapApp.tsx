@@ -1934,7 +1934,7 @@ export default function MapApp() {
     const targetZoom = landmarkFrame?.zoom ?? (streetView ? 18.9 : BUILDING_REVEAL_ZOOM)
     const currentZoom = map.getZoom()
     const currentCenter = map.getCenter()
-    const atWorldOverview = worldCountryZoomActive(currentZoom, MAP_MIN_ZOOM)
+    const atWorldOverview = motionMode === 'map-point-cycle' && worldCountryZoomActive(currentZoom, MAP_MIN_ZOOM)
     const plan = motionMode === 'map-point-cycle'
       ? mapPointCycleCameraPlan({
         currentZoom, targetZoom,

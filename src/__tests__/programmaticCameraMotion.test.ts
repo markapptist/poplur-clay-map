@@ -118,7 +118,7 @@ describe('programmatic Map camera motion', () => {
       mapAppSource.indexOf('const flyToCenter = useCallback'),
       mapAppSource.indexOf('const flyToPop = useCallback'),
     )
-    expect(flight).toContain('const atWorldOverview = worldCountryZoomActive(currentZoom, MAP_MIN_ZOOM)')
+    expect(flight).toContain("const atWorldOverview = motionMode === 'map-point-cycle' && worldCountryZoomActive(currentZoom, MAP_MIN_ZOOM)")
     expect(flight).toContain('holdWideOverview: atWorldOverview')
     expect(flight).toContain("...(landmarkFrame?.offset && !atWorldOverview ? { offset: landmarkFrame.offset } : {})")
   })
