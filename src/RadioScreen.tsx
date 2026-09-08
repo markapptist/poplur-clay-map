@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import styles from './RadioScreen.module.css'
 import { playPop } from './pop'
 import { isUserMuted, setUserMuted } from './audioGate'
-import ClayCornerButton from './ClayCornerButton'
 import RadioBoot from './RadioBootScreen'
 import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import {
@@ -548,39 +547,65 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
+          {/* The transport is FLAT art from the supplied side-control pack, not
+              a clay render — media.rewind, feed.like, feed.share and
+              media.forward are the pack's own marks for these four. The pack
+              ships no play triangle of its own, so play wears the Map's, the
+              same one the feed's fullscreen player uses. Swap that one icon the
+              day a media.play is supplied; nothing else here changes. */}
           <div className={styles.dashControls}>
-            <ClayCornerButton kind="seekBack" label="Previous station" size={46} onPress={() => scan(-1)} />
-            <ClayCornerButton
-              kind="heart"
-              label={tuned ? 'Favourite station' : 'Favourite unavailable until a station is tuned'}
-              size={52}
-              active={!!tuned && favourites.has(tuned.id)}
-              onPress={() => {
+            <SideControlIconButton
+              icon="media.rewind"
+              className={styles.dashSeekButton}
+              imageSize={46}
+              aria-label="Previous station"
+              activation="pointerdown"
+              onActivate={() => scan(-1)}
+            />
+            <SideControlIconButton
+              icon="feed.like"
+              className={styles.dashActionButton}
+              imageSize={52}
+              aria-pressed={!!tuned && favourites.has(tuned.id)}
+              aria-label={tuned ? 'Favourite station' : 'Favourite unavailable until a station is tuned'}
+              activation="pointerdown"
+              onActivate={() => {
                 const station = requireTuned('favourite')
                 if (station) toggleFav(station.id)
               }}
             />
-            <ClayCornerButton
-              kind="play"
-              label={tuned ? `Play ${tuned.name}` : 'Play unavailable until a station is tuned'}
-              size={78}
-              onPress={() => {
+            <SideControlIconButton
+              icon="map.tour_play"
+              className={styles.dashPlayButton}
+              imageSize={78}
+              aria-label={tuned ? `Play ${tuned.name}` : 'Play unavailable until a station is tuned'}
+              activation="pointerdown"
+              onActivate={() => {
                 if (tuned) tune(tuned)
                 else requireTuned('play')
               }}
             />
-            <ClayCornerButton
-              kind="share"
-              label={tuned ? `Share ${tuned.name}` : 'Share unavailable until a station is tuned'}
-              size={52}
-              onPress={() => {
+            <SideControlIconButton
+              icon="feed.share"
+              className={styles.dashActionButton}
+              imageSize={52}
+              aria-label={tuned ? `Share ${tuned.name}` : 'Share unavailable until a station is tuned'}
+              activation="pointerdown"
+              onActivate={() => {
                 const station = requireTuned('share')
                 if (!station) return
                 playPop()
                 shareTunedStation(station)
               }}
             />
-            <ClayCornerButton kind="seekFwd" label="Next station" size={46} onPress={() => scan(1)} />
+            <SideControlIconButton
+              icon="media.forward"
+              className={styles.dashSeekButton}
+              imageSize={46}
+              aria-label="Next station"
+              activation="pointerdown"
+              onActivate={() => scan(1)}
+            />
           </div>
           <div className={styles.dashHint} role="status" aria-live="polite">
             {controlNote

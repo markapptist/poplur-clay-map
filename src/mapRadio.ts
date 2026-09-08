@@ -227,7 +227,7 @@ export function startRadioOnBoot(_lat = HOME[1], _lng = HOME[0]): void {
 }
 
 const MAP_RADIO_ENABLED_KEY = 'poplur.mapRadio.enabled'
-const MAP_RADIO_DEFAULT_VERSION = 'poplur.mapRadio.default.v2'
+const MAP_RADIO_DEFAULT_VERSION = 'poplur.mapRadio.default.v3'
 let mapRadioDefaultApplied = false
 function applyMapRadioDefault(): void {
   if (mapRadioDefaultApplied) return
@@ -235,6 +235,8 @@ function applyMapRadioDefault(): void {
   try {
     if (window.localStorage.getItem(MAP_RADIO_DEFAULT_VERSION) === '1') return
     // Correct earlier trial builds once; subsequent manual off/mute choices persist.
+    // v3 re-applies it: the map is meant to arrive with radio playing, and a
+    // stale mute from an earlier build was leaving it silent on every arrival.
     window.localStorage.setItem(MAP_RADIO_DEFAULT_VERSION, '1')
     window.localStorage.setItem(MAP_RADIO_ENABLED_KEY, '1')
   } catch { /* The requested default still applies for this session. */ }

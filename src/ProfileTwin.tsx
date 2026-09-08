@@ -2663,7 +2663,12 @@ export default function ProfileTwin({
             onClick={() => { playPop(); window.dispatchEvent(new CustomEvent('poplur-open-store')) }}
             aria-label="Store"
           >
-            <img src="profile-controls/shopping-cart.png" alt="" draggable="false" />
+            {/* The clay Poplur bag the hold menu's own STORE tile wears. The
+                supplied profile-controls cart is an app-icon plate on an opaque
+                black ground — no alpha anywhere in the file — so on the
+                profile's light paper it read as a black tile rather than a clay
+                object like the bell, gear and pin beside it. */}
+            <img src="holdmenu/ShoppingBag.png" alt="" draggable="false" />
           </button>
         )}
       </TabControlRail>

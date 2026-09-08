@@ -498,7 +498,13 @@
   overflow: hidden;
 }
 
-/* The five clay controls have a fixed visual size. On a very narrow handset
+/* Flat pack art has no baked-in footprint, so each transport control is sized
+   to its own picture instead of the shared 44px side-control box. */
+.dashSeekButton { width: 46px; height: 46px; border-radius: 16px; }
+.dashActionButton { width: 52px; height: 52px; border-radius: 18px; }
+.dashPlayButton { width: 78px; height: 78px; border-radius: 27px; }
+
+/* The five transport controls have a fixed visual size. On a very narrow handset
    their combined intrinsic width could otherwise enlarge the flex item and
    make the whole radio deck grow past the device edge. Keep the controls
    centered and scale only that row when the content column is genuinely

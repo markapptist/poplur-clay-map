@@ -1904,6 +1904,16 @@ export default function Camera({
       {/* Composition grid and the self-timer's count, over the preview and
           under the controls. Neither is part of the capture. */}
       {real && gridOn && <div className={styles.camGrid} aria-hidden="true" />}
+      {/* The focus square: the bracket every camera wears in the middle of the
+          frame, so there is a centre to aim with. It is a SIGHT, not a readout
+          — nothing on the bridge reports where the lens actually focused — so
+          it never moves and never claims a lock, and the green the detector
+          locks with stays the detector's. It comes and goes with the picture
+          rather than with the grid toggle: standard furniture, not an opt-in
+          composition aid. */}
+      {real && effectiveLiveSurfaceVisible && !nativePreviewParked && (
+        <div className={styles.camFocus} aria-hidden="true" />
+      )}
       {real && timerLeft != null && (
         <div
           className={styles.camCountdown}

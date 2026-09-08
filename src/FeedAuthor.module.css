@@ -1,52 +1,84 @@
+/* The byline is the comment roll's identity line worn at the top of the frame:
+   a ringed head, the handle, and one quiet line under it. Same cast, same
+   material — see .commentLine/.commentWho in FeedTwin.module.css. */
 .author {
   display: flex;
-  align-items: flex-start;
+  /* One row, centred on the head. flex-start only made sense while the caption
+     below was allowed to run to a second line. */
+  align-items: center;
   gap: 10px;
   width: 100%;
   min-width: 0;
-  min-height: 48px;
+  /* 44px is the tap floor; 48 was buying height this row never uses. */
+  min-height: 44px;
   box-sizing: border-box;
-  padding: 3px 0;
+  padding: 0;
   border: 0;
   background: transparent;
   color: #fff;
   text-align: left;
-  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Roboto, Arial, sans-serif;
-  text-shadow: 0 1px 4px #000b;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Rounded', sans-serif;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
 button.author { cursor: pointer; }
 .author:focus-visible { outline: 2px solid #fff; outline-offset: 5px; border-radius: 16px; }
+
+/* The comment roll's head: a thin light ring over a dark drop, not a hard
+   white band — the 2px border read as a sticker pasted on a bright frame. */
 .avatar {
   display: grid;
   place-items: center;
-  flex: 0 0 38px;
-  width: 38px;
-  height: 38px;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
   overflow: hidden;
-  border: 2px solid #fff;
   border-radius: 50%;
   background: #c32674;
-  box-shadow: 0 2px 5px #0006;
-  font-size: 13px;
-  font-weight: 700;
-  text-shadow: none;
+  box-shadow:
+    0 0 0 1.5px rgba(255, 233, 245, 0.75),
+    0 3px 7px rgba(0, 0, 0, 0.7);
+  font: 900 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.4px;
 }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
-.copy { flex: 1; min-width: 0; padding-top: 1px; }
-.identity { display: flex; align-items: center; gap: 5px; min-height: 22px; }
-.username { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; line-height: 22px; font-weight: 700; letter-spacing: -.2px; }
-.verified { flex: 0 0 17px; width: 17px; height: 17px; object-fit: contain; }
-.caption {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+.copy { flex: 1 1 auto; min-width: 0; }
+.identity { display: flex; align-items: center; gap: 5px; min-width: 0; }
+
+/* A hard dark rim under the fill, the way the comment roll survives a bright
+   frame — there is no panel behind this one either. text-shadow rather than a
+   drop-shadow filter: this is a solid fill, and filtered text re-rasterises
+   forever on the A03. */
+.username {
+  min-width: 0;
   overflow: hidden;
-  overflow-wrap: anywhere;
-  margin-top: 2px;
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 400;
-  color: #fffffff0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 950 16px/1.15 system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Rounded', sans-serif;
+  letter-spacing: -.2px;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.95), 0 2px 5px rgba(0, 0, 0, 0.85);
+}
+.verified {
+  flex: 0 0 15px;
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.75));
+}
+
+/* ONE line, never two. The clamp let a caption run to a second line, which
+   pushed the countdown down the frame, split the header into two unrelated
+   groups, and on the live channel ran the cluster over .liveFlag. The map
+   card's place line takes the same deal — nowrap with an ellipsis — and the
+   whole caption stays on the element's title and in the button's aria-label. */
+.caption {
+  display: block;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(255, 247, 251, .72);
+  font: 800 11px/1.2 system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Rounded', sans-serif;
+  letter-spacing: .03em;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.9), 0 2px 4px rgba(0, 0, 0, 0.75);
 }
