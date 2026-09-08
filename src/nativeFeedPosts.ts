@@ -166,6 +166,7 @@ function normalizeFeedPost(
   const radiusMeters = finite(row.radiusMeters ?? row.radius ?? row.organicRadiusMeters)
   // Kept separate from the total: the create rule counts this alone as claim
   // entitlement, so the picker has to be bounded by it and not by whole reach.
+  if (radiusMeters != null && radiusMeters <= 0) return null
   const organicRadiusMeters = finite(row.organicRadiusMeters)
   const declaredMediaType = boundedText(row.mediaType, 16)?.toLowerCase()
   const imageURL = /\.(?:avif|gif|heic|heif|jpe?g|png|webp)(?:[?#]|$)/i.test(mediaURL)

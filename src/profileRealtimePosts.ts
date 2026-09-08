@@ -69,6 +69,7 @@ export function profileRecipientUid(
 }
 
 function profilePost(value: NativeFeedPost): RealtimeProfilePost | null {
+  if (value.radiusMeters != null && value.radiusMeters <= 0) return null
   const media = value.mediaURL?.trim()
   const synthetic = value.syntheticJourney === 'first-user-v1'
   const isSyntheticURL = (raw: string | undefined): boolean => synthetic && (() => {

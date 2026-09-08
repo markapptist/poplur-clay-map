@@ -6641,10 +6641,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     // only holders whose ground is actually on screen, capped, and ranked so
     // the cap can never drop the regional holders that ARE the board.
     //
-    const PIN_MAX_LIVE = 18
+    const PIN_MAX_LIVE = 36
     const visiblePins = (): PopPin[] => {
       const zoom = map.getZoom()
-      const maxLive = zoom < 3.2 ? 10 : PIN_MAX_LIVE
+      const maxLive = zoom < 3.2 ? 24 : PIN_MAX_LIVE
       const inView = viewportDominancePins(map, list)
       // A marker draws at its pop's ORIGIN. A world-holder standing in Tokyo
       // owns the ground under a Toronto camera, so it is "in view" by

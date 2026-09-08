@@ -18,7 +18,7 @@ describe('authoritative account post radius', () => {
     expect(accountRadiusSnapshotFromDocuments(documents)).toEqual({
       radiusKm: 0.5,
       totalReachKm: 0.5,
-      postCount: 180,
+      postCount: 1,
     })
   })
 

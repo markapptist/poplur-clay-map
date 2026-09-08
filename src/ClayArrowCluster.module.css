@@ -99,3 +99,19 @@
   visibility: hidden;
   pointer-events: none;
 }
+
+.gestureDock {
+  width: min(220px, 54vw);
+  min-height: 52px;
+  gap: 3px;
+  padding: 8px 16px;
+  border-radius: 24px;
+  background: rgba(37, 18, 35, .72);
+  color: #91ecf6;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  font-weight: 800;
+  font-size: 18px;
+}
+.gestureDock small { font-size: 10px; letter-spacing: .08em; }

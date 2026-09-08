@@ -25,8 +25,8 @@ describe('unified Map point cycle', () => {
     })
     expect(route.map(point => point.key)).toEqual([
       'current:location',
-      'pin:mine',
       'pin:theirs',
+      'pin:mine',
       'landmark:eiffel',
       'landmark:rogers-centre',
     ])
@@ -190,12 +190,12 @@ describe('traverse a poster’s pops from their map handle', () => {
       pins: all.filter(pin => pinOwnerKey(pin) === armed),
       landmarks: [],
     })
-    expect(route.map(point => point.key)).toEqual(['pin:a1', 'pin:a2'])
+    expect(route.map(point => point.key)).toEqual(['pin:a2', 'pin:a1'])
     // The arrows loop within the two, never escaping to the other poster.
     const first = stepMapPointCycle(route, null, 1)
     expect(first).toMatchObject({ index: 0, total: 2 })
-    const wrapped = stepMapPointCycle(route, 'pin:a2', 1)
-    expect(wrapped).toMatchObject({ point: { key: 'pin:a1' }, index: 0, total: 2 })
+    const wrapped = stepMapPointCycle(route, 'pin:a1', 1)
+    expect(wrapped).toMatchObject({ point: { key: 'pin:a2' }, index: 0, total: 2 })
   })
 
   it('separates posters sharing a publishing account and wraps only their posts', () => {

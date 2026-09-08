@@ -4820,7 +4820,7 @@ export default function MapApp() {
         <span style={{ position: 'absolute', top: '23%', left: '50%', transform: 'translateX(-50%)', zIndex: 19,
           maxWidth: '60%', borderRadius: 16, padding: '6px 12px', textAlign: 'center', pointerEvents: 'none',
           fontSize: 12, fontWeight: 800, color: '#8fe7ff', background: '#251223d9' }}>
-          {discovery.page.mode === 'regions' ? (discovery.page.pins.some(pin => pin.competition?.status === 'winner') ? 'Regional leaders · Zoom in for more' : 'New pops · Zoom in for more') : discovery.page.mode === 'cells' ? 'Area leaders · ≈5 km sections' : 'Pops in this area'}
+          {discovery.page.mode === 'regions' ? (discovery.page.pins.some(pin => pin.competition?.status === 'winner') ? 'Regional pops · Zoom in for more' : 'New pops · Zoom in for more') : discovery.page.mode === 'cells' ? 'Area pops · ≈5 km sections' : 'Pops in this area'}
         </span>
       )}
       {!tourOn && (discovery.error || discovery.page?.nextCursor) && (

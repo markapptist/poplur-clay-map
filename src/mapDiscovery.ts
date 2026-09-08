@@ -1,6 +1,6 @@
 import { normalizeLiveMapPost, type LiveMapPostPin } from './mapLivePosts'
 export const DISCOVERY_FEATURE_LIMIT = 200
-export const DISCOVERY_PAGE_SIZE = 50
+export const DISCOVERY_PAGE_SIZE = 100
 export interface DiscoveryCell { id: string; bounds: { west: number; east: number; south: number; north: number } }
 export interface DiscoveryPage {
   enabled: boolean

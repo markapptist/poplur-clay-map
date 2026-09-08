@@ -850,8 +850,21 @@ export default function FeedTwin({
 
   const toggleMute = () => {
     const next = !muted
+    if (!next) {
+      // The sound button is itself the user gesture. Unlock and start audio
+      // synchronously instead of requiring a second tap on the video.
+      audioUnlockedRef.current = true
+      setAudioUnlocked(true)
+    }
     setUserMuted(next)
     setMuted(next)
+    const video = adVideoRef.current
+    if (!next && video && frontMostRef.current && !suppressedRef.current && !deferToOwner(currentAudioOwner())) {
+      requestAudioFocus('feed')
+      video.muted = isGateMuted()
+      video.volume = 0.85
+      void video.play().catch(() => {})
+    }
   }
 
   // Within a channel, horizontal navigation steps through its content. The

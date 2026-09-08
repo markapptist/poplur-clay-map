@@ -76,7 +76,11 @@ export function buildMapPointCycle({
     keys.add('current:location')
   }
 
-  for (const pin of pins) {
+  const rankedPins = [...pins].sort((a, b) => {
+    const radius = (pin: MapPointPinInput) => Number.isFinite(pin?.radiusKm) ? Math.max(0, pin.radiusKm) : 0
+    return radius(b) - radius(a) || String(a?.id).localeCompare(String(b?.id))
+  })
+  for (const pin of rankedPins) {
     if (!pin || typeof pin.id !== 'string' || !pin.id.trim() || !validCoords(pin.coords)) continue
     const key = `pin:${pin.id}`
     if (keys.has(key)) continue

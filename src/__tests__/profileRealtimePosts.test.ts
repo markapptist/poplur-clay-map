@@ -39,17 +39,12 @@ describe('realtime Profile post projection', () => {
       post({ id: 'unknown', ownerId: 'owner-a' }),
     ]
     const projected = profilePostsFromRealtime(rows, 'owner-a', null)
-    expect(projected.map(row => row.reachKm)).toEqual([6.5, 0, undefined])
+    expect(projected.map(row => row.reachKm)).toEqual([6.5, undefined])
   })
 
-  it('keeps a zero reach distinct from an absent one', () => {
-    // 0 is a real answer — a pop nobody has engaged with — and must not be
-    // coerced into "no value", or the card would fall back to the account
-    // total for exactly the pops that legitimately read 0.
-    const [zero] = profilePostsFromRealtime(
-      [post({ id: 'zero', ownerId: 'owner-a', radiusMeters: 0 })], 'owner-a', null)
-    expect(zero.reachKm).toBe(0)
-    expect(zero.reachKm).not.toBeUndefined()
+  it('removes a zero-radius post from the account profile', () => {
+    expect(profilePostsFromRealtime(
+      [post({ id: 'zero', ownerId: 'owner-a', radiusMeters: 0 })], 'owner-a', null)).toEqual([])
   })
 
   it('resolves visiting profiles by their real normalized handle', () => {

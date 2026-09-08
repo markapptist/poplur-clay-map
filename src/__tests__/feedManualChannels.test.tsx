@@ -31,8 +31,8 @@ function Harness() {
 }
 function channel() { return Number(host.querySelector('[data-test-channel]')?.getAttribute('data-test-channel')) }
 function arrow(label: string) {
-  const button = host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!
-  act(() => button.dispatchEvent(new PointerEvent('pointerdown', { isPrimary: true, button: 0, bubbles: true })))
+  const dock = host.querySelector('[data-poplur-gesture-navigation]')!
+  act(() => dock.dispatchEvent(new KeyboardEvent('keydown', { key: label === 'Channel up' ? 'ArrowUp' : 'ArrowDown', bubbles: true })))
 }
 
 beforeEach(async () => {
@@ -55,7 +55,7 @@ afterEach(async () => {
 })
 
 describe('manual Feed tuning with one populated channel', () => {
-  it('steps to empty channels and back using the D-pad', () => {
+  it('steps to empty channels and back using gesture navigation keyboard controls', () => {
     expect(channel()).toBe(0)
     arrow('Channel up')
     expect(channel()).toBe(1)
@@ -89,6 +89,18 @@ describe('Feed startup and interruption recovery', () => {
     })
     return host.querySelector<HTMLVideoElement>('video[data-feed-media]')!
   }
+  it('unmutes the video from the sound button without requiring a second tap', async () => {
+    const video = await mountVideo()
+    let button = host.querySelector<HTMLButtonElement>('button[aria-label="Unmute feed video"]')
+    if (!button) {
+      const mute = host.querySelector<HTMLButtonElement>('button[aria-label="Mute feed video"]')!
+      await act(async () => mute.dispatchEvent(new PointerEvent('pointerdown', { isPrimary: true, button: 0, bubbles: true })))
+      button = host.querySelector<HTMLButtonElement>('button[aria-label="Unmute feed video"]')
+    }
+    expect(button).toBeTruthy()
+    await act(async () => button!.dispatchEvent(new PointerEvent('pointerdown', { isPrimary: true, button: 0, bubbles: true })))
+    expect(video.muted).toBe(false)
+  })
   it('keeps an interrupted play request on its original source', async () => {
     vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValue(new DOMException('new load', 'AbortError'))
     const video = await mountVideo()
