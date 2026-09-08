@@ -1714,3 +1714,18 @@
 
 .statsCard .statLabel { filter: none; -webkit-text-stroke: 0; }
 .statsCard .statSub { -webkit-text-stroke: 0; text-shadow: none; }
+
+.mapRadioLabel {
+  margin-top: 6px;
+  padding: 8px 12px;
+  max-width: min(270px, 62vw);
+  box-sizing: border-box;
+  border: 2px solid rgba(244, 70, 166, .78);
+  border-radius: 18px;
+  background: linear-gradient(155deg, rgba(47, 23, 47, .93), rgba(16, 11, 26, .88));
+  white-space: normal;
+  font-weight: 600;
+  line-height: 1.4;
+  -webkit-text-stroke: 0;
+  filter: none;
+}

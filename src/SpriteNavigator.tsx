@@ -45,21 +45,38 @@ export default function SpriteNavigator(props: CubeTab3DProps) {
   const frameRef = useRef(frames)
   const visibleFrames = props.diceRollFace ? frames.filter(frame => !frame.face || frame.face === props.diceRollFace) : frames
   frameRef.current = visibleFrames
+  const rollingRef = useRef(false)
   const neutralPitch = useRef<number>()
   const centre = IMAGE_URL.test(modelUrl) || modelUrl.startsWith('data:image/') ? modelUrl :
     nearestNavigatorFrame(visibleFrames, 0, 0)?.src
 
   useEffect(() => {
-    if (!props.diceRollPulse || !renderingVisible || !image.current) return
+    const node = image.current
+    if (!props.diceRollPulse || !renderingVisible || !node || !frames.some(frame => frame.face)) return
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const animation = image.current.animate([
+    const faces = [1, 4, 2, 6, 3, 5].flatMap(face => {
+      const frame = nearestNavigatorFrame(frames.filter(item => item.face === face), 0, 0)
+      return frame ? [frame.src] : []
+    })
+    rollingRef.current = true
+    const animation = node.animate([
       { transform: 'scale(.82) rotate(-28deg)' },
-      { transform: 'scale(1.12) rotate(35deg)', offset: 0.35 },
-      { transform: 'scale(.96) rotate(-12deg)', offset: 0.7 },
+      { transform: 'scale(1.12) rotate(35deg)', offset: .35 },
+      { transform: 'scale(.96) rotate(-12deg)', offset: .7 },
       { transform: 'scale(1) rotate(0)' },
     ], { duration: reduced ? 240 : 960, easing: 'ease-out', iterations: 1 })
-    return () => animation.cancel()
-  }, [props.diceRollPulse, renderingVisible])
+    let step = 0
+    const frameTimer = !reduced && faces.length ? window.setInterval(() => {
+      node.src = faces[step++ % faces.length]
+    }, 110) : null
+    const finish = () => {
+      if (frameTimer !== null) clearInterval(frameTimer)
+      rollingRef.current = false
+      if (centre) node.src = centre
+    }
+    const deadline = window.setTimeout(finish, reduced ? 240 : 960)
+    return () => { clearTimeout(deadline); finish(); animation.cancel() }
+  }, [props.diceRollPulse, renderingVisible, modelUrl, centre])
 
   useEffect(() => { preloadPop() }, [])
   useEffect(() => {
@@ -94,7 +111,7 @@ export default function SpriteNavigator(props: CubeTab3DProps) {
     let heartbeat: ReturnType<typeof setInterval> | undefined
     const eligible = () => !document.hidden && nativeActive
     const setPose = (yaw: number, pitch: number) => {
-      if (!eligible() || !Number.isFinite(yaw) || !Number.isFinite(pitch)) return
+      if (rollingRef.current || !eligible() || !Number.isFinite(yaw) || !Number.isFinite(pitch)) return
       const now = performance.now()
       if (now - lastPoseAt < 80) return
       lastPoseAt = now

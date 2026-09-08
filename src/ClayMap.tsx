@@ -1611,7 +1611,7 @@ export const MAP_MIN_ZOOM = 1
 const ZOOM_MIN = MAP_MIN_ZOOM
 // Slider top end. Zoom 16.x still reads like a satellite overview; 18.x gets
 // close enough for Mapbox Standard's 3D building massing to be obvious.
-const ZOOM_MAX = 19.5 // full street depth — pinch all the way down to the doorstep
+const ZOOM_MAX = 22 // Mapbox maximum: repeated swipes can reach full street depth
 /** Where the travel button flips from "all the way in" to "all the way out".
  *  Just short of 1 so a spring that settles a hair under the stop still
  *  counts as arrived; a user should never see an up arrow while the knob is
@@ -2108,7 +2108,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     const travel = zoomTravel
     const paint = (level: number) => paintRail(strikerProgressFor(level), level * travel)
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (reduced) {
+    if (reduced || strikerRef.current?.key === strikerKey) {
       const tier = rung.length ? rung[rung.length - 1].tier : null
       strikerRef.current = { key: strikerKey, level: targetLevel, tier }
       setStriker({ key: strikerKey, targetLevel, tier, done: true })
@@ -6588,7 +6588,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       marker.remove()
       if (mapPointHighlightMarkerRef.current === marker) mapPointHighlightMarkerRef.current = null
     }
-  }, [focusedMapPoint, mapEpoch, mapRef, radiusPreviewLaunch])
+  }, [focusedMapPoint?.key, focusedMapPoint?.name, focusedMapPoint?.coords[0], focusedMapPoint?.coords[1], mapEpoch, mapRef, radiusPreviewLaunch])
 
   // Add / update POI markers whenever pois, selection, or the map instance changes
   useEffect(() => {
@@ -7068,8 +7068,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
   }
 
   const commitZoom = (value: number) => {
-    const point = focusedMapPointRef.current
-    const ceiling = point?.kind === 'landmark' ? landmarkTourCameraFrame(point.id)?.zoom ?? ZOOM_MAX : ZOOM_MAX
+    const ceiling = mapRef.current?.getMaxZoom() ?? ZOOM_MAX
     const next = Math.max(mapRef.current?.getMinZoom() ?? ZOOM_MIN, Math.min(ceiling, value))
     zoomValueRef.current = next
     setZoomValue(next)
@@ -7086,8 +7085,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       let remaining = Math.min(0.1, Math.max(1 / 240, (now - zoomLastFrameRef.current) / 1000))
       zoomLastFrameRef.current = now
       let current = zoomValueRef.current
-      const point = focusedMapPointRef.current
-      const ceiling = point?.kind === 'landmark' ? landmarkTourCameraFrame(point.id)?.zoom ?? ZOOM_MAX : ZOOM_MAX
+      const ceiling = mapRef.current?.getMaxZoom() ?? ZOOM_MAX
       const target = Math.max(mapRef.current?.getMinZoom() ?? ZOOM_MIN, Math.min(zoomTargetRef.current, ceiling))
       let velocity = zoomVelocityRef.current
 
@@ -7177,22 +7175,23 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         : null
     const center = subject?.coords ?? point?.coords ?? nativeLocationRef.current ?? live.getCenter().toArray()
     const landmarkFrame = point?.kind === 'landmark' ? landmarkTourCameraFrame(point.id) : null
-    const zoom = landmarkFrame?.zoom ?? ZOOM_TRAVEL_BUILDING_LEVEL
+    const zoom = Math.min(live.getMaxZoom(), Math.max(live.getZoom() + 1.5, landmarkFrame?.zoom ?? ZOOM_TRAVEL_BUILDING_LEVEL))
     const pad = framePaddingFor(live.getContainer())
-    wakeManagedRendering(900 + MANAGED_CAMERA_SETTLE_MS)
+    const travelMs = landmarkFrame ? 1800 : 900
+    wakeManagedRendering(travelMs + MANAGED_CAMERA_SETTLE_MS)
     live.setMinPitch(0)
     live.setMaxPitch(Math.max(MAP_BROWSE_3D_MAX_PITCH, landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH))
     live.easeTo({
       center: landmarkFrame?.center ?? [center[0], center[1]],
       pitch: landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH,
-      bearing: landmarkFrame?.bearing ?? live.getBearing(),
+      bearing: landmarkFrame ? live.getBearing() + 35 : live.getBearing(),
       // An explicit undefined overrides Mapbox's default and throws before
       // the flight starts for posts/current location (which have no frame).
       offset: landmarkFrame?.offset ?? [0, 0],
       zoom,
       padding: pad,
       retainPadding: false,
-      duration: 900,
+      duration: travelMs,
       essential: true,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7892,6 +7891,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         role="slider"
         aria-label="Zoom"
         aria-valuemin={ZOOM_MIN}
+        data-map-zoom-rail=""
         aria-valuemax={ZOOM_MAX}
         aria-valuenow={Number(zoomValue.toFixed(2))}
         aria-hidden={controlsObscured ? true : undefined}

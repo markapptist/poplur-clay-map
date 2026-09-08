@@ -1,3 +1,6 @@
+import { useAuthoredPosts } from './useAuthoredPosts'
+import { useFeedPostComments } from './feedPostComments'
+import { useImmersiveControls } from './useImmersiveControls'
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import ProfilePostPreview from './ProfilePostPreview'
 import { askForMotion } from './motionPermission'
@@ -583,7 +586,11 @@ export default function ProfileTwin({
   onPostCountChange,
   onPostReach,
   onVisitedTotals,
+  openPostRequest,
+  onPostRequestHandled,
 }: {
+  onPostRequestHandled?: () => void
+  openPostRequest?: { postId: string; comments: boolean; nonce: number } | null
   bindArrows?: (fn: ((dir: 1 | -1) => boolean) | null) => void
   /** a handle when you opened someone else's profile from the feed */
   viewUser?: string | null
@@ -622,12 +629,14 @@ export default function ProfileTwin({
     nativeFeedPostsSnapshot,
     nativeFeedPostsSnapshot,
   )
+  const authoredUid = viewUserId?.trim() || (viewUser ? profileRecipientUid(realtimePosts, viewUser) : accountUid)
+  const authored = useAuthoredPosts(authoredUid)
   const [uploadedPosts, setUploadedPosts] = useState<Post[]>([])
   const [uploadedPostsLoaded, setUploadedPostsLoaded] = useState(false)
   const profilePosts = uploadedPostsLoaded ? uploadedPosts : POSTS
   const profilePostsRef = useRef(profilePosts)
   profilePostsRef.current = profilePosts
-  useEffect(() => { onPostCountChange?.(profilePosts.length) }, [onPostCountChange, profilePosts.length])
+  useEffect(() => { onPostCountChange?.(authored.snapshot?.postCount ?? profilePosts.length) }, [onPostCountChange, profilePosts.length, authored.snapshot?.postCount])
 
   useEffect(() => onProfileThemeChange(setSelectedProfileTheme), [])
 
@@ -883,6 +892,7 @@ export default function ProfileTwin({
   const [notifsClosing, setNotifsClosing] = useState(false)
   const [faceAsk, setFaceAsk] = useState(false)
   const [viewerIdx, setViewerIdx] = useState<number | null>(null)
+  useImmersiveControls(viewerIdx != null, 'profile-post')
   /** The open pop's id, so a snapshot can re-find it rather than close it. */
   const viewerPostIdRef = useRef<string | null>(null)
   // Your overall radius, for the meter on the free rail: the authoritative
@@ -1163,7 +1173,7 @@ export default function ProfileTwin({
   // stable account uid supplied by the opening post/pin; their handle is only
   // a legacy fallback when no uid exists.
   useEffect(() => {
-    const next = profilePostsFromRealtime(realtimePosts, accountUid, viewUser, viewUserId)
+    const next = profilePostsFromRealtime(authored.snapshot?.posts ?? realtimePosts, accountUid, viewUser, viewUserId)
       .filter(post => !(post.id && deletedPostIds.current.has(post.id)))
     setUploadedPosts(next)
     setUploadedPostsLoaded(true)
@@ -1180,7 +1190,7 @@ export default function ProfileTwin({
       const index = openId == null ? -1 : next.findIndex(post => (post.id ?? post.video) === openId)
       return index >= 0 ? index : null
     })
-  }, [accountUid, realtimePosts, viewUser, viewUserId])
+  }, [accountUid, realtimePosts, viewUser, viewUserId, authored.snapshot])
 
   const contentRef = useRef<HTMLDivElement>(null)
   const pullRef = useRef<HTMLDivElement>(null)
@@ -1381,6 +1391,26 @@ export default function ProfileTwin({
   // A row tapped on the NOTIFICATIONS subscreen: the screen hands it back
   // rather than navigating, because the highlight it leads to (a lit grid
   // tile, a lit message row) is this component's state.
+  const openedPostRequestRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!openPostRequest || openedPostRequestRef.current === openPostRequest.nonce) return
+    const index = profilePosts.findIndex(post => post.id?.replace(/^firestore:/, '') === openPostRequest.postId.replace(/^firestore:/, ''))
+    if (index < 0) {
+      if (authored.snapshot) {
+        openedPostRequestRef.current = openPostRequest.nonce
+        onPostRequestHandled?.()
+        flashNote('That post is no longer available.')
+      }
+      return
+    }
+    openedPostRequestRef.current = openPostRequest.nonce
+    viewerPostIdRef.current = profilePosts[index].id ?? profilePosts[index].video
+    setMode('media')
+    setViewerIdx(index)
+    setViewerCommentOpen(openPostRequest.comments)
+    onPostRequestHandled?.()
+  }, [openPostRequest, profilePosts, onPostRequestHandled, authored.snapshot, flashNote])
+
   const openNotificationRef = useRef(openNotification)
   openNotificationRef.current = openNotification
   useEffect(() => {
@@ -2278,7 +2308,11 @@ export default function ProfileTwin({
       ...current,
       [postId]: [...(current[postId] ?? []), body],
     }))
-    void recordPostEngagement(postId, 'comment').catch(() => recordPostComment(postId, 2))
+    void recordPostEngagement(postId, 'comment', undefined, body).catch(() => {
+      setViewerComments(current => ({ ...current, [postId]: (current[postId] ?? []).filter(text => text !== body) }))
+      setViewerCommentText(body)
+      flashNote('Your comment could not be posted. Please try again.')
+    })
     setViewerCommentText('')
     setViewerCommentOpen(false)
     playPop()
@@ -2360,6 +2394,7 @@ export default function ProfileTwin({
   postsCountRef.current = posts.length
   const viewerPostIsVideo = viewerPost ? postIsVideo(viewerPost) : false
   const viewerPostId = viewerPost ? (viewerPost.id ?? viewerPost.video) : null
+  const publishedViewerComments = useFeedPostComments(viewerPost?.id, viewerCommentOpen)
   viewerPostIdRef.current = viewerPostId
   const viewerPostComments = viewerPostId ? (viewerComments[viewerPostId] ?? []) : []
   // Report the OPEN pop's reach upward, the way the feed already does. Without
@@ -2402,10 +2437,10 @@ export default function ProfileTwin({
   // total; somebody else's profile has no account figure to read, so their
   // pops' reach combined stands in for it. The subject key is what the
   // striker climbs for — a new key is a fresh climb from the foot.
-  const visitedRadiusKm = profilePosts.reduce((sum, post) => sum + (post.reachKm ?? 0), 0)
+  const visitedRadiusKm = authored.snapshot?.totalRadiusKm ?? profilePosts.reduce((sum, post) => sum + (post.reachKm ?? 0), 0)
   const meterRadiusKm = viewerPost
     ? (viewerPost.reachKm ?? 0)
-    : visiting ? visitedRadiusKm : accountRadiusKm
+    : uploadedPostsLoaded || visiting ? visitedRadiusKm : accountRadiusKm
   const meterSubjectKey = viewerPost
     ? `pop:${viewerPostId}`
     : visiting ? `profile:${viewUserId ?? viewUser}` : 'account'
@@ -2417,10 +2452,10 @@ export default function ProfileTwin({
   // Declared here, below `visiting` and `visitedRadiusKm`: a dependency array
   // is evaluated during render, so reading either above its own declaration
   // would throw before the effect ever ran.
-  const visitedPostCount = profilePosts.length
+  const visitedPostCount = authored.snapshot?.postCount ?? profilePosts.length
   useEffect(() => {
-    onVisitedTotals?.(visiting ? { radiusKm: visitedRadiusKm, posts: visitedPostCount } : null)
-  }, [visiting, visitedRadiusKm, visitedPostCount, onVisitedTotals])
+    onVisitedTotals?.(visiting || uploadedPostsLoaded ? { radiusKm: visitedRadiusKm, posts: visitedPostCount } : null)
+  }, [visiting, uploadedPostsLoaded, visitedRadiusKm, visitedPostCount, onVisitedTotals])
   // Leaving the profile hands the card back to your own totals.
   useEffect(() => () => { onVisitedTotals?.(null) }, [onVisitedTotals])
   // Profile controls span the 200px avatar, with space-between gaps.
@@ -2749,6 +2784,10 @@ export default function ProfileTwin({
             {visitedBusiness.handle && <span>{visitedBusiness.handle}</span>}
           </div>
         )}
+        {(authored.loading || authored.error) && <p role="status" className={styles.radiusSyncStatus}>
+          {authored.error ? 'Radius could not refresh. ' : 'Refreshing radius…'}
+          {authored.error && <button type="button" onClick={authored.retry}>Try again</button>}
+        </p>}
         <div className={styles.modeSwitch}>
           {(['media', 'messages', 'liked'] as Mode[]).map(m => (
             <button
@@ -3052,11 +3091,11 @@ export default function ProfileTwin({
               >
                 <h2>Comments</h2>
                 <div className={styles.viewerCommentList}>
-                  {viewerPostComments.length ? viewerPostComments.map((comment, index) => (
+                  {publishedViewerComments.map((comment, index) => <p key={`published-${index}`}><strong>{comment.who}</strong> {comment.body}</p>)}
+                  {viewerPostComments.filter(text => !publishedViewerComments.some(row => row.body === text && row.uid === accountUid)).map((comment, index) => (
                     <p key={`${viewerPostId}-${index}`}><strong>@you</strong> {comment}</p>
-                  )) : (
-                    <p className={styles.viewerDialogEmpty}>No comments yet.</p>
-                  )}
+                  ))}
+                  {!viewerPostComments.length && !publishedViewerComments.length && <p className={styles.viewerDialogEmpty}>No comments yet.</p>}
                 </div>
                 <div className={styles.viewerCommentComposer}>
                   <input

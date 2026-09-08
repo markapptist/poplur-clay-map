@@ -273,7 +273,7 @@ export default function ClayWheel({
           stopLoop()
         }
       }
-    }, 'ambient')
+    }, 'interactive')
   }
   const stopLoop = () => {
     stopLoopRef.current?.()

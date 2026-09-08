@@ -1,0 +1,15 @@
+html[data-immersive-controls] :is([data-poplur-control-rail], [data-feed-channel-rail], [data-camera-ar-rail], [data-radius-meter], [data-map-zoom-rail], [data-poplur-gesture-navigation]) {
+  transition: opacity 350ms ease;
+}
+html[data-controls-idle] :is([data-poplur-control-rail], [data-feed-channel-rail], [data-camera-ar-rail], [data-radius-meter], [data-map-zoom-rail]) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+html[data-controls-idle] :is([data-poplur-control-rail], [data-feed-channel-rail], [data-camera-ar-rail], [data-radius-meter], [data-map-zoom-rail]) * {
+  pointer-events: none !important;
+}
+/* The invisible pad keeps its hit area, so a familiar swipe still works. */
+html[data-controls-idle] [data-poplur-gesture-navigation] { opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-immersive-controls] :is([data-poplur-control-rail], [data-feed-channel-rail], [data-camera-ar-rail], [data-radius-meter], [data-map-zoom-rail], [data-poplur-gesture-navigation]) { transition-duration: 0ms; }
+}

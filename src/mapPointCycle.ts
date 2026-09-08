@@ -63,19 +63,6 @@ export function buildMapPointCycle({
   const points: MapCyclePoint[] = []
   const keys = new Set<string>()
 
-  if (validCoords(currentLocation)) {
-    points.push({
-      key: 'current:location',
-      id: 'location',
-      kind: 'current',
-      name: 'Current location',
-      coords: currentLocation,
-      mine: false,
-      radiusKm: null,
-    })
-    keys.add('current:location')
-  }
-
   const rankedPins = [...pins].sort((a, b) => {
     const radius = (pin: MapPointPinInput) => Number.isFinite(pin?.radiusKm) ? Math.max(0, pin.radiusKm) : 0
     return radius(b) - radius(a) || String(a?.id).localeCompare(String(b?.id))
@@ -102,6 +89,19 @@ export function buildMapPointCycle({
       radiusKm,
       color: pin.color,
     })
+  }
+
+  if (validCoords(currentLocation)) {
+    points.push({
+      key: 'current:location',
+      id: 'location',
+      kind: 'current',
+      name: 'Current location',
+      coords: currentLocation,
+      mine: false,
+      radiusKm: null,
+    })
+    keys.add('current:location')
   }
 
   for (const landmark of landmarks) {

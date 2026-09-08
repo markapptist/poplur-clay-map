@@ -8,6 +8,16 @@ import {
 const MAX_MS = 30_000
 
 describe('disco cube playback session', () => {
+  it('shows a radio session immediately, then releases the cube after ten seconds', () => {
+    const started = reconcileDiscoCubeSession(emptyDiscoCubeSession(), true, 1000, 10_000, true, 0, 'map')
+    expect(started).toMatchObject({ active: true, activationDelayMs: null, remainingMs: 10_000 })
+    const playing = reconcileDiscoCubeSession(started.session, true, 10_999, 10_000, true, 0, 'map')
+    expect(playing.active).toBe(true)
+    const ended = reconcileDiscoCubeSession(playing.session, true, 11_000, 10_000, true, 0, 'map')
+    expect(ended.active).toBe(false)
+    expect(ended.session.exhausted).toBe(true)
+  })
+
   it('waits ten seconds, then keeps the original deadline through playback heartbeats', () => {
     const first = reconcileDiscoCubeSession(emptyDiscoCubeSession(), true, 1_000, MAX_MS)
     expect(first).toMatchObject({ active: false, activationDelayMs: 10_000, remainingMs: 30_000 })

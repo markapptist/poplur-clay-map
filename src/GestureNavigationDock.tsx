@@ -1,4 +1,4 @@
-import { useRef, type HTMLAttributes } from 'react'
+import { useEffect, useRef, useState, type HTMLAttributes } from 'react'
 import { swipeNavigationAction, type SwipeAction } from './gestureNavigation'
 import styles from './ClayArrowCluster.module.css'
 
@@ -8,6 +8,20 @@ export default function GestureNavigationDock({ onAction, label, hints, classNam
   hints: { up: string; down: string; left: string; right: string }
 }) {
   const start = useRef<{ id: number; x: number; y: number } | null>(null)
+  const [hintIndex, setHintIndex] = useState(0)
+  const instructions = [`Swipe up · ${hints.up}`, `Swipe down · ${hints.down}`, `Swipe left · ${hints.right}`, `Swipe right · ${hints.left}`]
+  useEffect(() => {
+    let timer = 0
+    const advance = () => {
+      if (document.hidden || document.documentElement.dataset.controlsIdle) return
+      setHintIndex(index => (index + 1) % 4)
+      timer = window.setTimeout(advance, 2800)
+    }
+    const wake = () => { clearTimeout(timer); timer = window.setTimeout(advance, 2800) }
+    window.addEventListener('pointerdown', wake, true)
+    wake()
+    return () => { clearTimeout(timer); window.removeEventListener('pointerdown', wake, true) }
+  }, [])
   return <div {...rest} role="group" tabIndex={0}
     className={`${styles.cluster} ${styles.gestureDock} ${className ?? ''}`}
     aria-label={`Swipe controls. Up: ${hints.up}. Down: ${hints.down}. Swipe left: ${hints.right}. Swipe right: ${hints.left}.`}
@@ -32,6 +46,8 @@ export default function GestureNavigationDock({ onAction, label, hints, classNam
       if (action) onAction(action)
     }}
     onClick={event => event.stopPropagation()}>
-    <span>{label}</span>
+    <em className={styles.gestureEyebrow}>GESTURE PAD</em>
+    <strong className={styles.gestureInstruction}>{instructions[hintIndex]}</strong>
+    {label && <span className={styles.gestureReadout}>{label}</span>}
   </div>
 }

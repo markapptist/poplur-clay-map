@@ -280,3 +280,8 @@
 /* ---- map markers ---- */
 .destPin img { width: 44px; height: 54px; object-fit: contain; filter: drop-shadow(0 6px 8px rgba(0, 0, 0, 0.5)); }
 .navCar img { width: 62px; height: 62px; object-fit: contain; filter: drop-shadow(0 6px 8px rgba(0, 0, 0, 0.55)); }
+
+.searchCard, .previewCard { width: min(360px, calc(100% - 32px)); max-width: 360px; top: max(112px, calc(env(safe-area-inset-top, 0px) + 100px)); max-height: calc(100dvh - 140px); overflow-y: auto; }
+.destinationField + .destinationField { margin-top: 8px; }
+.turnBanner { top: max(170px, calc(env(safe-area-inset-top, 0px) + 145px)); left: 50%; right: auto; transform: translateX(-50%); width: min(380px, calc(100% - 32px)); box-sizing: border-box; }
+.navBar { bottom: max(14px, env(safe-area-inset-bottom, 0px)); left: 50%; right: auto; transform: translateX(-50%); width: min(380px, calc(100% - 32px)); box-sizing: border-box; }

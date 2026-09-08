@@ -1,3 +1,6 @@
+import { startLandmarkOrbit } from './landmarkCinematic'
+import { onFrame } from './frameGovernor'
+import { useImmersiveControls } from './useImmersiveControls'
 import { useMapDiscovery } from './useMapDiscovery'
 import { MapDiscoveryLayers } from './MapDiscoveryLayers'
 import React, { useRef, useState, useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
@@ -562,6 +565,9 @@ const PIN_FOCUS_WAIT_MS = 10_000
 
 /** A notification's ask, validated off the wire (see notificationBanner.ts). */
 interface PinFocusMapRequest {
+  notificationId?: string
+  beforeKm?: number
+  afterKm?: number
   postId?: string
   own?: 'largest'
   deltaKm?: number
@@ -576,7 +582,7 @@ function pinFocusMapRequest(data: Record<string, unknown>): PinFocusMapRequest |
     ? data.deltaKm
     : undefined
   const pulse = data.pulse === 'gain' || data.pulse === 'loss' ? data.pulse : undefined
-  return { ...(postId ? { postId } : {}), ...(own ? { own } : {}), ...(deltaKm != null ? { deltaKm } : {}), ...(pulse ? { pulse } : {}) }
+  return { ...(typeof data.notificationId === 'string' ? { notificationId: data.notificationId.slice(0, 500) } : {}), ...(postId ? { postId } : {}), ...(own ? { own } : {}), ...(deltaKm != null ? { deltaKm } : {}), ...(pulse ? { pulse } : {}) }
 }
 const DEFAULT_NAV_ORIGIN: [number, number] = [-79.3811, 43.6487]
 // Cross-country movement on Mercator stays top-down. The shared map's zoom-3
@@ -854,9 +860,12 @@ export default function MapApp() {
   // Generation guard for the flat-map camera's three stages. Any new flight,
   // touch, stop, or background transition invalidates the outstanding stage
   // listener before it can pull the camera away again.
+  const landmarkOrbitCancelRef = useRef<(() => void) | null>(null)
   const stagedCameraFlightRef = useRef({ serial: 0 })
   const cancelStagedCameraFlight = useCallback((preserveCameraOwnership = false) => {
     stagedCameraFlightRef.current.serial += 1
+    landmarkOrbitCancelRef.current?.()
+    landmarkOrbitCancelRef.current = null
     clearProgrammaticCameraMotion()
     const map = mapRef.current as (mapboxgl.Map & {
       __cinematic?: boolean
@@ -1682,9 +1691,13 @@ export default function MapApp() {
 
   const speakMapLine = useCallback((line: string, stations: ReadonlyArray<RadioStationCue> = []): boolean => {
     if (!applySoundState(true)) return false
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: 'poplur-map-speak', line }, '*')
+      return true
+    }
     // Narration may duck/mix with a station the listener deliberately started,
     // but it must never allocate a radio bed merely because a tour line fired.
-    if (isRadioBackgroundEnabled() && isMapRadioActive()) return announceMapTour(line, stations)
+    if (isMapRadioActive()) return announceMapTour(line, stations)
     return speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
   }, [applySoundState])
 
@@ -1986,6 +1999,18 @@ export default function MapApp() {
     map.stop()
     const flightSerial = stagedCameraFlightRef.current.serial
     const ownsFlight = () => stagedCameraFlightRef.current.serial === flightSerial
+    const arrive = () => {
+      if (!ownsFlight()) return
+      const finish = () => {
+        if (!ownsFlight()) return
+        mapCamera.__tripping = false
+        mapCamera.__cinematic = false
+        onArrival?.()
+      }
+      if (landmarkFrame && map.getZoom() > TOUR_3D_REVEAL_START_ZOOM && (motionMode === 'landmark-tour' || pointSubject === 'landmark')) {
+        landmarkOrbitCancelRef.current = startLandmarkOrbit(map, finish)
+      } else finish()
+    }
     const targetCenter = landmarkFrame?.center ?? center
     const targetZoom = landmarkFrame?.zoom ?? (streetView ? 18.9 : BUILDING_REVEAL_ZOOM)
     const targetPitch = streetView
@@ -2062,7 +2087,7 @@ export default function MapApp() {
         map.setMaxPitch(destinationPose.maxPitch)
         mapCamera.__tripping = false
         mapCamera.__cinematic = false
-        onArrival?.()
+        arrive()
       }
       return true
     }
@@ -2103,7 +2128,7 @@ export default function MapApp() {
         if (!ownsFlight()) return
         mapCamera.__tripping = false
         mapCamera.__cinematic = false
-        onArrival?.()
+        arrive()
       })
       map.easeTo({
         center: targetCenter,
@@ -2163,7 +2188,7 @@ export default function MapApp() {
               )) return
               mapCamera.__tripping = false
               mapCamera.__cinematic = false
-              onArrival?.()
+              arrive()
             })
             map.easeTo({
               center: targetCenter,
@@ -3135,8 +3160,9 @@ export default function MapApp() {
   // its own Firestore client (see the forwarded-posts listener below).
   const nativeShell = isNativeShell()
   const liveSimulation = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
+  const [notificationFocusId, setNotificationFocusId] = useState<string | null>(null)
   const [discoveryFocusPostId, setDiscoveryFocusPostId] = useState<string | null>(null)
-  const discovery = useMapDiscovery(mapRef, mapLive, ownUid, true, mapFrontRef, rnWebShellRoute, discoveryFocusPostId)
+  const discovery = useMapDiscovery(mapRef, mapLive, ownUid, true, mapFrontRef, rnWebShellRoute, discoveryFocusPostId, notificationFocusId)
   const discoveryEnabled = discovery.page?.enabled ?? null
   const [accountMapPosts, setAccountMapPosts] = useState<LiveMapPostPin[]>([])
   useEffect(() => {
@@ -3771,6 +3797,8 @@ export default function MapApp() {
   /** The cluster's ▲ ▼. ClayMap owns the camera and installs this handle on
    *  the map object; the arrows live in this document, so they reach it the
    *  same way every other cross-component camera request here does. */
+  useImmersiveControls(true, 'map')
+
   const zoomTravel = useCallback((direction: 'in' | 'out') => {
     playPop(0.25)
     stopTour()
@@ -3997,6 +4025,8 @@ export default function MapApp() {
     }
     return null
   }, [accountMapPosts])
+  const stopRadiusReplayRef = useRef<((restore?: boolean) => void) | null>(null)
+  useEffect(() => () => stopRadiusReplayRef.current?.(false), [])
   const focusPinCamera = useCallback((pin: PopPin, request: PinFocusMapRequest) => {
     const map = mapRef.current
     if (!map) return
@@ -4005,6 +4035,9 @@ export default function MapApp() {
     clearPopups('suggestion')
     clearPopups('mapContent')
     setCurrentPlace(displayPlaceName(pin.name))
+    stopRadiusReplayRef.current?.()
+    focusedUserKeyRef.current = null
+    setFocusedUserKey(null)
     const land = () => {
       const live = mapRef.current
       if (!live) return
@@ -4014,7 +4047,35 @@ export default function MapApp() {
         installPinSpotlight(live)
         updatePinSpotlight(live, pin)
       } catch { /* style not ready yet; the camera has still arrived */ }
-      focusMapPointForPin(pin.id)
+      const showRadius = (radiusKm: number) => {
+        const point: MapCyclePoint = { key: `pin:${pin.id}`, kind: 'pin', id: pin.id, name: pin.name, coords: pin.coords, mine: pin.mine, radiusKm, color: pin.color }
+        focusedMapPointKeyRef.current = point.key
+        setFocusedMapPoint(point)
+        window.parent?.postMessage({ type: 'poplur-map-point', ...point, index: 0, total: 0, ownerKey: pointOwnerRef.current(pin.id)?.key ?? null }, '*')
+        try { updatePinSpotlight(live, { ...pin, radiusKm }) } catch { /* map removed */ }
+      }
+      const beforeKm = request.beforeKm
+      const afterKm = request.afterKm
+      if (beforeKm != null && afterKm != null && beforeKm !== afterKm) {
+        showRadius(beforeKm)
+        let elapsed = 0, lastPaint = -Infinity
+        wakeManagedRendering(4000)
+        const cancel = (restore = true) => { stop(); live.getCanvas().removeEventListener('pointerdown', onInput); stopRadiusReplayRef.current = null; if (restore) showRadius(pin.radiusKm) }
+        const onInput = () => cancel()
+        const stop = onFrame(dt => {
+          elapsed += dt
+          const t = Math.max(0, Math.min(1, (elapsed - 800) / 1800))
+          if (elapsed - lastPaint >= 100) {
+            lastPaint = elapsed
+            showRadius(beforeKm + (afterKm - beforeKm) * (t * t * (3 - 2 * t)))
+          }
+          // Hold the recorded result briefly, then return to the latest
+          // radius. An old notification must not replace today's live value.
+          if (elapsed >= 3600) cancel()
+        }, 'interactive')
+        stopRadiusReplayRef.current = cancel
+        live.getCanvas().addEventListener('pointerdown', onInput, { once: true })
+      } else showRadius(pin.radiusKm)
       // The pulse: ring flash, ground flash, and the pin's own bounce or dip.
       // Direction comes off the notification even when it named no number, so
       // a change you arrived at still reads as growth or loss before any badge
@@ -4049,11 +4110,22 @@ export default function MapApp() {
       pendingPinFocusRef.current = null
       return
     }
+    if (pending.request.notificationId?.startsWith('radius-loss:')) return
     const pin = resolvePinForFocus(pending.request)
     if (!pin) return
     pendingPinFocusRef.current = null
     focusPinCamera(pin, pending.request)
   }, [liveMapPosts, focusPinCamera, resolvePinForFocus])
+
+  useEffect(() => {
+    const focus = discovery.page?.notificationFocus
+    if (!focus || !notificationFocusId || focus.notificationId !== notificationFocusId
+      || pendingPinFocusRef.current?.request.notificationId !== notificationFocusId) return
+    pendingPinFocusRef.current = null
+    const pin: PopPin = { id: focus.id, name: focus.name, coords: focus.coords, mine: true, user: null, avatar: null, color: focus.color, radiusKm: focus.currentKm }
+    focusPinCamera(pin, { postId: focus.id, notificationId: notificationFocusId, beforeKm: focus.beforeKm, afterKm: focus.afterKm, deltaKm: focus.afterKm - focus.beforeKm, pulse: focus.afterKm < focus.beforeKm ? 'loss' : 'gain' })
+    setNotificationFocusId(null)
+  }, [discovery.page?.notificationFocus, notificationFocusId, focusPinCamera])
 
   const openClickedMapPinContent = useCallback((pin: PopPin) => {
     // A pin you can see and press must answer the press. This used to bail when
@@ -4540,6 +4612,20 @@ export default function MapApp() {
           if (!request) break
           if (request.postId) setDiscoveryFocusPostId(request.postId.replace(/^firestore:/, '').slice(0, 180))
           const pin = resolvePinForFocus(request)
+          if (request.notificationId?.startsWith('radius-loss:')) {
+            pendingPinFocusRef.current = { request, expiresAt: Date.now() + PIN_FOCUS_WAIT_MS }
+            setNotificationFocusId(request.notificationId)
+            window.setTimeout(() => {
+              if (pendingPinFocusRef.current?.request !== request) return
+              pendingPinFocusRef.current = null
+              setNotificationFocusId(null)
+              const currentPin = resolvePinForFocus(request)
+              if (currentPin) focusPinCameraRef.current?.(currentPin, request)
+              else window.parent?.postMessage({ type: 'poplur-map-focus-miss' }, '*')
+            }, PIN_FOCUS_WAIT_MS)
+            break
+          }
+          setNotificationFocusId(null)
           if (pin) { focusPinCamera(pin, request); break }
           // Not on the board yet. Hold the request for the next snapshot; if
           // the post never shows (aged out of the pool, outside reach) tell
@@ -4890,6 +4976,7 @@ export default function MapApp() {
         streetView={streetView}
         setStreetView={setStreetView}
         say={setTourLine}
+        onSpeak={speakMapLine}
       />
 
 
@@ -5425,15 +5512,10 @@ export default function MapApp() {
           data-map-point-total={mapPointRoute.length}
           aria-hidden={activeNewsStop ? true : undefined}
           size={channelControlSize}
-          label={newsTourPosition >= 0
-            ? `${newsTourPosition + 1}/${newsTourDisplayCount}`
-            : mapPointPosition
-              ? `${mapPointPosition.n}/${mapPointPosition.of}`
-              : `0/${mapPointRoute.length}`}
           aria-label="Map point and zoom controls"
           leftLabel={tourMode === 'news' ? 'Previous news story' : 'Previous map point'}
           rightLabel={tourMode === 'news' ? 'Next news story' : 'Next map point'}
-          upLabel={mapPointPosition ? 'Frame this pop' : 'Zoom in to the buildings'}
+          upLabel="Zoom in"
           downLabel="Zoom all the way out"
           onLeft={() => {
             // These arrows already live in this map document. Invoke the news

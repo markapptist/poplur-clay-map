@@ -1275,3 +1275,15 @@
 
 .railHead { position: relative; }
 .feedHeaderCopy .mediaTimer { margin-top: 5px; align-self: center; pointer-events: none; }
+
+/* Selected from the September 8 Feed previews: Helvetica Light. */
+.feedTitleTrack, .feedHandle, .mediaTimer {
+  font-family: 'Helvetica Neue', 'Roboto', Arial, sans-serif;
+  font-weight: 300;
+  letter-spacing: -.025em;
+  color: #fff2f8;
+  -webkit-text-stroke: 0;
+  filter: none;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, .6);
+}
+.mediaTimer { color: #9beeff; -webkit-text-fill-color: #9beeff; letter-spacing: .025em; }

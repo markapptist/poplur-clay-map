@@ -24,9 +24,9 @@ describe('unified Map point cycle', () => {
       landmarks,
     })
     expect(route.map(point => point.key)).toEqual([
-      'current:location',
       'pin:theirs',
       'pin:mine',
+      'current:location',
       'landmark:eiffel',
       'landmark:rogers-centre',
     ])

@@ -1181,6 +1181,30 @@ export default function FeedTwin({
     setRecoveringPlayback(true)
     setRecoveryAttempt(nextAttempt)
   }, [sourceCandidates.length])
+  // A failed stream cools down before retrying automatically. No user-owned
+  // pause is overridden; leaving the screen cancels the pending retry.
+  const retryCycleRef = useRef(0)
+  useEffect(() => { retryCycleRef.current = 0 }, [sourceKey])
+  useEffect(() => {
+    if (!playbackUnavailable || suppressed || !frontMost) return
+    const retry = () => {
+      if (document.hidden || playerPausedByUserRef.current) return
+      recoveryAttemptRef.current = 0
+      recoveringAdSrcRef.current = null
+      settledAdRef.current = null
+      setRecoveryAttempt(0)
+      setReadyPlaybackKey(null)
+      setRecoveringPlayback(true)
+      setPlaybackUnavailable(false)
+      setRemainingSeconds(null)
+    }
+    const delay = Math.min(30_000, 3_000 * 2 ** Math.min(retryCycleRef.current++, 4))
+    const timer = window.setTimeout(retry, delay)
+    window.addEventListener('online', retry)
+    document.addEventListener('visibilitychange', retry)
+    return () => { clearTimeout(timer); window.removeEventListener('online', retry); document.removeEventListener('visibilitychange', retry) }
+  }, [playbackUnavailable, suppressed, frontMost, sourceKey])
+
   const retryAdPlayback = useCallback((source: string, video: HTMLVideoElement) => {
     if (adVideoRef.current !== video || video.getAttribute('src') !== source) return
     if (completedAdRef.current === source) return
@@ -2242,22 +2266,6 @@ export default function FeedTwin({
             advanceCompletedContent()
           }}
         />
-      )}
-
-      {adSrc && playbackUnavailable && (
-        <div className={styles.playbackRetry} role="status">
-          <span>Video couldn’t start</span>
-          <button type="button" onClick={() => {
-            recoveryAttemptRef.current = 0
-            recoveringAdSrcRef.current = null
-            settledAdRef.current = null
-            setRecoveryAttempt(0)
-            setReadyPlaybackKey(null)
-            setRecoveringPlayback(true)
-            setPlaybackUnavailable(false)
-            setRemainingSeconds(null)
-          }}>Retry video</button>
-        </div>
       )}
 
       {/* Static + channel identity while the video buffers or swaps; fades out

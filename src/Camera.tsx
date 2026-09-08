@@ -2110,8 +2110,8 @@ export default function Camera({
           label={zoomReadout(zoom)}
           upLabel="Next filter"
           downLabel="Previous filter"
-          leftLabel="Zoom out — hold to keep zooming"
-          rightLabel="Zoom in — hold to keep zooming"
+          leftLabel="Zoom out"
+          rightLabel="Zoom in"
           onUp={() => stepArFilter(1)}
           onDown={() => stepArFilter(-1)}
           onLeft={() => stepZoomPreset(-1)}

@@ -1,3 +1,5 @@
+import './ClayNav.module.css'
+import { useImmersiveControls } from './useImmersiveControls'
 import { installMapDiscoveryRelay } from './mapDiscoveryTransport'
 // Map dialogs portal into this document and need their scoped stylesheet here.
 import './ClayMap.module.css'
@@ -106,6 +108,7 @@ import {
 } from './podcastMapDraft'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import {
+  announceMapTour,
   getRadioPlaybackState,
   isMapRadioActive,
   startRadioForMap,
@@ -115,6 +118,7 @@ import {
   stopMapRadio,
   subscribeRadioPlayback,
 } from './mapRadio'
+import { speakWithVoiceAudioFocus } from './voiceAudio'
 import { readMapRadioLocation, type MapRadioLocation } from './mapRadioLocation'
 import { useMapRadio } from './useMapRadio'
 import {
@@ -306,6 +310,7 @@ const POST_VERIFIED_CUBE_DISPLAY_MS = 2_600
 const STUDIO_MIC_MODEL = 'poplur_mic_lite.glb'
 const DISCO_BALL_CUBE_MODEL = 'poplur_cube_disco_ball.glb'
 const DISCO_CUBE_MAX_MS = 30_000
+const RADIO_DISCO_CUBE_MS = 10_000
 // A track has to survive intros, accidental autoplay and quick skips before it
 // earns the ambient disco moment. Navigation restarts this dwell below.
 const DISCO_CUBE_MIN_MUSIC_MS = 20_000
@@ -1573,6 +1578,20 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // actually moves, and it is declared FIRST, so the nonce effect below runs
   // after it in the same commit and gets the last word. With the profile
   // already up, that effect returns early and this one still fires.
+  const [profileNotificationPost, setProfileNotificationPost] = useState<{ postId: string; comments: boolean; nonce: number } | null>(null)
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent).detail
+      if (typeof detail?.postId !== 'string' || !detail.postId || detail.postId.length > 190) return
+      setViewingUser(null)
+      setViewingUserId(null)
+      setHoldOpen(false)
+      setActiveTab('profile')
+      setProfileNotificationPost(current => ({ postId: detail.postId, comments: detail.comments === true, nonce: (current?.nonce ?? 0) + 1 }))
+    }
+    window.addEventListener('poplur-open-post-notification', open)
+    return () => window.removeEventListener('poplur-open-post-notification', open)
+  }, [])
   const [notifOpenNonce, setNotifOpenNonce] = useState(0)
   useEffect(() => {
     const onOpen = () => {
@@ -2428,6 +2447,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       setHoldOpen(false)
       setActiveTab('map')
       sendMapAction('focusPin', {
+        notificationId: detail.notificationId,
         ...(postId ? { postId } : { own: 'largest' }),
         ...(deltaKm != null ? { deltaKm } : {}),
         ...(pulse ? { pulse } : {}),
@@ -3028,7 +3048,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       if (event.source !== mapFrameRef.current?.contentWindow) return
       if (!event.data || typeof event.data !== 'object') return
       if (event.data.type === 'poplur-map-loading') {
-        authoritativeAccountRadiusKmRef.current = publishAccountRadiusKm(0)
+        // Reloading the Map is not a change to the account. Keep the last
+        // authenticated total until its next snapshot arrives.
         mapReadyRef.current = false
         setMapReady(false)
         setMapFailedVisible(false)
@@ -3282,6 +3303,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             ids: ownPostIds,
             overall: scope === 'world',
           })
+        }
+      }
+      if (event.data.type === 'poplur-map-speak' && typeof event.data.line === 'string') {
+        const line = event.data.line.trim().slice(0, 1000)
+        if (line && !isGateMuted()) {
+          if (isMapRadioActive()) announceMapTour(line)
+          else speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
         }
       }
       if (event.data.type === 'poplur-map-focus-miss') {
@@ -3643,6 +3671,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // reading (News, TV Guide, Radio, an RCL capture). On the home view itself the
   // chrome IS the screen — fading it there just makes the app look like it
   // vanished — so the fade only applies while a subscreen is covering the app.
+  useImmersiveControls(!overlayOpen && ['map', 'feed', 'post'].includes(committedTab), committedTab)
   const chromeFaded = chromeIdle && overlayOpen
   // The Times keeps its channel changer and radius readout as persistent
   // navigation. On cream newsprint the generic 10%-opacity subscreen fade made
@@ -5010,13 +5039,16 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       window.clearTimeout(discoDeadlineTimerRef.current)
       discoDeadlineTimerRef.current = null
     }
+    const isRadio = musicPlayback.sources.some(source => source.endsWith(':radio'))
+    const maxMs = isRadio ? RADIO_DISCO_CUBE_MS : DISCO_CUBE_MAX_MS
+    const minMs = isRadio ? 0 : DISCO_CUBE_MIN_MUSIC_MS
     const decision = reconcileDiscoCubeSession(
       musicSessionRef.current,
       musicPlayback.playing,
       Date.now(),
-      DISCO_CUBE_MAX_MS,
+      maxMs,
       discoCubeVisible,
-      DISCO_CUBE_MIN_MUSIC_MS,
+      minMs,
       discoNavigationContext,
     )
     musicSessionRef.current = decision.session
@@ -5034,9 +5066,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           current,
           getMusicPlaybackSnapshot().playing,
           Date.now(),
-          DISCO_CUBE_MAX_MS,
+          maxMs,
           discoCubeVisible,
-          DISCO_CUBE_MIN_MUSIC_MS,
+          minMs,
           discoNavigationContext,
         )
         musicSessionRef.current = ready.session
@@ -5055,7 +5087,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         discoDeadlineTimerRef.current = null
       }
     }
-  }, [discoCubeActive, discoCubeVisible, discoNavigationContext, musicPlayback.playing])
+  }, [discoCubeActive, discoCubeVisible, discoNavigationContext, musicPlayback.playing, musicPlayback.sources])
 
   // Focused Map news and weather win while Map is the current surface; music
   // remains global. When those signals clear, this falls through to the model
@@ -5689,7 +5721,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               active={Boolean(radiusRewardDiceSignal)}
               onPress={() => {
                 playPop(0.25)
-                if (!radiusRewardDiceSignal) announceRadiusRewardNavigator(true)
+                announceRadiusRewardNavigator(true)
               }}
             />
             <SideControlIconButton
@@ -5938,6 +5970,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             viewUser={viewingUser}
             viewUserId={viewingUserId}
             highlightPops={profilePopFlash}
+            openPostRequest={profileNotificationPost}
+            onPostRequestHandled={() => setProfileNotificationPost(null)}
             onPostCountChange={setProfilePostCount}
             onPostReach={onProfilePostReach}
             onVisitedTotals={setVisitedTotals}

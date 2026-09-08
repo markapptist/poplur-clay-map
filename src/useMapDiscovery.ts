@@ -4,7 +4,7 @@ import { MapRequestGeneration, normalizeDiscoveryPage, type DiscoveryPage } from
 import { queryMapDiscovery, type DiscoveryQuery } from './mapDiscoveryTransport'
 
 export function useMapDiscovery(mapRef: MutableRefObject<Map | null>, ready: number, uid: string | null,
-  includeTest: boolean, front: MutableRefObject<boolean>, disabled = false, selectedPostId: string | null = null) {
+  includeTest: boolean, front: MutableRefObject<boolean>, disabled = false, selectedPostId: string | null = null, notificationId: string | null = null) {
   const [page, setPage] = useState<DiscoveryPage | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -20,7 +20,7 @@ export function useMapDiscovery(mapRef: MutableRefObject<Map | null>, ready: num
       if (!visible() || closed || map.isMoving()) return
       const b = map.getBounds()
       if (!b) return
-      if (!more) query = { bounds: { west: b.getWest(), east: b.getEast(), south: Math.max(-90,b.getSouth()), north: Math.min(90,b.getNorth()) }, zoom: map.getZoom(), includeTest, selectedPostId }
+      if (!more) query = { bounds: { west: b.getWest(), east: b.getEast(), south: Math.max(-90,b.getSouth()), north: Math.min(90,b.getNorth()) }, zoom: map.getZoom(), includeTest, selectedPostId, notificationId }
       if (!query || (more && !pageRef.current?.nextCursor)) return
       const request = requests.begin()
       setLoading(true); setError(null)
@@ -64,6 +64,6 @@ export function useMapDiscovery(mapRef: MutableRefObject<Map | null>, ready: num
       document.removeEventListener('visibilitychange', visibility); window.removeEventListener('message', frontChanged)
       fetchRef.current = () => {}
     }
-  }, [mapRef, ready, uid, includeTest, front, disabled, selectedPostId])
+  }, [mapRef, ready, uid, includeTest, front, disabled, selectedPostId, notificationId])
   return { page, loading, error, nextPage: useCallback(() => fetchRef.current(true), []), retry: useCallback(() => fetchRef.current(false), []) }
 }

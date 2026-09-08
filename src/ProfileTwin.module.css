@@ -2052,3 +2052,6 @@
   max-width: 100%;
   padding: 0;
 }
+
+.radiusSyncStatus { margin: 8px 0; text-align: center; font: 400 11px/1.4 system-ui, sans-serif; color: #765269; }
+.radiusSyncStatus button { font: inherit; color: #c0267e; border: 0; background: none; text-decoration: underline; cursor: pointer; }
