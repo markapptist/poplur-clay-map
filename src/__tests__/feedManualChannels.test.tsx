@@ -40,6 +40,7 @@ beforeEach(async () => {
   window.localStorage?.removeItem('poplur.feed.muted')
   setUserMuted(false)
   vi.useFakeTimers()
+  vi.spyOn(performance, 'now').mockImplementation(() => Date.now())
   // happy-dom omits the constructor constants that browsers expose.
   Object.assign(HTMLMediaElement, { HAVE_NOTHING: 0, HAVE_CURRENT_DATA: 2, NETWORK_EMPTY: 0 })
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -58,6 +59,39 @@ afterEach(async () => {
 })
 
 describe('manual Feed tuning with one populated channel', () => {
+  it('automatically tunes through active channels after an unlimited photo, with static between channels', async () => {
+    await act(async () => {
+      store.posts = [
+        { ...store.posts[0], id: 'food', radiusMeters: 6_371_000 },
+        { ...store.posts[0], id: 'music', channelId: 'music', radiusMeters: 6_370_000 },
+        { ...store.posts[0], id: 'sports', channelId: 'sports', radiusMeters: 6_369_000 },
+      ]
+      store.listeners.forEach(listener => listener())
+    })
+    const ready = () => host.querySelector('img[data-feed-media]')!.dispatchEvent(new Event('load'))
+    await act(async () => ready())
+    await act(async () => vi.advanceTimersByTime(12_000))
+    expect(channel()).toBe(6)
+    expect(host.querySelector('[data-channel-tuning="true"]')).not.toBeNull()
+    await act(async () => vi.advanceTimersByTime(250))
+    expect(host.querySelector('[data-channel-tuning="true"]')).toBeNull()
+    await act(async () => ready())
+    await act(async () => vi.advanceTimersByTime(12_000))
+    expect(channel()).toBe(3)
+  })
+
+  it('parks a photo countdown in the native background and resumes its remaining time', async () => {
+    await act(async () => host.querySelector('img[data-feed-media]')!.dispatchEvent(new Event('load')))
+    await act(async () => vi.advanceTimersByTime(4_000))
+    await act(async () => window.dispatchEvent(new CustomEvent('poplur-native-app-lifecycle', { detail: { active: false } })))
+    const before = host.querySelector('img[data-feed-media]')
+    await act(async () => vi.advanceTimersByTime(60_000))
+    expect(host.querySelector('img[data-feed-media]')).toBe(before)
+    await act(async () => window.dispatchEvent(new CustomEvent('poplur-native-app-lifecycle', { detail: { active: true } })))
+    await act(async () => vi.advanceTimersByTime(8_000))
+    expect(host.querySelector('img[data-feed-media]')).not.toBe(before)
+  })
+
   it('steps to empty channels and back using gesture navigation keyboard controls', () => {
     expect(channel()).toBe(0)
     arrow('Channel up')
@@ -97,6 +131,14 @@ describe('Feed startup and interruption recovery', () => {
     expect(video).not.toBeNull()
     expect(video.muted).toBe(false)
     expect(host.querySelector('button[aria-label="Mute feed video"]')).not.toBeNull()
+  })
+  it('replays the only video after completion without remounting Feed', async () => {
+    const video = await mountVideo()
+    const feed = host.querySelector('[data-poplur-screen="feed"]')
+    await act(async () => video.dispatchEvent(new Event('ended')))
+    expect(host.querySelector('[data-poplur-screen="feed"]')).toBe(feed)
+    expect(host.querySelector('video[data-feed-media]')).not.toBe(video)
+    expect(host.querySelector('video[data-feed-media]')).not.toBeNull()
   })
   it('keeps Feed audible when Map audio is muted', async () => {
     await act(async () => setUserMuted(true))

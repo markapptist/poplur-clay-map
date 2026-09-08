@@ -1,4 +1,5 @@
-import { isGateMuted, onGateChange } from './audioGate'
+import { isGateMuted, isPlaybackBlocked, onGateChange } from './audioGate'
+import { readFeedMuted } from './feedPreferences'
 import { registerAudioOwner } from './audioFocus'
 
 // Small procedural UI effects shared by the cube turn and radius counter.
@@ -123,7 +124,7 @@ function audioContext(): AudioContext | null {
 }
 
 /** Context ready to make a sound right now, with the idle clock pushed back. */
-function wakeContext(idleMs: number): AudioContext | null {
+function wakeContext(idleMs: number, feedCounter = false): AudioContext | null {
   const c = audioContext()
   if (!c) return null
   cancelIdle()
@@ -133,7 +134,7 @@ function wakeContext(idleMs: number): AudioContext | null {
     // timeout has already fired. Re-check the same lease when it resolves so
     // a late resume cannot resurrect an otherwise parked audio thread.
     void c.resume().then(() => {
-      if (isGateMuted()) {
+      if (feedCounter ? isPlaybackBlocked() || readFeedMuted() : isGateMuted()) {
         if (ctx === c) retireContext()
         else if (c.state !== 'closed') void c.close().catch(() => {})
         return
@@ -450,12 +451,12 @@ export function playCubeTurnDetent(speed01: number) {
 }
 
 /** A terse computer/money-counter pip. Calls are internally rate-limited. */
-export function playRadiusCounterTick(progress: number) {
-  if (isGateMuted()) return
+export function playRadiusCounterTick(progress: number, feedCounter = false) {
+  if (feedCounter ? isPlaybackBlocked() || readFeedMuted() : isGateMuted()) return
   const wallNow = performance.now()
   if (wallNow - lastCounterTick < 38) return
   lastCounterTick = wallNow
-  const c = wakeContext(ONE_SHOT_IDLE_MS)
+  const c = wakeContext(ONE_SHOT_IDLE_MS, feedCounter)
   if (!c) return
   const now = c.currentTime
   const p = Math.max(0, Math.min(1, progress))
@@ -479,9 +480,9 @@ export function playRadiusCounterTick(progress: number) {
   }, { once: true })
 }
 
-export function playRadiusCounterDone() {
-  if (isGateMuted()) return
-  const c = wakeContext(ONE_SHOT_IDLE_MS)
+export function playRadiusCounterDone(feedCounter = false) {
+  if (feedCounter ? isPlaybackBlocked() || readFeedMuted() : isGateMuted()) return
+  const c = wakeContext(ONE_SHOT_IDLE_MS, feedCounter)
   if (!c) return
   const now = c.currentTime
   ;[0, 0.045].forEach((delay, i) => {

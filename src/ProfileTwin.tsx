@@ -1,4 +1,5 @@
 import { useAuthoredPosts } from './useAuthoredPosts'
+import { useLiveRadiusEstimate } from './useLiveRadiusEstimate'
 import { useFeedPostComments } from './feedPostComments'
 import { useImmersiveControls } from './useImmersiveControls'
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -631,6 +632,7 @@ export default function ProfileTwin({
   )
   const authoredUid = viewUserId?.trim() || (viewUser ? profileRecipientUid(realtimePosts, viewUser) : accountUid)
   const authored = useAuthoredPosts(authoredUid)
+  const liveRadius = useLiveRadiusEstimate(authored.snapshot, !authored.error)
   const [uploadedPosts, setUploadedPosts] = useState<Post[]>([])
   const [uploadedPostsLoaded, setUploadedPostsLoaded] = useState(false)
   const profilePosts = uploadedPostsLoaded ? uploadedPosts : POSTS
@@ -2437,7 +2439,7 @@ export default function ProfileTwin({
   // total; somebody else's profile has no account figure to read, so their
   // pops' reach combined stands in for it. The subject key is what the
   // striker climbs for — a new key is a fresh climb from the foot.
-  const visitedRadiusKm = authored.snapshot?.totalRadiusKm ?? profilePosts.reduce((sum, post) => sum + (post.reachKm ?? 0), 0)
+  const visitedRadiusKm = liveRadius.radiusKm ?? profilePosts.reduce((sum, post) => sum + (post.reachKm ?? 0), 0)
   const meterRadiusKm = viewerPost
     ? (viewerPost.reachKm ?? 0)
     : uploadedPostsLoaded || visiting ? visitedRadiusKm : accountRadiusKm
@@ -2787,6 +2789,10 @@ export default function ProfileTwin({
         {(authored.loading || authored.error) && <p role="status" className={styles.radiusSyncStatus}>
           {authored.error ? 'Radius could not refresh. ' : 'Refreshing radius…'}
           {authored.error && <button type="button" onClick={authored.retry}>Try again</button>}
+        </p>}
+        {(liveRadius.estimated || !visiting) && !authored.loading && !authored.error && authored.snapshot && <p className={styles.radiusSyncStatus}>
+          {liveRadius.estimated ? 'Live radius estimate' : 'Radius fades over time.'}
+          {!visiting && ' · Post to keep your reach growing.'}
         </p>}
         <div className={styles.modeSwitch}>
           {(['media', 'messages', 'liked'] as Mode[]).map(m => (

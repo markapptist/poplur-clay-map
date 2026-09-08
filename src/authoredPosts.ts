@@ -1,5 +1,6 @@
 import { normalizeLiveFeedPost, type NativeFeedPost } from './nativeFeedPosts'
 import { clampRadiusMeters } from './worldRadius'
+import { readRadiusProjection, type RadiusProjection } from './radiusProjection'
 
 export interface AuthoredPostRow { id: string; row: Record<string, unknown> }
 export interface AuthoredPostClaim { id: string; coords: [number, number]; radiusKm: number }
@@ -9,6 +10,7 @@ export interface AuthoredPostsSnapshot {
   totalRadiusKm: number
   postCount: number
   claims: AuthoredPostClaim[]
+  decay?: RadiusProjection[]
 }
 
 const text = (value: unknown) => typeof value === 'string' ? value.trim() : ''
@@ -33,6 +35,8 @@ export function authoredPostsSnapshot(uid: string, documents: readonly AuthoredP
     if (radiusKm <= 0) continue
     result.totalRadiusKm += radiusKm
     result.postCount++
+    const projection = readRadiusProjection(row, radiusKm * 1_000)
+    if (projection) (result.decay ??= []).push(projection)
     const post = normalizeLiveFeedPost(id, { ...row, ownerId: uid })
     if (post) result.posts.push(post)
     // Hidden origins cannot be inferred from leftover coordinate fields.

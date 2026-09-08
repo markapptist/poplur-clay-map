@@ -240,6 +240,8 @@ import {
 // stationName), which is data, not web playback.
 import { cancelVoiceSpeech, estimatedVoiceDurationMs, speakWithVoiceAudioFocus } from './voiceAudio'
 import { smartCardFor } from './tourSmarts'
+import { useIdleMapBroadcast } from './useIdleMapBroadcast'
+import { nativeAmbientDeadline } from './ambientWorkBudget'
 import { startEngagementChips, engagementVerb, type EngagementEvent } from './engagement'
 import { ambientAllowed, currentQuality, onAmbientSleepChange, onQualityChange, onTick } from './frameGovernor'
 import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange, onMapContentPopupChange } from './popups'
@@ -1272,6 +1274,7 @@ export default function MapApp() {
   const tourIdleRef = useRef<{ schedule: () => void; cancel: () => void }>({
     schedule: () => {}, cancel: () => {},
   })
+  const idleBroadcastControlRef = useRef({ restart: () => {}, stop: () => {} })
   // The shell can move the always-mounted map iframe behind another tab before
   // this component's tour callbacks are declared. Route that early lifecycle
   // message to the current stop function without capturing a stale callback.
@@ -2690,15 +2693,14 @@ export default function MapApp() {
   // Whether the tour is running. The hold menu's tile has to read STOP TOUR
   // for as long as it is, so the map owns the truth and reports it upward —
   // the menu can't infer it from a tile it tapped once.
-  // Untouched means static. This diagnostic is intentionally readable from a
-  // device/WebView test so a long-idle run can assert the policy directly
-  // instead of inferring it from a warm phone after the fact. The looping 3D
-  // tour still exists, but only the Hold-menu TOUR action below may start it.
+  // Hidden maps stay static. Foreground idle exploration is a separate sparse
+  // pin sequence; the diagnostic records every automatic camera start.
   const mapIdleDiagnosticsRef = useRef({
-    policy: 'static' as const,
+    policy: 'idle-pins',
     autonomousCameraStarts: 0,
     explicitTourStarts: 0,
     idleTimerArmed: false,
+    flightActive: false,
   })
   useEffect(() => {
     const debugWindow = window as typeof window & {
@@ -2707,9 +2709,9 @@ export default function MapApp() {
     }
     const diagnostics = mapIdleDiagnosticsRef.current
     const assertStaticIdle = () => {
-      const pass = diagnostics.policy === 'static'
-        && diagnostics.autonomousCameraStarts === 0
+      const pass = diagnostics.autonomousCameraStarts === 0
         && diagnostics.idleTimerArmed === false
+        && diagnostics.flightActive === false
       console.assert(pass, '[Poplur] untouched map started autonomous camera work')
       return pass
     }
@@ -3074,17 +3076,14 @@ export default function MapApp() {
     cancelTourTimer(tourNextTimerRef.current)
   }), [cancelTourTimer])
 
-  // ── Static long idle ──────────────────────────────────────────────────────
-  // An untouched map used to arm a raw one-minute timer, then start a 30-second
-  // globe flight every five minutes forever. That made a 20-minute "idle" test
-  // three full 3D tours, which explains the slow temperature climb even though
-  // ClayMap's own orbit and renderer were correctly parked. No timer is armed
-  // now: the last rendered 3D frame remains visible until a person acts.
+  // Foreground browsing uses short pin approaches with still holds. This
+  // bridge lets the existing Map foreground/audio lifecycle park its timer.
   const cancelTourIdle = useCallback(() => {
+    idleBroadcastControlRef.current.stop()
     mapIdleDiagnosticsRef.current.idleTimerArmed = false
   }, [])
   const scheduleTourIdle = useCallback(() => {
-    mapIdleDiagnosticsRef.current.idleTimerArmed = false
+    idleBroadcastControlRef.current.restart()
   }, [])
 
   // Every real input still stops an explicitly running tour. Capture phase on
@@ -4129,7 +4128,7 @@ export default function MapApp() {
     setNotificationFocusId(null)
   }, [discovery.page?.notificationFocus, notificationFocusId, focusPinCamera])
 
-  const openClickedMapPinContent = useCallback((pin: PopPin) => {
+  const openClickedMapPinContent = useCallback((pin: PopPin, automatic = false) => {
     // A pin you can see and press must answer the press. This used to bail when
     // the media record was missing, so a real claim — with a place, a poster,
     // a channel and a radius — read as a dead pin: nothing opened, nothing
@@ -4143,7 +4142,7 @@ export default function MapApp() {
     const mapInteractionState = mapRef.current as unknown as {
       __suppressNextMapClickUntil?: number
     } | null
-    if ((mapInteractionState?.__suppressNextMapClickUntil ?? 0) > Date.now()) return
+    if (!automatic && (mapInteractionState?.__suppressNextMapClickUntil ?? 0) > Date.now()) return
     clearPopups('suggestion')
     clearPopups('mapContent')
     openedPinRef.current = pin.id
@@ -4202,6 +4201,64 @@ export default function MapApp() {
   }, [mapPins, benchPin])
   const mapPinsRef = useRef(mapPins)
   mapPinsRef.current = mapPins
+
+  const idleSeenPins = useRef(new Set<string>())
+  const idleBroadcast = useIdleMapBroadcast({
+    enabled: Boolean(mapLive) && !focusedPostPicker,
+    visible: () => mapFrontRef.current,
+    available: () => {
+      const map = mapRef.current
+      const blocked = 'input:focus, textarea:focus, [role="dialog"], [data-map-directions] > *'
+      let parentBlocked = false
+      try { parentBlocked = window.parent !== window && Boolean(window.parent.document.querySelector(blocked)) } catch { /* separate origin */ }
+      return Boolean(map && !map.isMoving() && !streetView && !tourOnRef.current
+        && !searchOpen && !weatherOpen && !mapConquerBoardOpen && !mapContentPopupOpen
+        && !focusedUserKeyRef.current && !map.getSource('clay-nav-route')
+        && !parentBlocked && !document.querySelector(blocked))
+    },
+    explore: () => {
+      const map = mapRef.current
+      if (!map || nativeAmbientDeadline(2_400) <= performance.now()) return
+      const pins = mapPinsRef.current.filter(pin => pin.radiusKm > 0 && !pin.ghost)
+        .sort((a, b) => b.radiusKm - a.radiusKm || a.id.localeCompare(b.id))
+      const ids = new Set(pins.map(pin => pin.id))
+      for (const id of idleSeenPins.current) if (!ids.has(id)) idleSeenPins.current.delete(id)
+      let pin = pins.find(candidate => !idleSeenPins.current.has(candidate.id))
+      if (!pin) { idleSeenPins.current.clear(); pin = pins[0] }
+      if (!pin || pins.length === 1 && openedPinRef.current === pin.id) return
+      idleSeenPins.current.add(pin.id)
+      clearPopups('mapContent')
+      const diagnostics = mapIdleDiagnosticsRef.current
+      diagnostics.autonomousCameraStarts++
+      diagnostics.flightActive = true
+      let cancelled = false, arrived = false
+      const finish = () => {
+        if (cancelled || arrived) return
+        arrived = true; diagnostics.flightActive = false
+        map.off('moveend', finish)
+        window.clearTimeout(deadline)
+        const current = mapPinsRef.current.find(candidate => candidate.id === pin!.id)
+        if (current && mapFrontRef.current && !document.hidden && currentQuality() > 1) {
+          openClickedMapPinContent(current, true)
+        }
+      }
+      // A short city-level approach avoids repeatedly rebuilding the full
+      // street scene. One visible card then rests before the next destination.
+      wakeManagedRendering(2_400)
+      beginProgrammaticCameraMotion(map, 1_800)
+      const deadline = window.setTimeout(finish, 2_200)
+      map.once('moveend', finish)
+      map.flyTo({ center: pin.coords, zoom: 14.5, pitch: 35,
+        bearing: (map.getBearing() + 12) % 360, duration: 1_800, essential: false })
+      return () => {
+        cancelled = true; window.clearTimeout(deadline); map.off('moveend', finish)
+        if (diagnostics.flightActive) map.stop()
+        diagnostics.flightActive = false
+      }
+    },
+    diagnostics: mapIdleDiagnosticsRef.current,
+  })
+  idleBroadcastControlRef.current = idleBroadcast.current
 
   // ── One map context drives every line in the shell HUD ───────────────────
   // Report only on settled camera states. This keeps the title/counters stable

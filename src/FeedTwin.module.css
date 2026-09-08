@@ -98,6 +98,7 @@
 }
 
 .staticLayerHidden { opacity: 0; }
+.staticLayer { transition: none; }
 
 /* Stop the noise animating once this cover is hidden.
    `opacity: 0` hides a layer but does NOT stop its animations: the ::before

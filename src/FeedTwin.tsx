@@ -71,7 +71,8 @@ import {
 } from './radiusLedger'
 import { currentViewerCoords as viewerCoordsFromFix } from './viewerFix'
 import { useFeedPostComments } from './feedPostComments'
-import { mediaTimeLabel, nextRadiusPost } from './mediaTiming'
+import { mediaTimeLabel } from './mediaTiming'
+import { FEED_CHANNEL_STATIC_MS, FEED_LIVE_DWELL_SECONDS, FEED_PHOTO_DWELL_SECONDS, nextBroadcastPost } from './feedBroadcast'
 import { blockUser, blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } from './blockedUsers'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
@@ -79,7 +80,7 @@ import { blockUser, blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } 
 // tapping the left/right edge steps through the posts in the channel you are on;
 // each channel is a full-bleed video with the TV overlay that auto-cycles
 // username↔"CH 101" and coordinates↔CATEGORY in green monospace, a flag +
-// channel icon, a bottom AI caption, and a clean channel change with no static.
+// channel icon, a bottom AI caption, and a brief static channel detent.
 //
 // One shared Firestore listener supplies the bounded media rows users actually
 // publish. Empty channels remain honestly empty in browser and native shells;
@@ -434,7 +435,7 @@ export default function FeedTwin({
   /** The playing post's reach, reported on every video change so the home
       RADIUS card can re-run its money counter — the user is shown how much
       radius each video carries, in the card that owns that number. */
-  onPostReach?: (km: number | null, color?: string) => void
+  onPostReach?: (km: number | null, color?: string, postKey?: string) => void
   /** A real feed progression (swipe or completed clip), reported to the
       native shell so its ad cadence follows posts rather than channel buttons. */
   onContentAdvance?: (channelId: string, contentIndex: number) => void
@@ -642,6 +643,7 @@ export default function FeedTwin({
   useEffect(() => onLiveStore(() => setLiveRevision(value => value + 1)), [])
   const contentIdxRef = useRef<Record<string, number>>({})
   const [contentRevision, forceContentRender] = useState(0)
+  const [broadcastRevision, setBroadcastRevision] = useState(0)
 
   const consumedFocusRef = useRef('')
   // A Discovery post result is a direct navigation, not a recommendation
@@ -902,19 +904,25 @@ export default function FeedTwin({
   // Keep this separate from the arrow handler: a passive completion should
   // not make the physical navigator say "pop".
   const watchedMediaRef = useRef(new Set<string>())
+  const watchedChannelsRef = useRef(new Set<string>())
   const advanceCompletedContent = useCallback(() => {
+    if (!frontMostRef.current || suppressedRef.current || document.hidden || commentOpen || playerModeRef.current) return
     const discovery = radiusDiscoverySnapshot()
     const ranked = rankedPostsFor(ch, publishedPosts, discovery, focusedContent?.target)
     const current = ranked[(contentIdxRef.current[ch.id] ?? 0) % Math.max(1, ranked.length)]
     const candidates = CHANNELS.flatMap((channel, channelIndex) =>
       rankedPostsFor(channel, publishedPosts, discovery, focusedContent?.target).map((post, postIndex) =>
         ({ ...post, channelId: channel.id, channelIndex, postIndex })))
-    const next = nextRadiusPost(candidates, watchedMediaRef.current, current?.id)
+    const next = nextBroadcastPost(candidates, watchedChannelsRef.current, watchedMediaRef.current,
+      current ? { id: current.id, channelId: ch.id } : undefined)
     if (current && !current.demo) recordFeedDiscoverySignal({ id: current.id, channelId: ch.id }, 'watch')
     if (!next) return
     const video = adVideoRef.current
     if (video) retireFeedVideo(video)
     releaseAudioFocus('feed')
+    completedAdRef.current = null
+    setCompletedAdSrc(null)
+    setBroadcastRevision(value => value + 1)
     contentIdxRef.current[next.channelId] = next.postIndex
     onContentAdvance?.(next.channelId, next.postIndex)
     if (next.channelIndex !== index) {
@@ -922,7 +930,7 @@ export default function FeedTwin({
       else setOwnIndex(next.channelIndex)
     }
     forceContentRender(n => n + 1)
-  }, [ch, focusedContent, index, onContentAdvance, onIndexChange, publishedPosts])
+  }, [ch, commentOpen, focusedContent, index, onContentAdvance, onIndexChange, publishedPosts])
 
   const handleEdgeTap = useCallback((side: 'left' | 'right') => {
     changeContent(side === 'left' ? -1 : 1)
@@ -1078,7 +1086,7 @@ export default function FeedTwin({
     const signature = km == null ? 'none' : `${postId}:${km}:${post?.pinColor ?? ''}`
     if (signature === reportedReachRef.current) return
     reportedReachRef.current = signature
-    onPostReach?.(km, post?.pinColor ? PIN_COLOR_SWATCH[post.pinColor] : undefined)
+    onPostReach?.(km, post?.pinColor ? PIN_COLOR_SWATCH[post.pinColor] : undefined, postId)
   }, [onPostReach, post?.reachKm, post?.pinColor, postId])
   // Leaving reports "no post". The signature ref is FORGOTTEN here on purpose:
   // a remount (React's dev-mode double mount included) runs this cleanup and
@@ -1099,7 +1107,7 @@ export default function FeedTwin({
     // loss without replacing somebody's upload with unrelated stock media.
     ? [desiredAdSrc, desiredAdSrc]
     : []
-  const sourceKey = `${ch.id}:${post?.id ?? post?.user ?? 'no-post'}:${desiredAdSrc ?? 'stream'}`
+  const sourceKey = `${ch.id}:${post?.id ?? post?.user ?? 'no-post'}:${desiredAdSrc ?? 'stream'}:${broadcastRevision}`
   const [recoveryAttempt, setRecoveryAttempt] = useState(0)
   const recoveryAttemptRef = useRef(0)
   const [playbackUnavailable, setPlaybackUnavailable] = useState(false)
@@ -1116,15 +1124,15 @@ export default function FeedTwin({
   const photoClock = useRef({ key: '', elapsed: 0, completed: false })
   useEffect(() => {
     photoClock.current = { key: sourceKey, elapsed: 0, completed: false }
-    setRemainingSeconds(post?.mediaType === 'photo' ? post.photoViewSeconds ?? null : null)
+    setRemainingSeconds(post?.mediaType === 'photo' ? post.photoViewSeconds ?? FEED_PHOTO_DWELL_SECONDS : null)
   }, [sourceKey, post?.photoViewSeconds, post?.mediaType])
   useEffect(() => {
-    const duration = post?.photoViewSeconds
-    if (post?.mediaType !== 'photo' || !duration || !posterReady || suppressed || !frontMost || commentOpen) return
+    const duration = post?.photoViewSeconds ?? FEED_PHOTO_DWELL_SECONDS
+    if (post?.mediaType !== 'photo' || !posterReady || suppressed || !frontMost || commentOpen || playerMode) return
     let last = performance.now()
-    const resetClock = () => { last = performance.now() }
-    document.addEventListener('visibilitychange', resetClock)
-    const timer = window.setInterval(() => {
+    let timer = 0
+    let nativeActive = (window as Window & { __poplurNativeAppActive?: boolean }).__poplurNativeAppActive !== false
+    const tick = () => {
       const now = performance.now()
       const delta = now - last
       last = now
@@ -1136,12 +1144,48 @@ export default function FeedTwin({
         photoClock.current.completed = true
         advanceCompletedContent()
       }
-    }, 1000)
+    }
+    const resetClock = () => {
+      last = performance.now(); window.clearInterval(timer)
+      if (!document.hidden && nativeActive) timer = window.setInterval(tick, 1000)
+    }
+    const lifecycle = (event: Event) => {
+      const active = (event as CustomEvent).detail?.active
+      if (typeof active === 'boolean') { nativeActive = active; resetClock() }
+    }
+    resetClock()
+    document.addEventListener('visibilitychange', resetClock)
+    window.addEventListener('poplur-native-app-lifecycle', lifecycle)
     return () => {
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', resetClock)
+      window.removeEventListener('poplur-native-app-lifecycle', lifecycle)
     }
-  }, [sourceKey, post?.mediaType, post?.photoViewSeconds, posterReady, suppressed, frontMost, commentOpen, advanceCompletedContent])
+  }, [sourceKey, post?.mediaType, post?.photoViewSeconds, posterReady, suppressed, frontMost, commentOpen, playerMode, advanceCompletedContent])
+
+  // Unlimited live streams and empty channels still yield to the broadcast.
+  const broadcastDwellMs = post?.stream ? FEED_LIVE_DWELL_SECONDS * 1000 : !post ? 4_000 : 0
+  useEffect(() => {
+    if (!broadcastDwellMs || suppressed || !frontMost || commentOpen || playerMode) return
+    let timer = 0
+    let nativeActive = (window as Window & { __poplurNativeAppActive?: boolean }).__poplurNativeAppActive !== false
+    const arm = () => {
+      window.clearTimeout(timer)
+      if (!document.hidden && nativeActive) timer = window.setTimeout(advanceCompletedContent, broadcastDwellMs)
+    }
+    const lifecycle = (event: Event) => {
+      const active = (event as CustomEvent).detail?.active
+      if (typeof active === 'boolean') { nativeActive = active; arm() }
+    }
+    arm()
+    document.addEventListener('visibilitychange', arm)
+    window.addEventListener('poplur-native-app-lifecycle', lifecycle)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', arm)
+      window.removeEventListener('poplur-native-app-lifecycle', lifecycle)
+    }
+  }, [sourceKey, broadcastDwellMs, suppressed, frontMost, commentOpen, playerMode, advanceCompletedContent])
   useEffect(() => {
     recoveryAttemptRef.current = 0
     setRecoveryAttempt(0)
@@ -1189,6 +1233,11 @@ export default function FeedTwin({
     if (!playbackUnavailable || suppressed || !frontMost) return
     const retry = () => {
       if (document.hidden || playerPausedByUserRef.current) return
+      // A dead upload must not hold an otherwise active TV channel forever.
+      if (retryCycleRef.current >= 2 && !playerModeRef.current && !commentOpen) {
+        advanceCompletedContent()
+        return
+      }
       recoveryAttemptRef.current = 0
       recoveringAdSrcRef.current = null
       settledAdRef.current = null
@@ -1203,7 +1252,7 @@ export default function FeedTwin({
     window.addEventListener('online', retry)
     document.addEventListener('visibilitychange', retry)
     return () => { clearTimeout(timer); window.removeEventListener('online', retry); document.removeEventListener('visibilitychange', retry) }
-  }, [playbackUnavailable, suppressed, frontMost, sourceKey])
+  }, [playbackUnavailable, suppressed, frontMost, sourceKey, commentOpen, advanceCompletedContent])
 
   const retryAdPlayback = useCallback((source: string, video: HTMLVideoElement) => {
     if (adVideoRef.current !== video || video.getAttribute('src') !== source) return
@@ -1355,11 +1404,19 @@ export default function FeedTwin({
   // and spending two decoder leases on one visible surface. Static remains an
   // explicit QA/transition treatment only.
   const [recoveringPlayback, setRecoveringPlayback] = useState(true)
+  const [settledChannel, setSettledChannel] = useState(index)
+  const channelTuning = settledChannel !== index
+  useEffect(() => {
+    if (!channelTuning) return
+    const timer = window.setTimeout(() => setSettledChannel(index), FEED_CHANNEL_STATIC_MS)
+    return () => window.clearTimeout(timer)
+  }, [index, channelTuning])
   // Static is only a brief bridge to a real frame or a loaded poster. The
   // poster is the honest fallback when WebKit cannot provide a decoder, so it
   // must never remain hidden behind the buffering grid.
-  const showStatic = forceStatic || forceTransition
+  const showStatic = !suppressed && frontMost && (channelTuning || forceStatic || forceTransition
     || (!posterReady && !playbackUnavailable && (recoveringPlayback || !decoderGranted))
+  )
   const staticKey = `${adSrc ?? 'no-creative'}:${forceTransition ? 'transition' : 'static'}`
   const [readyStaticKey, setReadyStaticKey] = useState<string | null>(null)
   const staticReady = readyStaticKey === staticKey
@@ -2271,7 +2328,7 @@ export default function FeedTwin({
       {/* Static + channel identity while the video buffers or swaps; fades out
           over 0.5s (ease-out) exactly like the app, and stays up as the
           "no signal" card on channels with no creative yet. */}
-      <div className={showStatic ? styles.staticLayer : styles.staticLayerHidden} aria-hidden="true">
+      <div className={showStatic ? styles.staticLayer : styles.staticLayerHidden} data-channel-tuning={channelTuning || undefined} aria-hidden="true">
         {/* Once the ad's real frames arrive the static cover fades out — but a
             fully-transparent <video> keeps its decoder running, a second live
             decoder behind the ad for no visible gain. Unmount it when the ad is

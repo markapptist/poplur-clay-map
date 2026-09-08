@@ -96,6 +96,7 @@ import InCallBar from './InCallBar'
 import WebSignIn from './WebSignIn'
 import { acceptCall, callState, declineCall, hangup as hangupCall, type CallContext } from './webCall'
 import { normalizeCallContext } from './callContext'
+import { useRadiusCounter } from './useRadiusCounter'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
 import { playPop, popHaptic } from './pop'
 import { startRingtone, stopRingtone } from './phoneRingtones'
@@ -670,20 +671,9 @@ interface MapHudContext {
   onlineUsers: number
 }
 
-/** The count-up is the stat card's swap-in flourish: `active` goes true when the
- *  card rotates RADIUS/ONLINE into view (and false with chrome-idle), and the
- *  number counts up from zero. What it was ALSO doing was replaying that whole
- *  880ms volley every time the value merely CHANGED, because `radius`/`value`
- *  sit in the dependency array — and the feed hands these a new radius on every
- *  clip advance. Measured 21 Aug on the shipped bundle: five clip changes drove
- *  1236 DOM mutations and 940 style recalculations, 84% of everything the screen
- *  touched, at 14.8% of a core against 1.6% when settled.
- *
- *  So animate on ARRIVAL only — the false->true edge, which is the swap-in the
- *  effect was designed for — and snap to the new figure when the value changes
- *  under a card that is already showing. The flourish anyone actually looks at
- *  is unchanged; only the accidental replay is gone. */
-function AnimatedRadiusMetrics({
+/** Radius selections share one finite money-counter beat. Feed transitions
+ * interpolate from the last displayed amount so its persistent HUD stays put. */
+export function AnimatedRadiusMetrics({
   radius,
   ceiling,
   unit,
@@ -691,6 +681,7 @@ function AnimatedRadiusMetrics({
   accumulated = false,
   recountKey = null,
   pinColor = '#f53c99',
+  continueCount = false,
 }: {
   radius: number
   ceiling: number
@@ -706,59 +697,13 @@ function AnimatedRadiusMetrics({
    *  same beat (radiusTrophies.ts), so the number and the puck arrive together. */
   recountKey?: string | null
   pinColor?: string
+  continueCount?: boolean
 }) {
-  const [progress, setProgress] = useState(active ? 0 : 1)
-  const [counting, setCounting] = useState(active)
-  const wasActive = useRef(false)
-  const lastRecountKey = useRef<string | null>(null)
-  const lastRadius = useRef(radius)
-
-  useEffect(() => {
-    // Only the false->true edge is an arrival; a value change under a card that
-    // is already showing snaps instead of replaying the whole count — unless
-    // the change IS a selection (a new recount key), which is the one case
-    // where replaying is the point.
-    const arriving = active && !wasActive.current
-    wasActive.current = active
-    const recount = active && recountKey != null && (recountKey !== lastRecountKey.current || radius !== lastRadius.current)
-    lastRadius.current = radius
-    lastRecountKey.current = recountKey
-    let raf = 0
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (!active || reduced || !(arriving || recount)) {
-      setProgress(1)
-      setCounting(false)
-      return
-    }
-
-    setProgress(0)
-    setCounting(true)
-    const started = performance.now()
-    const frame = (now: number) => {
-      const raw = Math.max(0, Math.min(1, (now - started) / 880))
-      // Money counters run hard at the start, then click precisely onto the
-      // final amount rather than coasting past it.
-      const eased = 1 - Math.pow(1 - raw, 2.35)
-      setProgress(eased)
-      playRadiusCounterTick(eased)
-      if (raw < 1) {
-        raf = requestAnimationFrame(frame)
-      } else {
-        setProgress(1)
-        setCounting(false)
-        playRadiusCounterDone()
-      }
-    }
-    raf = requestAnimationFrame(frame)
-    return () => cancelAnimationFrame(raf)
-  }, [active, ceiling, radius, unit, recountKey])
-
-  // Past a thousand the tenths stop meaning anything and the digits stop
-  // fitting: a world-radius pop reads "3,959 mi", the same way its ceiling
-  // does, rather than "3958.8" spilling off the card.
-  const shown = radius * progress
+  const { shown, shownCeiling, counting } = useRadiusCounter({
+    radius, ceiling, active, recountKey, continueCount,
+  })
   const currentText = shown >= 1_000 ? Math.round(shown).toLocaleString() : shown.toFixed(1)
-  const ceilingText = Math.round(ceiling * progress).toLocaleString()
+  const ceilingText = Math.round(shownCeiling).toLocaleString()
   return (
     <>
       <span
@@ -4623,6 +4568,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const ownRadiusColor = ownPinColor ? PIN_COLOR_SWATCH[ownPinColor] : '#f53c99'
   const [feedPinColor, setFeedPinColor] = useState<string | undefined>()
   const [feedReachKm, setFeedReachKm] = useState<number | null>(null)
+  const [feedCounterKey, setFeedCounterKey] = useState<string | null>(null)
   // The open pop's own reach on the PROFILE. The feed has always reported
   // this; the profile never did, so opening a pop there showed the account
   // total instead of that pop's radius — 0.0mi over a 6.5km pop.
@@ -4633,7 +4579,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
    *  and pop count, reported by ProfileTwin. The corner card reports the
    *  person you are looking at; null means the profile is your own. */
   const [visitedTotals, setVisitedTotals] = useState<{ radiusKm: number; posts: number } | null>(null)
-  const onFeedPostReach = useCallback((km: number | null, color?: string) => { setFeedReachKm(km); setFeedPinColor(color) }, [])
+  const onFeedPostReach = useCallback((km: number | null, color?: string, postKey?: string) => {
+    setFeedReachKm(km); setFeedPinColor(color); setFeedCounterKey(postKey ?? null)
+  }, [])
   /** The Times reports the story the reader is currently dwelling on. */
   const [newsReachKm, setNewsReachKm] = useState<number | null>(null)
   useEffect(() => {
@@ -5512,12 +5460,11 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // The feed's comment box is the same kind of layer — no ✕ of its own, so
     // the cube is how you leave it.
     if (activeTab === 'feed' && feedBackRef.current?.()) { playPop(); return }
-    // On the unobstructed Feed, the TV cube is the deliberate ad action. The
-    // playing post supplies the suggestion; passive playback never opens it.
+    // Feed's TV cube reveals its side rails. Ads belong to content breaks.
     if (activeTab === 'feed') {
       playPop()
       setPopping(true)
-      feedActionsRef.current?.('suggestion')
+      window.dispatchEvent(new CustomEvent('poplur-feed-reveal-controls'))
       return
     }
     // On the map the globe is an affirmative action, not a decorative tab
@@ -6108,20 +6055,18 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                 : mapHasAccumulatedRadius || activeTab === 'profile'
                   ? 'TOTAL RADIUS ◆'
                   : 'RADIUS ◆'}</span>
-            {/* `&& !chromeIdle`: the counter re-counts on every DATA change —
-                and the feed changes `radius` on every clip advance (~10s), so
-                an untouched feed ran an 880ms rAF volley, per-frame restyle,
-                ~23 tick oscillators and an AudioContext wake every ten seconds
-                forever. Idle snaps the number instead; the first touch
-                un-idles the chrome and the very next change beats again. */}
+            {/* One short counter per visible post; no whole-HUD remount. */}
             <AnimatedRadiusMetrics
               pinColor={(activeTab === 'map' ? mapFocusedPoint?.color : activeTab === 'profile' ? profilePinColor : activeTab === 'feed' ? feedPinColor : undefined) ?? ownRadiusColor}
               radius={shownRadiusKm * (unitMi ? KM_TO_MI : 1)}
               ceiling={unitMi ? EARTH_RADIUS_KM * KM_TO_MI : EARTH_RADIUS_KM}
               unit={unitMi ? 'mi' : 'km'}
-              active={recordMs == null && !chromeIdle}
+              active={recordMs == null && !chromeIdle && !chromeGone && surfaceVisible}
               accumulated={!seenUser && (mapHasAccumulatedRadius || (activeTab === 'profile' && !profileHasPopSubject))}
-              recountKey={activeTab === 'map'
+              continueCount={activeTab === 'feed'}
+              recountKey={activeTab === 'feed'
+                ? feedCounterKey
+                : activeTab === 'map'
                 ? traversedPinKey
                 // The profile's radius tower (RadiusStrikerRail) climbs on
                 // this same beat whenever its subject changes — coming to the
