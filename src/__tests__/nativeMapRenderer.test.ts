@@ -26,6 +26,34 @@ async function queryKey() {
 afterEach(() => { maps.splice(0).forEach(map => map.remove()); document.body.replaceChildren(); vi.restoreAllMocks(); vi.clearAllMocks() })
 
 describe('native map bridge lifecycle', () => {
+  it('keeps the canvas wrapper transparent when markers give it a header-sized height', () => {
+    expect(makeMap().getCanvasContainer().hasAttribute('data-poplur-native-map-ground')).toBe(true)
+  })
+
+  it('frames a landmark with padding rather than replacing its destination with a native anchor', async () => {
+    const map = makeMap()
+    map.flyTo({center:[55.2744,25.1972],zoom:16,offset:[0,80]})
+    map.easeTo({center:[-79.3871,43.6426],zoom:16})
+    await Promise.resolve()
+    const commands = vi.mocked(postNativeEvent).mock.calls.flatMap(([m])=>(m as any).commands ?? []).filter(c=>c.op==='camera')
+    expect(commands[0].args[1]).toMatchObject({center:[55.2744,25.1972],padding:{top:160,bottom:0,left:0,right:0}})
+    expect(commands[0].args[1]).not.toHaveProperty('offset')
+    expect(commands[1].args[1]).toMatchObject({center:[-79.3871,43.6426],padding:{top:0,bottom:0,left:0,right:0}})
+  })
+
+  it('marks a requested flight moving before native callbacks so world policy cannot interrupt it', () => {
+    const map = makeMap(), start = vi.fn(), end = vi.fn()
+    map.on('movestart', start); map.on('moveend', end)
+    map.flyTo({center:[55.2744,25.1972],zoom:16})
+    expect(map.isMoving()).toBe(true)
+    expect(start).toHaveBeenCalledTimes(1)
+    event(map,'camera',{camera:{center:[10,10],zoom:3,pitch:10,bearing:0}})
+    expect(start).toHaveBeenCalledTimes(1)
+    event(map,'idle')
+    expect(map.isMoving()).toBe(false)
+    expect(end).toHaveBeenCalledTimes(1)
+  })
+
   it('owns no WebGL context and releases map-owned media on removal exactly once', () => {
     const context = vi.spyOn(HTMLCanvasElement.prototype,'getContext')
     const map = makeMap(), cleanup = vi.fn()

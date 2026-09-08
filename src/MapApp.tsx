@@ -1,6 +1,6 @@
 import BuildingStylePreview, { BUILDING_STYLE_PREVIEW, buildingPreviewShade } from './BuildingStylePreview'
-import { startLandmarkOrbit } from './landmarkCinematic'
 import { onFrame } from './frameGovernor'
+import { cutMapCamera } from './cutMapCamera'
 import { useImmersiveControls } from './useImmersiveControls'
 import { useMapDiscovery } from './useMapDiscovery'
 import { MapDiscoveryLayers } from './MapDiscoveryLayers'
@@ -208,9 +208,6 @@ import {
   mapPointCycleDestinationPose,
   mapPointRadiusFrameZoom,
   programmaticCameraBlurAllowed,
-  programmaticCameraPoseMatches,
-  programmaticCameraPlan,
-  programmaticCameraPlanForMode,
   type MapPointCameraSubject,
   type ProgrammaticCameraMode,
 } from './programmaticCameraMotion'
@@ -306,7 +303,7 @@ import {
   tuneMapRadioLocation,
 } from './mapRadio'
 import { publishMapRadioLocation } from './mapRadioLocation'
-import { isNativeShell, isRNWebShellRoute, postNativeEvent, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
+import { isNativeShell, isRNWebShellRoute, postNativeEvent, wakeManagedRendering } from './nativeBridge'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { onAudioFocusChange } from './audioFocus'
 import { playPop } from './pop'
@@ -588,11 +585,6 @@ function pinFocusMapRequest(data: Record<string, unknown>): PinFocusMapRequest |
   return { ...(typeof data.notificationId === 'string' ? { notificationId: data.notificationId.slice(0, 500) } : {}), ...(postId ? { postId } : {}), ...(own ? { own } : {}), ...(deltaKm != null ? { deltaKm } : {}), ...(pulse ? { pulse } : {}) }
 }
 const DEFAULT_NAV_ORIGIN: [number, number] = [-79.3811, 43.6487]
-// Cross-country movement on Mercator stays top-down. The shared map's zoom-3
-// floor still keeps the finite world sheet well outside a phone viewport for
-// every tour destination, while requesting fewer detailed corridor tiles than
-// the former zoom-4 floor.
-const FLAT_TRAVEL_MIN_ZOOM = MAP_MIN_ZOOM
 // Mapbox resolves its final camera frame just after the advertised duration.
 // Keep that small settle tail inside the finite lease instead of reopening the
 // map's ambient renderer for an arbitrary window.
@@ -626,16 +618,6 @@ const TOUR_MAP_READY_RETRY_MS = 160
 const TOUR_MAP_READY_MAX_ATTEMPTS = 32
 const TOUR_3D_REVEAL_START_ZOOM = 13.9
 const NO_MAP_PINS: PopPin[] = []
-
-// ── The pop-to-pop trip ─────────────────────────────────────────────────────
-// Climb, cross, descend (see flyToPop). Module-level because the trip is no
-// longer the only thing that needs its length: whatever draws the arrival has
-// to land WITH the camera, and a second hand-tuned delay somewhere else would
-// drift the moment these are retuned.
-const TRIP_CLIMB_MS = 950
-const TRIP_CROSS_MS = 2200
-/** Take-off to touchdown. The crossing starts 60ms before the climb settles. */
-const TRIP_TOTAL_MS = TRIP_CLIMB_MS - 60 + TRIP_CROSS_MS
 
 // ── Engagement traversal ────────────────────────────────────────────────────
 // Engagement is news about a post, and a post is a place: when one lands while
@@ -853,15 +835,15 @@ export default function MapApp() {
     setProgrammaticCameraMoving(true)
     return finish
   }, [clearProgrammaticCameraMotion])
-  // Generation guard for the flat-map camera's three stages. Any new flight,
+  // Generation guard for asynchronous destination frames. Any new flight,
   // touch, stop, or background transition invalidates the outstanding stage
   // listener before it can pull the camera away again.
-  const landmarkOrbitCancelRef = useRef<(() => void) | null>(null)
+  const cameraCutCancelRef = useRef<(() => void) | null>(null)
   const stagedCameraFlightRef = useRef({ serial: 0 })
   const cancelStagedCameraFlight = useCallback((preserveCameraOwnership = false) => {
     stagedCameraFlightRef.current.serial += 1
-    landmarkOrbitCancelRef.current?.()
-    landmarkOrbitCancelRef.current = null
+    cameraCutCancelRef.current?.()
+    cameraCutCancelRef.current = null
     clearProgrammaticCameraMotion()
     const map = mapRef.current as (mapboxgl.Map & {
       __cinematic?: boolean
@@ -1534,41 +1516,18 @@ export default function MapApp() {
       ? landmarkCameraFrame(framedDestination.id)
       : null
     const destinationZoom = landmarkFrame?.zoom ?? 15.4
-    const cameraPlan = programmaticCameraPlan(
-      (map as unknown as mapboxgl.Map).getZoom(),
-      destinationZoom,
-    )
-    if (landmarkFrame) {
-      // Wide browsing deliberately locks maxPitch to zero. Release that lock
-      // before this one authored landmark flight or Mapbox clamps the requested
-      // hero angle to a top-down view before the animation even begins.
-      map.setMinPitch?.(0)
-      map.setMaxPitch?.(MAP_BROWSE_3D_MAX_PITCH)
-      map.__cinematic = true
-    }
-    wakeManagedRendering(3400 + (landmarkFrame
-      ? LANDMARK_RENDER_SETTLE_MS
-      : MANAGED_CAMERA_SETTLE_MS))
-    if (cameraPlan.kind === 'translate') {
-      beginProgrammaticCameraMotion(map as unknown as mapboxgl.Map, 3400)
-      map.easeTo({
-        center: landmarkFrame?.center ?? center,
-        zoom: cameraPlan.zoom,
-        duration: 3400,
-        easing: (t: number) => t * t * (3 - 2 * t),
-        essential: true,
-      })
-    } else {
-      map.easeTo({
-        center: landmarkFrame?.center ?? center,
-        bearing: landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING,
-        zoom: destinationZoom,
-        pitch: landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH,
-        duration: 3400,
-        easing: (t: number) => t * t * (3 - 2 * t),
-        essential: true,
-      })
-    }
+    map.setMinPitch?.(0)
+    map.setMaxPitch?.(MAP_BROWSE_3D_MAX_PITCH)
+    map.__cinematic = true
+    wakeManagedRendering(landmarkFrame ? LANDMARK_RENDER_SETTLE_MS : MANAGED_CAMERA_SETTLE_MS)
+    map.easeTo({
+      center: landmarkFrame?.center ?? center,
+      bearing: landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING,
+      zoom: destinationZoom,
+      pitch: landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH,
+      ...(landmarkFrame?.offset ? { offset: landmarkFrame.offset } : {}),
+      duration: 0, essential: true,
+    })
     // A search hit inside the post picker is TRAVEL, not sightseeing: the
     // person is telling us where they want the post to go. Move the pending
     // point with the camera, or "Use this spot" would still be aimed at the
@@ -1576,7 +1535,7 @@ export default function MapApp() {
     // this only while the picker is up, so the browse map is untouched.
     ;(map as unknown as { __poplurPickerAnchor?: (target: [number, number]) => void })
       .__poplurPickerAnchor?.(landmarkFrame?.center ?? center)
-  }, [beginProgrammaticCameraMotion, closeSearch, mapRef])
+  }, [closeSearch, mapRef])
 
   // Keep the place half of the status truthful after a manual pan as well as
   // after a tour/search action. Curated destinations win near their own
@@ -1920,38 +1879,20 @@ export default function MapApp() {
       setCenter: (lng: number, lat: number, zoom?: number) => {
         const map = mapRef.current
         if (!map) return
-        const duration = 800
-        const cameraPlan = programmaticCameraPlan(map.getZoom(), zoom ?? map.getZoom())
-        wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
-        if (cameraPlan.kind === 'translate') beginProgrammaticCameraMotion(map, duration)
-        map.easeTo({ center: [lng, lat], zoom: cameraPlan.zoom, duration })
+        wakeManagedRendering(MANAGED_CAMERA_SETTLE_MS)
+        map.easeTo({ center: [lng, lat], zoom: zoom ?? map.getZoom(), duration: 0 })
       },
       flyTo: (lng: number, lat: number, zoom: number) => {
         const map = mapRef.current
         if (!map) return
-        ;(map as unknown as { __cinematic?: boolean }).__cinematic = true
-        const duration = 4600
-        const cameraPlan = programmaticCameraPlan(map.getZoom(), zoom)
-        wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
-        if (cameraPlan.kind === 'translate') {
-          beginProgrammaticCameraMotion(map, duration)
-          map.easeTo({
-            center: [lng, lat],
-            zoom: cameraPlan.zoom,
-            duration,
-            easing: (t: number) => t * t * (3 - 2 * t),
-            essential: true,
-          })
-          return
-        }
-        map.flyTo({
-          center: [lng, lat],
-          zoom: cameraPlan.zoom,
+        wakeManagedRendering(MANAGED_CAMERA_SETTLE_MS)
+        map.setMinPitch(0)
+        map.setMaxPitch(streetView ? 85 : MAP_BROWSE_3D_MAX_PITCH)
+        map.easeTo({
+          center: [lng, lat], zoom,
           pitch: streetView ? 82 : MAP_BROWSE_3D_PITCH,
           bearing: streetView ? map.getBearing() : MAP_BROWSE_3D_BEARING,
-          duration,
-          curve: 1.7,
-          essential: true,
+          duration: 0, essential: true,
         })
       },
       setSky: (day: boolean) => setSky(forcedSkyShade(day)),
@@ -1963,9 +1904,11 @@ export default function MapApp() {
     return () => { delete w.__poplurNative }
   }, [applySoundState, beginProgrammaticCameraMotion, streetView])
 
+  // Selecting another point is a cut to its framed location. No intermediate
+  // cities, flattened travel stage or cross-world pan should be rendered.
   const flyToCenter = useCallback((
     center: [number, number],
-    duration = 4600,
+    _duration = 4600,
     landmarkFrame?: LandmarkCameraFrame | null,
     motionMode: ProgrammaticCameraMode = 'default',
     onArrival?: () => void,
@@ -1974,363 +1917,62 @@ export default function MapApp() {
     const map = mapRef.current
     if (!map) return false
     publishMapRadioLocation(center)
-    const mapCamera = map as unknown as {
-      __cinematic?: boolean
-      __tripping?: boolean
-      __claimCamera?: () => void
-      __poplurCameraClaimed?: boolean
-      __suppressNextMapClickUntil?: number
+    const camera = map as unknown as {
+      __cinematic?: boolean; __tripping?: boolean; __claimCamera?: () => void
+      __poplurCameraClaimed?: boolean; __suppressNextMapClickUntil?: number
       __cancelAdaptiveCameraSettle?: () => void
     }
     cancelStagedCameraFlight()
-    mapCamera.__claimCamera?.()
-    mapCamera.__poplurCameraClaimed = true
-    // Hold ownership before retiring the old easing. Mapbox emits moveend from
-    // stop() synchronously; without these flags ClayMap can queue its ordinary
-    // adaptive settle in the tiny gap before the new authored flight begins.
-    mapCamera.__cinematic = true
-    mapCamera.__tripping = true
-    mapCamera.__cancelAdaptiveCameraSettle?.()
-    // Retire any older Mapbox animation before arming this generation. Its
-    // moveend listener sees the invalid serial and cannot launch another stage.
+    camera.__claimCamera?.()
+    camera.__poplurCameraClaimed = true
+    camera.__cinematic = true
+    camera.__tripping = true
+    camera.__cancelAdaptiveCameraSettle?.()
     map.stop()
-    const flightSerial = stagedCameraFlightRef.current.serial
-    const ownsFlight = () => stagedCameraFlightRef.current.serial === flightSerial
-    const arrive = () => {
-      if (!ownsFlight()) return
-      const finish = () => {
-        if (!ownsFlight()) return
-        mapCamera.__tripping = false
-        mapCamera.__cinematic = false
-        onArrival?.()
-      }
-      if (landmarkFrame && map.getZoom() > TOUR_3D_REVEAL_START_ZOOM && (motionMode === 'landmark-tour' || pointSubject === 'landmark')) {
-        landmarkOrbitCancelRef.current = startLandmarkOrbit(map, finish)
-      } else finish()
-    }
+    const serial = stagedCameraFlightRef.current.serial
     const targetCenter = landmarkFrame?.center ?? center
     const targetZoom = landmarkFrame?.zoom ?? (streetView ? 18.9 : BUILDING_REVEAL_ZOOM)
-    const targetPitch = streetView
-      ? 82
-      : subtleLandmarkPitch(landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH)
-    const targetBearing = landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING
     const currentZoom = map.getZoom()
-    const currentPitch = map.getPitch()
-    const currentBearing = map.getBearing()
-    const authoredMotion = motionMode !== 'default'
     const currentCenter = map.getCenter()
     const atWorldOverview = worldCountryZoomActive(currentZoom, MAP_MIN_ZOOM)
-    const hopMeters = distanceMeters([currentCenter.lng, currentCenter.lat], targetCenter)
-    const cameraPlan = motionMode === 'map-point-cycle'
+    const plan = motionMode === 'map-point-cycle'
       ? mapPointCycleCameraPlan({
-        currentZoom,
-        targetZoom,
-        distanceMeters: hopMeters,
+        currentZoom, targetZoom,
+        distanceMeters: distanceMeters([currentCenter.lng, currentCenter.lat], targetCenter),
         requiresTargetFraming: Boolean(landmarkFrame),
         holdWideOverview: atWorldOverview,
       })
-      : programmaticCameraPlanForMode(currentZoom, targetZoom, motionMode)
-
-    if (motionMode === 'map-point-cycle' && cameraPlan.kind === 'translate') {
-      // Arrow browsing is selection, not a replay of the cinematic tour: no
-      // flatten, pull-back, or second reveal move. The next point is put
-      // under the camera in ONE frame — a flip, not a pan. A paced ease
-      // between points was tried and rejected (5 Sep 2026): stepping pin to
-      // pin, a cut reads as "next", a glide reads as travel nobody asked for.
-      // Zoom is the nearby-preserved or subject-framed destination chosen
-      // above. Close pins regain the shallow isometric board after a world
-      // view; landmarks use their authored hero angle. A zero-duration ease
-      // (rather than jumpTo) keeps Mapbox's support for an authored landmark
-      // offset.
-      const destinationPose = mapPointCycleDestinationPose({
-        finalZoom: cameraPlan.zoom,
-        currentZoom,
-        currentPitch,
-        currentBearing,
-        targetPitch,
-        targetBearing,
-        subject: pointSubject ?? 'pin',
-        streetView,
-      })
-      mapCamera.__suppressNextMapClickUntil = Date.now() + 500
-      wakeManagedRendering(MANAGED_CAMERA_SETTLE_MS)
-      map.setMinPitch(0)
-      // A world frame leaves Mapbox's pitch ceiling at zero. Raise it without
-      // moving the camera before the single atomic destination ease.
-      map.setMaxPitch(Math.max(destinationPose.maxPitch, currentPitch, destinationPose.pitch))
-      try {
-        map.easeTo({
-          center: targetCenter,
-          zoom: cameraPlan.zoom,
-          pitch: destinationPose.pitch,
-          bearing: destinationPose.bearing,
-          // The authored offset is pixel framing for the hero close-up; a
-          // held birds-eye survey centres the subject instead.
-          ...(landmarkFrame?.offset && !atWorldOverview ? { offset: landmarkFrame.offset } : {}),
-          duration: 0,
-          essential: true,
-        })
-      } catch {
-        if (ownsFlight()) {
-          mapCamera.__tripping = false
-          mapCamera.__cinematic = false
-        }
-        return false
-      }
-      // A zero-duration ease lands synchronously, so ownership and the pitch
-      // ceiling are handed back right here — and the arrival callback (SELECT
-      // MODE opening the pop's card) fires on the frame the pin appears.
-      if (ownsFlight()) {
-        map.setMaxPitch(destinationPose.maxPitch)
-        mapCamera.__tripping = false
-        mapCamera.__cinematic = false
-        arrive()
-      }
-      return true
-    }
-
-    // The authored tour crosses flat and stops just below the 3D threshold.
-    // Only the destination reveal requests close tiles/extrusions/GLB work;
-    // doing that work during the tail of the world crossing rendered the same
-    // expensive scene twice on iPhone.
-    const travelTargetZoom = authoredMotion && targetZoom > TOUR_3D_REVEAL_START_ZOOM
-      ? TOUR_3D_REVEAL_START_ZOOM
-      : targetZoom
-    const flattenMs = authoredMotion
-      ? Math.max(120, Math.round(duration * 0.08))
-      : Math.min(700, Math.max(320, Math.round(duration * 0.08)))
-    const arrivalMs = authoredMotion
-      ? Math.max(260, Math.round(duration * 0.275))
-      : Math.min(1100, Math.max(520, Math.round(duration * 0.12)))
-    const travelMs = Math.max(authoredMotion ? 300 : 800, duration - flattenMs - arrivalMs)
-    mapCamera.__suppressNextMapClickUntil = Date.now() + duration + 500
-    // Close adaptive views normally lock pitch into the 3D band. Temporarily
-    // release that floor so the first beat can genuinely flatten.
+      : { zoom: targetZoom }
+    const pose = mapPointCycleDestinationPose({
+      finalZoom: plan.zoom, currentZoom,
+      currentPitch: map.getPitch(), currentBearing: map.getBearing(),
+      targetPitch: streetView ? 82 : subtleLandmarkPitch(landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH),
+      targetBearing: landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING,
+      subject: pointSubject ?? (landmarkFrame ? 'landmark' : 'pin'), streetView,
+    })
+    camera.__suppressNextMapClickUntil = Date.now() + 500
+    wakeManagedRendering(MANAGED_CAMERA_SETTLE_MS)
     map.setMinPitch(0)
-    map.setMaxPitch(85)
-    if (authoredMotion) {
-      sustainManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
-    } else {
-      wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
-    }
-
-    if (cameraPlan.kind === 'translate') {
-      // Already-close cameras travel across the board at their current scale.
-      // Centering the authored frame is enough to keep the destination in
-      // view; there is no flatten/pull-back/reveal cycle to make the map pulse.
-      map.setMinPitch(0)
-      map.setMaxPitch(streetView ? 85 : Math.max(MAP_BROWSE_3D_MAX_PITCH, targetPitch))
-      beginProgrammaticCameraMotion(map, duration)
-      map.once('moveend', () => {
-        if (!ownsFlight()) return
-        mapCamera.__tripping = false
-        mapCamera.__cinematic = false
-        arrive()
+    map.setMaxPitch(Math.max(pose.maxPitch, map.getPitch(), pose.pitch))
+    try {
+      cameraCutCancelRef.current = cutMapCamera(map, {
+        center: targetCenter, zoom: plan.zoom, pitch: pose.pitch, bearing: pose.bearing,
+        ...(landmarkFrame?.offset && !atWorldOverview ? { offset: landmarkFrame.offset } : {}),
+      }, () => {
+        if (stagedCameraFlightRef.current.serial !== serial) return
+        camera.__cinematic = camera.__tripping = false
+        map.setMaxPitch(pose.maxPitch)
+        onArrival?.()
       })
-      map.easeTo({
-        center: targetCenter,
-        zoom: cameraPlan.zoom,
-        ...(landmarkFrame ? { pitch: targetPitch, bearing: targetBearing } : {}),
-        ...(landmarkFrame?.offset ? { offset: landmarkFrame.offset } : {}),
-        duration,
-        easing: (t: number) => t * t * (3 - 2 * t),
-        essential: true,
-      })
-      return true
+    } catch {
+      camera.__cinematic = camera.__tripping = false
+      return false
     }
-
-    // Beat 1: flatten while still close to the ground. No world edge can enter
-    // the frustum because the map has not pulled back yet.
-    map.once('moveend', () => {
-      if (!ownsFlight()) return
-      if (!programmaticCameraPoseMatches(
-        { zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() },
-        { pitch: 0, bearing: 0 },
-        { pitch: 0.75, bearing: 1.5 },
-      )) return
-      window.setTimeout(() => {
-        if (!ownsFlight()) return
-        mapCamera.__cinematic = true
-        mapCamera.__tripping = true
-        map.setMinPitch(0)
-        map.setMaxPitch(0)
-
-        // Beat 2: cross the world top-down. The old globe-era shot combined
-        // zoom 0.9 with a 60-degree pitch, which literally looked beyond the
-        // finite Mercator sheet and produced the black triangle.
-        map.once('moveend', () => {
-          if (!ownsFlight()) return
-          const travelledCenter = map.getCenter()
-          if (distanceMeters(
-            [travelledCenter.lng, travelledCenter.lat],
-            targetCenter,
-          ) > 650 || !programmaticCameraPoseMatches(
-            { zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() },
-            { zoom: travelTargetZoom, pitch: 0, bearing: 0 },
-          )) return
-          window.setTimeout(() => {
-            if (!ownsFlight()) return
-            mapCamera.__cinematic = true
-            mapCamera.__tripping = true
-            map.setMaxPitch(streetView ? 85 : Math.max(MAP_BROWSE_3D_MAX_PITCH, targetPitch))
-            map.setMinPitch(0)
-
-            // Beat 3: only restore the landmark's hero angle after the camera
-            // is back at its close target zoom, where the map fills the view.
-            map.once('moveend', () => {
-              if (!ownsFlight()) return
-              if (!programmaticCameraPoseMatches(
-                { zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() },
-                { zoom: targetZoom, pitch: targetPitch, bearing: targetBearing },
-              )) return
-              mapCamera.__tripping = false
-              mapCamera.__cinematic = false
-              arrive()
-            })
-            map.easeTo({
-              center: targetCenter,
-              zoom: targetZoom,
-              pitch: targetPitch,
-              bearing: targetBearing,
-              ...(landmarkFrame?.offset ? { offset: landmarkFrame.offset } : {}),
-              duration: arrivalMs,
-              essential: true,
-            })
-          }, 0)
-        })
-        map.flyTo({
-          center: targetCenter,
-          zoom: travelTargetZoom,
-          pitch: 0,
-          bearing: 0,
-          duration: travelMs,
-          minZoom: FLAT_TRAVEL_MIN_ZOOM,
-          curve: 1.35,
-          essential: true,
-        })
-      }, 0)
-    })
-    map.easeTo({ pitch: 0, bearing: 0, duration: flattenMs, essential: true })
     return true
-  }, [beginProgrammaticCameraMotion, cancelStagedCameraFlight, streetView])
+  }, [cancelStagedCameraFlight, streetView])
 
-  /**
-   * Travelling between pops, as distinct from the ambient tour.
-   *
-   * The arrows used to reuse TOUR_FLIGHT_MS — a THIRTY SECOND flight that rises
-   * all the way to the globe. That is right for a cinematic tour and wrong for
-   * pressing a button: you press, nothing appears to happen, and pressing again
-   * interrupts the flight you could not see. This is the same camera language —
-   * rise, cross, dive, with pitch and a bearing swing — compressed to the length
-   * of a deliberate action, and it lifts only to city height rather than orbit,
-   * so you can still see the ground you are travelling over.
-   */
-  // A trip has three beats: climb, cross, descend. Mapbox's flyTo will not do
-  // this on its own — it sizes its arc from the DISTANCE travelled, and the
-  // pops are neighbourhoods 2-3km apart, so at street zoom the arc never
-  // leaves the rooftops and the camera reads as sliding sideways. That is the
-  // "it just flips to the next post" report. `minZoom` does not fix it either:
-  // it is a floor on how far flyTo MAY zoom out, not an altitude to climb to.
-  // So the altitude is commanded rather than inferred.
-  const tripTimer = useRef(0)
-
-  const flyToPop = useCallback((center: [number, number], onArrive?: () => void) => {
-    const map = mapRef.current
-    if (!map) return false
-    const api = map as unknown as { __cinematic?: boolean; __tripping?: boolean }
-    cancelStagedCameraFlight()
-    // __cinematic keeps the orbit's per-frame hands off the camera, but it is
-    // cleared by ClayMap's moveend — and Mapbox fires a synchronous moveend
-    // when the crossing interrupts the climb, which restarted the orbit in the
-    // middle of the trip and snapped the camera to its globe shot (the
-    // "flips to each post" report, second edition). __tripping spans the WHOLE
-    // trip: ClayMap's moveend leaves the orbit alone while it is up, and only
-    // the trip's own final moveend (or the user grabbing the map mid-flight,
-    // which also ends in a moveend) takes it down.
-    api.__cinematic = true
-    api.__tripping = true
-    window.clearTimeout(tripTimer.current)
-
-    const cameraPlan = programmaticCameraPlan(map.getZoom(), BUILDING_REVEAL_ZOOM)
-    if (cameraPlan.kind === 'translate') {
-      const duration = TRIP_CROSS_MS
-      beginProgrammaticCameraMotion(map, duration)
-      wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
-      map.once('moveend', () => {
-        const arrived = map.getCenter()
-        const reachedTarget = distanceMeters([arrived.lng, arrived.lat], center) <= 650
-        api.__tripping = false
-        api.__cinematic = false
-        if (reachedTarget) onArrive?.()
-        ;(map as unknown as { __startOrbit?: () => void }).__startOrbit?.()
-      })
-      map.easeTo({
-        center,
-        zoom: cameraPlan.zoom,
-        duration,
-        easing: (t: number) => t * t * (3 - 2 * t),
-        essential: true,
-      })
-      return true
-    }
-
-    // High enough that you see the city you are leaving and the one you are
-    // arriving at in the same shot; low enough that the clay terrain never
-    // flattens into a basemap.
-    const TRAVEL_ZOOM = 12.8
-    const CLIMB_MS = TRIP_CLIMB_MS
-    const CROSS_MS = TRIP_CROSS_MS
-
-    // Beat 1 — climb straight up off the current pop. Centre is untouched, so
-    // the ground you are leaving stays under you while the camera rises.
-    wakeManagedRendering(CLIMB_MS + MANAGED_CAMERA_SETTLE_MS)
-    map.easeTo({
-      zoom: Math.min(map.getZoom(), TRAVEL_ZOOM),
-      pitch: 16,
-      duration: CLIMB_MS,
-      essential: true,
-    })
-
-    // Beats 2 and 3 — cross at altitude and settle onto the new claim, as one
-    // flight so the descent is the tail of the crossing rather than a cut.
-    // Driven by a timer, not `moveend`: the climb's moveend is also ClayMap's
-    // cue to restart the orbit, and chaining off it puts this flight and that
-    // orbit in the same tick.
-    tripTimer.current = window.setTimeout(() => {
-      const live = mapRef.current
-      if (!live) return
-      const liveApi = live as unknown as { __cinematic?: boolean; __tripping?: boolean }
-      liveApi.__cinematic = true
-      liveApi.__tripping = true
-      wakeManagedRendering(CROSS_MS + MANAGED_CAMERA_SETTLE_MS)
-      live.flyTo({
-        center,
-        zoom: BUILDING_REVEAL_ZOOM,
-        pitch: MAP_BROWSE_3D_PITCH,
-        bearing: MAP_BROWSE_3D_BEARING,
-        duration: CROSS_MS,
-        curve: 1.1,
-        essential: true,
-      })
-      // Registered AFTER the flight starts, so the interruption-moveend from
-      // the climb has already passed: this fires when the crossing itself ends
-      // — or when the user grabs the map and ends it early. Either way the
-      // trip is over; hand the camera back to ClayMap's idle orbit.
-      live.once('moveend', () => {
-        const arrived = live.getCenter()
-        const reachedTarget = distanceMeters([arrived.lng, arrived.lat], center) <= 650
-        liveApi.__tripping = false
-        liveApi.__cinematic = false
-        if (reachedTarget) onArrive?.()
-        // ClayMap's own moveend ran before this listener and — correctly —
-        // left the orbit alone while __tripping was up, so the trip restarts
-        // it here or the camera sits dead until the next user pan.
-        ;(live as unknown as { __startOrbit?: () => void }).__startOrbit?.()
-      })
-    }, CLIMB_MS - 60)
-
-    return true
-  }, [beginProgrammaticCameraMotion, cancelStagedCameraFlight])
+  const flyToPop = useCallback((center: [number, number], onArrive?: () => void) =>
+    flyToCenter(center, 0, null, 'default', onArrive, 'pin'), [flyToCenter])
 
   // Only live timer IDs are retained. The former append-only array kept every
   // expired stop/arrival ID for an hours-long tour.
@@ -4241,11 +3883,10 @@ export default function MapApp() {
       // A short city-level approach avoids repeatedly rebuilding the full
       // street scene. One visible card then rests before the next destination.
       wakeManagedRendering(2_400)
-      beginProgrammaticCameraMotion(map, 1_800)
       const deadline = window.setTimeout(finish, 2_200)
       map.once('moveend', finish)
       map.flyTo({ center: pin.coords, zoom: 14.5, pitch: 35,
-        bearing: (map.getBearing() + 12) % 360, duration: 1_800, essential: false })
+        bearing: (map.getBearing() + 12) % 360, duration: 0, essential: false })
       return () => {
         cancelled = true; window.clearTimeout(deadline); map.off('moveend', finish)
         if (diagnostics.flightActive) map.stop()
@@ -4566,10 +4207,7 @@ export default function MapApp() {
       } catch { /* no parent frame in the standalone map route */ }
     }
 
-    // The takeover lands WITH the camera. Drawing it at take-off would show you
-    // the claim you are still three seconds away from — and fit:false because
-    // the trip owns the camera until it touches down (see the note on
-    // updateComposeRadiusPreview).
+    // Point changes cut immediately; draw the matching claim on the next tick.
     window.clearTimeout(engagementClaimTimer.current)
     engagementClaimTimer.current = window.setTimeout(() => {
       const live = mapRef.current
@@ -4578,7 +4216,7 @@ export default function MapApp() {
         installComposeRadiusPreview(live)
         updateComposeRadiusPreview(live, new mapboxgl.LngLat(coords[0], coords[1]), radiusKm, theme, { fit: false })
       } catch { /* style not ready yet; the next arrival draws it */ }
-    }, TRIP_TOTAL_MS)
+    }, 0)
   }, [flyToPop, liveMapPosts, theme])
   engagementTraverseRef.current = traverseToEngagement
   useEffect(() => {
@@ -4948,12 +4586,12 @@ export default function MapApp() {
       />
 
       {discovery.page?.enabled && !tourOn && !focusedPostPicker && <MapDiscoveryLayers map={mapRef.current} cells={discovery.page.cells} pins={pinsForRenderer} onOpen={openClickedMapPinContent} />}
-      {!tourOn && (discovery.error || discovery.page?.nextCursor) && (
-        <button type="button" onClick={discovery.error ? discovery.retry : discovery.nextPage} disabled={discovery.loading}
+      {!tourOn && !discovery.error && discovery.page?.nextCursor && (
+        <button type="button" onClick={discovery.nextPage} disabled={discovery.loading}
           style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', top: '23%', zIndex: 20,
             maxWidth: '60%', padding: '8px 14px', borderRadius: 18, background: '#251223ed', color: '#8fe7ff',
             border: '2px solid #ee409b', fontWeight: 800, fontSize: 13 }}>
-          {discovery.loading ? 'Loading…' : discovery.error || 'More →'}
+          {discovery.loading ? 'Loading…' : 'More →'}
         </button>
       )}
 
@@ -5026,8 +4664,7 @@ export default function MapApp() {
           // explicit preview move so the building sides are visible.
           map.setMaxPitch(60)
           wakeManagedRendering(2000)
-          beginProgrammaticCameraMotion(map, 1500)
-          map.flyTo({ center, zoom: 16, pitch: 58, bearing: -20, duration: 1500 })
+          map.flyTo({ center, zoom: 16, pitch: 58, bearing: -20, duration: 0 })
         }}
       />}
 

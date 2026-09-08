@@ -107,14 +107,11 @@ export function mapDaypart(lightPreset: MapSkyLightPreset): MapDaypart {
   return 'twilight'
 }
 
-/** The sun by day, the phase-matched moon by night, the globe in between. */
+/** The map keeps its Earth navigator regardless of the sky's time of day.
+ * Temporary radio/weather/activity takeovers still return to this model. */
 export function mapDaypartCubeModel(
-  daypart: MapDaypart,
-  moon: 'full' | 'crescent',
+  _daypart: MapDaypart,
+  _moon: 'full' | 'crescent',
 ): string {
-  if (daypart === 'day') return MAP_SUN_CUBE_MODEL
-  if (daypart === 'night') {
-    return moon === 'full' ? MAP_MOON_FULL_CUBE_MODEL : MAP_MOON_CRESCENT_CUBE_MODEL
-  }
   return MAP_GLOBE_CUBE_MODEL
 }

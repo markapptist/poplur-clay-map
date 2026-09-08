@@ -420,10 +420,9 @@ function applySky(map: mapboxgl.Map, shade: SkyShade) {
   try {
     map.setConfigProperty('basemap', 'lightPreset', shade.lightPreset)
   } catch { /* light presets vary by Mapbox style */ }
-  // The fallback map is deliberately FLAT. Fog/atmosphere only makes sense on
-  // the globe; keeping it on in 2D leaves Mapbox's atmosphere pass alive and
-  // was one of the GPU costs that survived after visible animation stopped on
-  // iPhone. It also produced the stray launch halo.
+  // Keep the map crisp on every renderer; time of day changes its paints,
+  // without a fog pass washing out the buildings or consuming fill rate.
+  try { map.setFog(null) } catch { /* fog unsupported */ }
   if (MAP_2D || SHARED_ADAPTIVE_MAP) {
     // A Mercator map is a finite sheet. Match every surface beneath it to the
     // live sky palette so cold-start/transition gaps can never flash black;
@@ -435,19 +434,8 @@ function applySky(map: mapboxgl.Map, shade: SkyShade) {
     if (map.getLayer('clay-sky-backdrop')) {
       map.setPaintProperty('clay-sky-backdrop', 'background-color', shade.highColor)
     }
-    try { map.setFog(null) } catch { /* fog unsupported */ }
     return
   }
-  try {
-    map.setFog({
-      range: [0.6, 8],
-      color: shade.hazeColor,
-      'high-color': shade.highColor,
-      'horizon-blend': shade.horizonBlend,
-      'space-color': shade.spaceColor,
-      'star-intensity': shade.starIntensity,
-    } as never)
-  } catch { /* fog unsupported */ }
 }
 
 // Night changes the existing clay paints once at the day/night boundary. It
@@ -892,13 +880,21 @@ const LANDMARK_FOOTPRINT_CUTS: LandmarkFootprintCut[] = [
 
 /** Filter clause dropping every feature that a 3D landmark model replaces. */
 function notALandmarkBuilding() {
-  const featureHeight = ['coalesce', ['to-number', ['get', 'height'], 0], 0]
+  // Some Overture roots (including Burj Khalifa) have 163 floors but no
+  // explicit height. The exclusion must use the same height as the rendered
+  // extrusion or its 521m parent slab remains inside the landmark model.
+  const featureHeight = mappedBuildingHeightExpression()
   return ['!', ['any',
     ['in', ['id'], ['literal', LANDMARK_BUILDING_IDS]],
     ['in', ['to-number', ['get', 'building_id'], -1], ['literal', LANDMARK_BUILDING_IDS]],
-    ...LANDMARK_FOOTPRINT_CUTS.map(c => ['all',
-      ['<', ['distance', { type: 'Point', coordinates: c.at }], c.cutM],
-      ['>=', featureHeight, c.cutMinH],
+    ...LANDMARK_FOOTPRINT_CUTS.map(c => ['any',
+      ['all',
+        ['<', ['distance', { type: 'Point', coordinates: c.at }], c.cutM],
+        ['>=', featureHeight, c.cutMinH],
+      ],
+      ...(c.groundCoreCutM == null ? [] : [
+        ['<', ['distance', { type: 'Point', coordinates: c.at }], c.groundCoreCutM],
+      ]),
     ]),
   ]]
 }
@@ -2294,7 +2290,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       wakeManagedRendering(650 + MANAGED_CAMERA_SETTLE_MS)
       map.setMinPitch(0)
       map.easeTo({ center: [point.lng, point.lat], zoom: Math.max(10, Math.min(13, map.getZoom())),
-        pitch: 0, bearing: 0, padding: { top: 0, right: 0, bottom: 0, left: 0 }, duration: 650 })
+        pitch: 0, bearing: 0, padding: { top: 0, right: 0, bottom: 0, left: 0 }, duration: 0 })
     }
   }, [claimComposerCamera])
   const closeComposerRef = useRef(closeComposer)
@@ -2412,7 +2408,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     camera.__cinematic = false
     map.stop()
     wakeManagedRendering(900 + MANAGED_CAMERA_SETTLE_MS)
-    map.easeTo({ center, zoom: FOCUSED_PICK_LANDING_ZOOM, duration: 900 })
+    map.easeTo({ center, zoom: FOCUSED_PICK_LANDING_ZOOM, duration: 0 })
     anchorPickerAt(center)
   }, [anchorPickerAt, currentLocationPoint, mapRef])
 
@@ -2549,7 +2545,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     camera.__cinematic = false
     map.stop()
     wakeManagedRendering(1200 + MANAGED_CAMERA_SETTLE_MS)
-    map.easeTo({ center: suggestion.center, zoom: FOCUSED_PICK_LANDING_ZOOM, duration: 1200 })
+    map.easeTo({ center: suggestion.center, zoom: FOCUSED_PICK_LANDING_ZOOM, duration: 0 })
     anchorPickerAt(suggestion.center)
   }, [anchorPickerAt, mapRef])
 

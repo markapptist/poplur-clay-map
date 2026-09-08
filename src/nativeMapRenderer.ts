@@ -1,6 +1,7 @@
 import mapboxgl from 'mapbox-gl'
 import { postNativeEvent } from './nativeBridge'
 import { nativeMapRendererEnabled } from './nativeMapMode'
+import { nativeCameraPadding } from './nativeMapCamera'
 export { nativeMapRendererEnabled } from './nativeMapMode'
 import { geographic, mercator, projectWorld, solveProjection, unprojectWorld, type XY, type ProjectionSample } from './nativeMapProjection'
 
@@ -82,6 +83,10 @@ export class NativeMapRenderer {
     this.container.classList.add('mapboxgl-map')
     for (let node: HTMLElement | null = this.container; node; node = node.parentElement) node.dataset.poplurNativeMapGround = ''
     this.canvasContainer.className = 'mapboxgl-canvas-container'
+    // Sky colours are painted by the native style. This HTML wrapper also
+    // contains marker elements, so its auto height can otherwise form an
+    // opaque strip above the map when applySky updates its background.
+    this.canvasContainer.dataset.poplurNativeMapGround = ''
     this.canvas.className = 'mapboxgl-canvas'
     this.canvas.dataset.poplurNativeMap = 'true'
     Object.assign(this.canvas.style, { width: '100%', height: '100%', opacity: '0', pointerEvents: 'none' })
@@ -222,9 +227,20 @@ export class NativeMapRenderer {
   triggerRepaint() { this.send('repaint'); return this }
   resize() { this.send('resize', { width: this.container.clientWidth, height: this.container.clientHeight }); this.fire('resize'); return this }
   stop() { this.send('stop'); return this }
-  jumpTo(options: any) { this.send('camera', 'jump', this.cameraOptions(options)); return this }
-  easeTo(options: any) { this.send('camera', 'ease', this.cameraOptions(options)); return this }
-  flyTo(options: any) { this.send('camera', 'fly', this.cameraOptions(options)); return this }
+  private moveCamera(kind: string, options: any) {
+    // Match GL's synchronous movestart. Otherwise the settled-camera policy
+    // sees the old world view during the bridge round trip and cancels a new
+    // landmark flight before its first native frame can arrive.
+    const camera = this.cameraOptions(options)
+    const changed = ['zoom','pitch','bearing'].some(key => camera[key] != null && camera[key] !== this.camera[key as keyof Camera])
+      || (camera.center && camera.center.some((v: number,i: number) => Math.abs(v-this.camera.center[i]) > 1e-9))
+      || options.offset != null || options.padding != null
+    if (changed && !this.moving) { this.moving = true; this.fire('movestart') }
+    this.send('camera', kind, camera); return this
+  }
+  jumpTo(options: any) { return this.moveCamera('jump', options) }
+  easeTo(options: any) { return this.moveCamera('ease', options) }
+  flyTo(options: any) { return this.moveCamera('fly', options) }
   setZoom(zoom: number) { return this.jumpTo({ zoom }) }
   setPitch(pitch: number) { return this.jumpTo({ pitch }) }
   setBearing(bearing: number) { return this.jumpTo({ bearing }) }
@@ -236,7 +252,9 @@ export class NativeMapRenderer {
       ? { top: options.padding, right: options.padding, bottom: options.padding, left: options.padding }
       : { ...this.padding, ...options.padding }
     if (options.center) serializable.center = mapboxgl.LngLat.convert(options.center).toArray()
-    if (options.offset) serializable.offset = [options.offset.x ?? options.offset[0], options.offset.y ?? options.offset[1]]
+    const offset = options.offset ? [options.offset.x ?? options.offset[0], options.offset.y ?? options.offset[1]] : undefined
+    serializable.padding = nativeCameraPadding(this.padding, offset)
+    delete serializable.offset
     return serializable
   }
   project(value: mapboxgl.LngLatLike) {
@@ -262,6 +280,7 @@ export class NativeMapRenderer {
   getLayer(id: string) { return this.style.layers.find(layer => layer.id === id) }
   addLayer(layer: any, before?: string) {
     if (layer.type === 'custom') throw new Error(`Custom WebGL layer ${layer.id} requires a native model adapter`)
+    if (this.getLayer(layer.id)) return this
     const index = before ? this.style.layers.findIndex(item => item.id === before) : -1
     this.style.layers.splice(index < 0 ? this.style.layers.length : index, 0, layer)
     this.send('addLayer', layer, before ?? null); return this
