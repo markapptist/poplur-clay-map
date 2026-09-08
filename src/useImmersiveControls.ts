@@ -7,6 +7,13 @@ export function useImmersiveControls(enabled: boolean, context: string) {
     if (!enabled) return
     const root = document.documentElement
     root.dataset.immersiveControls = 'true'
+    // Which surface owns the sleep. The map and feed keep their cube and HUD
+    // lit while idle — they are how you leave. An opened profile post is a
+    // viewer: the pop should be the only thing on screen, so its rule below
+    // takes the bottom HUD and the cube too. Without this the sleep faded the
+    // rails and the radius tower and left the rest lit, which read as the
+    // sleep not working at all.
+    root.dataset.immersiveContext = context
     let timer = 0
     const startsHidden = context === 'feed' || context === 'post'
     const hide = () => { root.dataset.controlsIdle = 'true' }
@@ -44,6 +51,7 @@ export function useImmersiveControls(enabled: boolean, context: string) {
       window.removeEventListener('poplur-feed-reveal-controls', reveal)
       delete root.dataset.immersiveControls
       delete root.dataset.controlsIdle
+      delete root.dataset.immersiveContext
     }
   }, [enabled, context])
 }

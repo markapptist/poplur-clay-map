@@ -5912,6 +5912,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           underneath. The whole HUD is one piece of home chrome. */}
       <div
         className={`${styles.bottomRow} ${styles.overSubscreen}${bottomHudFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}
+        data-poplur-bottom-hud=""
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot} data-poplur-channel-arrows>

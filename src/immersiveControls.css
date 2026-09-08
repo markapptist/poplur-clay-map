@@ -13,3 +13,25 @@ html[data-controls-idle] [data-poplur-gesture-navigation] { opacity: 0; }
 @media (prefers-reduced-motion: reduce) {
   html[data-immersive-controls] :is([data-poplur-control-rail], [data-feed-channel-rail], [data-camera-ar-rail], [data-radius-meter], [data-map-zoom-rail], [data-poplur-color-side-control], [data-poplur-gesture-navigation]) { transition-duration: 0ms; }
 }
+
+/* An opened profile post sleeps COMPLETELY.
+   The shared rule above fades the rails and the radius tower, which is right
+   for the map and the feed: their cube and HUD are how you leave the surface,
+   so they stay lit. A pop opened from your own grid is a viewer — the pop
+   should be the only thing on screen once you stop touching it, and leaving
+   the radius card and the cube lit made the sleep look broken (measured: rails
+   and meter went to 0 while the card and cube stayed at 1).
+   Any tap wakes it: the hook listens on window in the capture phase, so the
+   event still reaches it even though nothing here can be hit. */
+html[data-controls-idle][data-immersive-context="profile-post"]
+  :is([data-poplur-bottom-hud], [data-poplur-cube], [data-poplur-channel-arrows]) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 350ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-controls-idle][data-immersive-context="profile-post"]
+    :is([data-poplur-bottom-hud], [data-poplur-cube], [data-poplur-channel-arrows]) {
+    transition-duration: 0ms;
+  }
+}
