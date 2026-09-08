@@ -3,6 +3,11 @@
 .profile {
   position: absolute;
   inset: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding-top: 110px;
+  gap: 16px;
   overflow: hidden;
   background:
     radial-gradient(120% 60% at 50% 6%, rgba(246, 59, 154, 0.08), transparent 46%),
@@ -62,10 +67,8 @@
 }
 
 .header {
-  position: absolute;
-  top: 110px;
-  left: 0;
-  right: 0;
+  position: relative;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -381,7 +384,8 @@
 
 /* USERNAME — heavy rounded, animated Poplur shader */
 .username {
-  margin-top: 2px;
+  margin: 2px 0 0;
+  line-height: 1.2;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
   font-size: 24px;
   font-weight: 900;
@@ -483,17 +487,14 @@
 
 /* ---- content (grid directly under the tabs) ---- */
 
-/* The grid starts right under the switcher and runs to the bottom edge. It used
-   to open 438px down — a band of empty ground under the tabs wide enough to
-   read as a mistake — and stopped 34px short, which floated the last row above
-   nothing. Content scrolling under the bottom cluster is correct here: the
-   cluster is chrome over the page, not a shelf the page sits on. */
+/* Follow the actual header height so business details or a refresh error can
+   never move the tabs underneath the thumbnails. The content owns scrolling;
+   the profile portrait and tab switcher stay in place. */
 .content {
-  position: absolute;
-  left: 16px;
-  right: 16px;
-  top: 404px;
-  bottom: 0;
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  margin-inline: 16px;
   overflow-y: auto;
   overflow-x: hidden;
   touch-action: pan-y;

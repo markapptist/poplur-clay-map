@@ -2790,10 +2790,6 @@ export default function ProfileTwin({
           {authored.error ? 'Radius could not refresh. ' : 'Refreshing radius…'}
           {authored.error && <button type="button" onClick={authored.retry}>Try again</button>}
         </p>}
-        {(liveRadius.estimated || !visiting) && !authored.loading && !authored.error && authored.snapshot && <p className={styles.radiusSyncStatus}>
-          {liveRadius.estimated ? 'Live radius estimate' : 'Radius fades over time.'}
-          {!visiting && ' · Post to keep your reach growing.'}
-        </p>}
         <div className={styles.modeSwitch}>
           {(['media', 'messages', 'liked'] as Mode[]).map(m => (
             <button
