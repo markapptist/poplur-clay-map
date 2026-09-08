@@ -20,7 +20,7 @@ export default function GestureNavigationDock({ onAction, label, hints, classNam
       event.stopPropagation()
       if (!event.isPrimary) { start.current = null; return }
       start.current = { id: event.pointerId, x: event.clientX, y: event.clientY }
-      event.currentTarget.setPointerCapture(event.pointerId)
+      try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* Older WebViews retain local swipes. */ }
     }}
     onPointerMove={event => event.stopPropagation()}
     onPointerCancel={event => { event.stopPropagation(); start.current = null }}

@@ -187,7 +187,7 @@ export default function ClayArrowCluster({
   )
 
   if (GESTURE_NAVIGATION_TRIAL) return <GestureNavigationDock
-    {...rest} className={className} label={label}
+    {...rest} className={className} label={[topLabel, label].filter(Boolean).join(' · ')}
     hints={{ up: upLabel, down: downLabel, left: leftLabel, right: rightLabel }}
     onAction={step}
   />
