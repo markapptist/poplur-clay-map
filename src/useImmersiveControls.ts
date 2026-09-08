@@ -8,7 +8,7 @@ export function useImmersiveControls(enabled: boolean, context: string) {
     const root = document.documentElement
     root.dataset.immersiveControls = 'true'
     let timer = 0
-    const startsHidden = context === 'feed' || context === 'post'
+    const startsHidden = context === 'feed' || context === 'post' || context === 'map'
     const hide = () => { root.dataset.controlsIdle = 'true' }
     const wake = () => {
       delete root.dataset.controlsIdle

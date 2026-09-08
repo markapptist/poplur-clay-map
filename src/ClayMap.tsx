@@ -1,3 +1,4 @@
+import { previewBuildingMaterial } from './BuildingStylePreview'
 import { MAP_BUILDING_EXPERIMENT_ENABLED } from './mapBuildingExperiment'
 import { normalizeViewerFix } from './viewerFix'
 import ShellOverlayPortal from './ShellOverlayPortal'
@@ -639,7 +640,7 @@ function building3DColor(map: mapboxgl.Map) {
   return visibleBuildingClaimColorExpression(
     map,
     takeoverTint('#ee3d98'),
-    regular,
+    previewBuildingMaterial() ?? regular,
   )
 }
 
@@ -647,8 +648,14 @@ function buildingCaps3DColor(map: mapboxgl.Map) {
   return visibleBuildingClaimColorExpression(
     map,
     takeoverTint('#ff9ccd'),
-    mapNightModeActive ? '#55586b' : '#efe9df',
+    previewBuildingMaterial(true) ?? (mapNightModeActive ? '#55586b' : '#efe9df'),
   )
+}
+
+/** Repaint the existing building batches for the opt-in browser comparison. */
+export function refreshBuildingPreview(map: mapboxgl.Map) {
+  if (map.getLayer('clay-buildings-3d')) map.setPaintProperty('clay-buildings-3d', 'fill-extrusion-color', building3DColor(map) as never)
+  if (map.getLayer('clay-building-caps')) map.setPaintProperty('clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor(map) as never)
 }
 
 /** Where the per-surface recolour starts. `distance` is quantised to the tile
@@ -4915,9 +4922,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             'fill-extrusion-edge-radius': MAP_LITE ? 0 : 0.35,
           } as never,
           paint: {
-            // Hand-rolled clay is never one flat colour. Eight-way hash across the
-            // warm-cream family gives the batch variation a real sculpt has, while
-            // staying inside one material.
+            // Colour variation and the existing side gradient give the city
+            // depth without adding shadow passes or changing its density.
             'fill-extrusion-color': building3DColor(map) as never,
             'fill-extrusion-height': poppedHeight,
             'fill-extrusion-base': ['to-number', ['coalesce', ['get', 'min_height'], 0]],

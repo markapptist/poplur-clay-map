@@ -29,3 +29,9 @@ it('starts Camera hidden and reveals its rails on touch, resetting on re-entry',
   act(() => root.render(<Screen context="post" />))
   expect(document.documentElement.dataset.controlsIdle).toBe('true')
 })
+it('starts Map hidden and reveals its rails on map input', () => {
+  act(() => root.render(<Screen context="map" />))
+  expect(document.documentElement.dataset.controlsIdle).toBe('true')
+  act(() => window.dispatchEvent(new Event('pointerup')))
+  expect(document.documentElement.dataset.controlsIdle).toBeUndefined()
+})

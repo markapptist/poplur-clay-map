@@ -1,3 +1,5 @@
+import BuildingStylePreview, { BUILDING_STYLE_PREVIEW } from './BuildingStylePreview'
+import { refreshBuildingPreview } from './ClayMap'
 import { startLandmarkOrbit } from './landmarkCinematic'
 import { onFrame } from './frameGovernor'
 import { useImmersiveControls } from './useImmersiveControls'
@@ -4204,7 +4206,7 @@ export default function MapApp() {
 
   const idleSeenPins = useRef(new Set<string>())
   const idleBroadcast = useIdleMapBroadcast({
-    enabled: Boolean(mapLive) && !focusedPostPicker,
+    enabled: Boolean(mapLive) && !focusedPostPicker && !BUILDING_STYLE_PREVIEW,
     visible: () => mapFrontRef.current,
     available: () => {
       const map = mapRef.current
@@ -5023,6 +5025,20 @@ export default function MapApp() {
           WX TEST
         </button>
       )}
+
+      {BUILDING_STYLE_PREVIEW && <BuildingStylePreview
+        onChange={() => { if (mapRef.current) refreshBuildingPreview(mapRef.current) }}
+        onCity={center => {
+          const map = mapRef.current
+          if (!map) return
+          // A world view parks its pitch ceiling at zero. Lift it before this
+          // explicit preview move so the building sides are visible.
+          map.setMaxPitch(60)
+          wakeManagedRendering(2000)
+          beginProgrammaticCameraMotion(map, 1500)
+          map.flyTo({ center, zoom: 16, pitch: 58, bearing: -20, duration: 1500 })
+        }}
+      />}
 
       {/* ── Clay GPS navigation: destination → route → drive in clay street view ── */}
       <ClayNav
