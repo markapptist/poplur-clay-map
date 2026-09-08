@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { CAPTION_CUES } from './captionCues'
 import { isPlaybackBlocked, onGateChange } from './audioGate'
@@ -46,9 +46,10 @@ import PostDeleteDialog from './PostDeleteDialog'
 import { playFeedVideo } from './feedVideoPlayback'
 import PoplurStatusToast from './PoplurStatusToast'
 import FeedChannelRail from './FeedChannelRail'
+import FeedAuthor from './FeedAuthor'
 import ClayArrowCluster from './ClayArrowCluster'
 import { responsiveChannelControlSize } from './channelControlSizing'
-import { VERIFIED_CHECK_SRC, verifiedKindForHandle, type VerifiedCheckKind } from './verifiedCheck'
+import { verifiedKindForHandle, type VerifiedCheckKind } from './verifiedCheck'
 import { businessDirectorySnapshot, subscribeBusinessDirectory } from './businessDirectory'
 import { PIN_COLOR_SWATCH } from './pinColors'
 import PostActionRail from './PostActionRail'
@@ -197,6 +198,7 @@ export interface ChannelPost {
   id: string
   ownerId?: string
   user: string
+  ownerAvatarURL?: string
   video: string
   poster?: string
   mediaType?: 'photo' | 'video'
@@ -251,6 +253,7 @@ export function feedPostsForChannel(
       id: post.id,
       ownerId: post.ownerId,
       user: post.username,
+      ownerAvatarURL: post.ownerAvatarURL,
       video: post.mediaURL,
       poster: post.mediaType === 'photo' ? post.mediaURL : post.posterURL,
       mediaType: post.mediaType,
@@ -358,44 +361,6 @@ function cuesFor(video: string | undefined, fallback: string) {
 // useSyncExternalStore adapter: accountStore hands its listener a snapshot,
 // the store contract wants a bare change notification.
 const subscribeAccountUid = (onStoreChange: () => void) => onAccountChange(onStoreChange)
-
-// The headline's title line. A title wider than its cell scrolls (a paced
-// ping-pong drift, see .feedTitleScrolls) instead of being ellipsed; one that
-// fits sits still. The overflow is measured here, per title, so the CSS can
-// pace the drift by distance rather than guess at it.
-function FeedTitle({ title }: { title: string }) {
-  const trackRef = useRef<HTMLDivElement>(null)
-  const spanRef = useRef<HTMLSpanElement>(null)
-  const [overflow, setOverflow] = useState(0)
-  useLayoutEffect(() => {
-    const track = trackRef.current
-    const span = spanRef.current
-    if (!track || !span) return
-    const measure = () => {
-      const extra = span.scrollWidth - track.clientWidth
-      setOverflow(extra > 2 ? extra : 0)
-    }
-    measure()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(track)
-    return () => observer.disconnect()
-  }, [title])
-  const scrolls = overflow > 0
-  return (
-    <div
-      ref={trackRef}
-      className={scrolls ? `${styles.feedTitleTrack} ${styles.feedTitleScrolls}` : styles.feedTitleTrack}
-      style={scrolls ? {
-        '--feed-title-overflow': `${overflow}px`,
-        // ~30px/s: slow enough to read, quick enough to reach the end.
-        '--feed-title-scroll-s': `${Math.max(3, overflow / 30).toFixed(1)}s`,
-      } as React.CSSProperties : undefined}
-    >
-      <span ref={spanRef}>{title}</span>
-    </div>
-  )
-}
 
 export default function FeedTwin({
   index: controlledIndex,
@@ -2524,50 +2489,14 @@ export default function FeedTwin({
         <div className={`${styles.topBar} ${controlSide === 'right' ? styles.topBarRailRight : styles.topBarRailLeft}`}>
           <div className={styles.infoRow}>
             <div className={styles.feedHeaderCopy}>
-              {/* One line, two turns: the title and the handle share a cell and
-                  trade places on a slow fade. Keyed on the title so a new pop
-                  restarts both in step — title first.
-                  The WHOLE cell is the poster's button, not the handle span:
-                  the handle is faded out half the time and is display:none
-                  under reduced motion, so the cell is the only target that is
-                  always there to press. The feed's gesture recogniser stands
-                  aside for anything inside a button, so this tap can never
-                  arm the long-press or count as a swipe. Without an opener
-                  (a standalone preview) it stays a plain line. */}
-              {onOpenProfile ? (
-                <button
-                  type="button"
-                  className={`${styles.feedHeadline} ${styles.feedHeadlineButton}`}
-                  aria-label={post.ownerId && post.ownerId === accountUid
-                    ? `${title}. Open your profile`
-                    : `${title}. Open ${post.user}'s profile`}
-                  key={title}
-                  onClick={openPosterProfile}
-                  data-feed-byline="true"
-                >
-                  <span className={styles.feedHeadlineSwap}>
-                    <FeedTitle title={title} />
-                    <div className={`${styles.feedHandle} ${styles.feedMetaHandle}`} aria-hidden="true">
-                      {post.user}
-                      {bylineVerified && (
-                        <img src={VERIFIED_CHECK_SRC[bylineVerified]} className={styles.verifyBadge} alt="" draggable="false" />
-                      )}
-                    </div>
-                  </span>
-                </button>
-              ) : (
-              <div className={styles.feedHeadline} aria-label={`${title}, ${post.user}`} key={title}>
-                <span className={styles.feedHeadlineSwap}>
-                  <FeedTitle title={title} />
-                  <div className={`${styles.feedHandle} ${styles.feedMetaHandle}`} aria-hidden="true">
-                    {post.user}
-                    {bylineVerified && (
-                      <img src={VERIFIED_CHECK_SRC[bylineVerified]} className={styles.verifyBadge} alt="" draggable="false" />
-                    )}
-                  </div>
-                </span>
-              </div>
-              )}
+              <FeedAuthor
+                username={post.user}
+                caption={title}
+                avatarURL={post.ownerId === accountUid ? accountSnapshot().photoURL ?? post.ownerAvatarURL : post.ownerAvatarURL}
+                verified={bylineVerified}
+                onOpen={onOpenProfile ? openPosterProfile : undefined}
+                own={Boolean(post.ownerId && post.ownerId === accountUid)}
+              />
               {(post.live || remainingSeconds !== null) && (
                 <output className={styles.mediaTimer} aria-label="Media time remaining" data-feed-timer="">
                   {post.live ? 'LIVE' : mediaTimeLabel(remainingSeconds)}

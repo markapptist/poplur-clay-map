@@ -9,17 +9,12 @@ const read = (name: string) => readFileSync(new URL(`../${name}`, import.meta.ur
 // the poster's stable account id.
 describe('feed byline opens the poster\'s profile', () => {
   const tsx = read('FeedTwin.tsx')
-  const css = read('FeedTwin.module.css')
+  const author = read('FeedAuthor.tsx')
   const home = read('HomeTwin.tsx')
 
-  it('makes the whole headline cell the poster\'s button, never the fading handle span', () => {
-    expect(tsx).toContain('className={`${styles.feedHeadline} ${styles.feedHeadlineButton}`}')
-    expect(tsx).toContain('onClick={openPosterProfile}')
-    expect(tsx).toContain('data-feed-byline="true"')
-    // The plain line survives for a preview with no opener.
-    expect(tsx).toContain('className={styles.feedHeadline}')
-    // A button in the headline paints no user-agent chrome over the video.
-    expect(css).toMatch(/\.feedHeadlineButton \{[^}]*background: none;[^}]*border: 0;[^}]*font: inherit;/s)
+  it('wires the fixed author row to the existing profile action', () => {
+    expect(tsx).toContain('onOpen={onOpenProfile ? openPosterProfile : undefined}')
+    expect(author).toContain('data-feed-byline="true"')
   })
 
   it('routes the byline and the hold menu through ONE opener', () => {

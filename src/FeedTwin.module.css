@@ -237,169 +237,7 @@
   align-content: center;
 }
 
-/* The title is a single line that travels left through a fixed viewport. The
-   duplicated span makes its loop continuous without moving the byline or any
-   other part of the feed chrome. */
-/* The headline: the title and the handle share this one cell and take turns,
-   each resting long enough to read before a short vertical fade hands the
-   line to the other. Overlapping grid cells keep everything around it still. */
-.feedHeadline {
-  font-size: clamp(15px, 4.2vw, 18px);
-  line-height: 1.12;
-  font-weight: 950;
-  min-width: 0;
-  box-sizing: border-box;
-  padding-inline: 8px;
-  overflow: hidden;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: center;
-  /* A definite height, not a floor: the swap track below is two of these
-     stacked and slides by exactly one, which only resolves against a height
-     that exists. Named once here so the track's rows, its travel and this
-     window can never disagree — percentages did disagree: grid's automatic
-     minimum let the rows grow to their content, so the handle slid clean past
-     the window and the line went blank on its half of the cycle. */
-  --poplur-feed-headline-line: clamp(20px, 5vw, 24px);
-  height: var(--poplur-feed-headline-line);
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.72);
-}
 
-/* The title and the handle take turns on this one line.
- *
- * They used to be two overlapping cells with two opposing infinite fades —
- * two forever-running animations for one line of type, which is what put the
- * feed over the thermal gate's animation budget the moment a post was on
- * screen. They are now two rows of ONE track that slides by exactly one row:
- * the same trade, half the animations, and the pair can no longer drift out
- * of step with each other because there is only one clock. */
-.feedHeadlineSwap {
-  display: grid;
-  grid-template-rows: var(--poplur-feed-headline-line) var(--poplur-feed-headline-line);
-  align-items: center;
-  justify-items: center;
-  width: 100%;
-  min-width: 0;
-  animation: feedHeadlineSwap 6s ease-in-out infinite;
-  will-change: transform;
-}
-
-/* Each line is exactly one row tall: grid would otherwise let a taller line
-   push its row open, and the travel is a fixed distance. */
-.feedHeadlineSwap > * {
-  min-height: 0;
-  max-width: 100%;
-  overflow: hidden;
-}
-
-/* The headline as the poster's button: same line, same grid, no chrome of
-   its own. The user-agent's button box (border, padding, font, colour) would
-   otherwise re-flow the cell and paint the title in black on the video. */
-.feedHeadlineButton {
-  appearance: none;
-  -webkit-appearance: none;
-  background: none;
-  border: 0;
-  margin: 0;
-  color: inherit;
-  font: inherit;
-  text-align: inherit;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;
-  width: 100%;
-}
-.feedHeadlineButton:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.85);
-  outline-offset: 2px;
-  border-radius: 6px;
-}
-
-.feedTitleTrack {
-  display: flex;
-  width: 100%;
-  justify-content: center;
-  white-space: nowrap;
-  /* One voice for the whole headline: the title wears exactly the handle's
-     type (same size, weight, colour, shadow), so the two lines that trade
-     places read as one card speaking twice — not a shimmer over a caption.
-     The gradient text shader went with it; that shader was what made the
-     title look like a different font from the byline. */
-  font-size: clamp(15px, 4.4vw, 19px);
-  font-weight: 900;
-  letter-spacing: 0.01em;
-  color: rgba(255, 242, 248, 0.8);
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
-}
-
-.feedTitleTrack span {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* A title wider than its cell scrolls instead of being cut: a slow ping-pong
-   drift that carries the tail into view and back, paced by how far it has to
-   travel (FeedTitle measures the overflow and sets the variables). The drift
-   lives on the inner span so it never fights the swap's own transform on the
-   track. A title that fits sits perfectly still, exactly as before. */
-.feedTitleScrolls {
-  justify-content: flex-start;
-}
-.feedTitleScrolls span {
-  flex: 0 0 auto;
-  overflow: visible;
-  text-overflow: clip;
-  animation: feedTitleMarquee var(--feed-title-scroll-s, 6s) ease-in-out 1.2s infinite alternate;
-}
-@keyframes feedTitleMarquee {
-  from { transform: translateX(0); }
-  to { transform: translateX(calc(-1 * var(--feed-title-overflow, 0px))); }
-}
-
-/* Quieter than the caption so the two rows read as title-then-byline rather
-   than two competing headlines. One line, ellipsed — a long handle has no break
-   opportunity, so clamping it would hard-cut it mid-glyph instead. */
-.feedHandle {
-  font-size: clamp(15px, 4.4vw, 19px);
-  font-weight: 900;
-  letter-spacing: 0.01em;
-  color: rgba(255, 242, 248, 0.8);
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* One still byline: the handle, large and unmoving. It used to trade places
-   with a "reached you from" line on a six-second fade; the reach line is gone
-   and a name you have to wait for is a name you cannot read. */
-.feedMetaHandle {
-  justify-self: center;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Hold each line long enough to read, then travel: the same rhythm the two
-   fades kept, expressed once. */
-@keyframes feedHeadlineSwap {
-  0%, 40% { transform: translateY(0); }
-  47%, 93% { transform: translateY(calc(-1 * var(--poplur-feed-headline-line))); }
-  100% { transform: translateY(0); }
-}
-
-.verifyBadge {
-  display: inline-block;
-  vertical-align: middle;
-  width: 16px;
-  height: 16px;
-  object-fit: contain;
-  margin-left: 5px;
-  margin-bottom: 2px;
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.4));
-}
 
 /* "DM @user" under the headline — the map card's person action, worn as a
    quiet translucent pill so it reads as chrome, not as a second byline. */
@@ -679,23 +517,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* Motion off, but the title must stay READABLE: with the marquee stopped a
-     long title was simply clipped at the viewport edge, so honouring the setting
-     silently cost you the content. Let it wrap instead of travel. */
-  .feedHeadline { overflow: visible; }
-  /* No motion: the title holds the line and the handle steps aside. */
-  .feedMetaHandle { display: none; }
-  .feedTitleTrack {
-    animation: none;
-    width: 100%;
-    white-space: normal;
-    transform: none;
-  }
-  .feedTitleTrack span[aria-hidden="true"] { display: none; }
-  /* No drift either: the wrap above already keeps a long title readable. */
-  .feedTitleScrolls span { animation: none; }
-  /* The line stops trading places too; the title is the one that stays. */
-  .feedHeadlineSwap { animation: none; }
   .commentRollTrack { animation: none; }
   .video,
   .drift,
@@ -1265,9 +1086,7 @@
     drop-shadow(0 3px 0 rgba(5, 14, 46, 0.55))
     drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5))
     drop-shadow(0 0 8px rgba(74, 196, 255, 0.5));
-  /* The title's own type (.feedTitleTrack): same family, weight and size, so
-     the countdown reads as part of the headline card rather than a readout
-     in a second voice. Tabular figures keep the digits from jittering. */
+  /* Tabular figures keep the countdown from changing width. */
   font: 900 clamp(15px, 4.4vw, 19px)/1.2 system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", sans-serif;
   letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
@@ -1277,14 +1096,12 @@
 .railHead { position: relative; }
 .feedHeaderCopy .mediaTimer { margin-top: 5px; align-self: center; pointer-events: none; }
 
-/* Selected from the September 8 Feed previews: Helvetica Light. */
-.feedTitleTrack, .feedHandle, .mediaTimer {
-  font-family: 'Helvetica Neue', 'Roboto', Arial, sans-serif;
-  font-weight: 300;
-  letter-spacing: -.025em;
-  color: #fff2f8;
+/* A quiet clock below the fixed author row. */
+.mediaTimer {
+  font: 600 14px/1.2 -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Roboto, Arial, sans-serif;
+  color: #9beeff;
+  -webkit-text-fill-color: #9beeff;
   -webkit-text-stroke: 0;
   filter: none;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, .6);
+  text-shadow: 0 1px 4px #000b;
 }
-.mediaTimer { color: #9beeff; -webkit-text-fill-color: #9beeff; letter-spacing: .025em; }
