@@ -1,4 +1,4 @@
-import { previewBuildingMaterial } from './BuildingStylePreview'
+import { buildingDayMaterial } from './buildingDayStyle'
 import { MAP_BUILDING_EXPERIMENT_ENABLED } from './mapBuildingExperiment'
 import { normalizeViewerFix } from './viewerFix'
 import ShellOverlayPortal from './ShellOverlayPortal'
@@ -408,7 +408,11 @@ const MAP_TAP_LANE = 0.25
 // at night: a black "space" pass reads as a missing lower hemisphere in the
 // constrained Mapbox globe view used by the app — the shade table's Deep
 // Night is the sanctioned floor.
+const buildingSkyShades = new WeakMap<mapboxgl.Map, SkyShade>()
+
 function applySky(map: mapboxgl.Map, shade: SkyShade) {
+  buildingSkyShades.set(map, shade)
+  refreshBuildingPreview(map)
   // Standard's lighting preset is inexpensive state, not a render loop. Apply
   // it to the shared flat/3D-adaptive renderer too; the old early return kept
   // the clay sheet in daytime lighting even while the surrounding sky changed.
@@ -626,21 +630,10 @@ function building2DColor(map: mapboxgl.Map) {
 }
 
 function building3DColor(map: mapboxgl.Map) {
-  const regular = mapNightModeActive
-    ? ['case',
-        ['==', ['%', ['to-number', ['id']], 9], 0], '#343746',
-        ['==', ['%', ['to-number', ['id']], 9], 4], '#494b5d',
-        '#3c4051',
-      ]
-    : ['case',
-        ['==', ['%', ['to-number', ['id']], 9], 0], '#cfc7bb',
-        ['==', ['%', ['to-number', ['id']], 9], 4], '#e6dfd4',
-        '#dbd3c7',
-      ]
   return visibleBuildingClaimColorExpression(
     map,
     takeoverTint('#ee3d98'),
-    previewBuildingMaterial() ?? regular,
+    buildingDayMaterial(buildingSkyShades.get(map) ?? skyShadeAt()),
   )
 }
 
@@ -648,12 +641,12 @@ function buildingCaps3DColor(map: mapboxgl.Map) {
   return visibleBuildingClaimColorExpression(
     map,
     takeoverTint('#ff9ccd'),
-    previewBuildingMaterial(true) ?? (mapNightModeActive ? '#55586b' : '#efe9df'),
+    buildingDayMaterial(buildingSkyShades.get(map) ?? skyShadeAt(), true),
   )
 }
 
-/** Repaint the existing building batches for the opt-in browser comparison. */
-export function refreshBuildingPreview(map: mapboxgl.Map) {
+/** Repaint existing batches on the sky's infrequent, lifecycle-gated updates. */
+function refreshBuildingPreview(map: mapboxgl.Map) {
   if (map.getLayer('clay-buildings-3d')) map.setPaintProperty('clay-buildings-3d', 'fill-extrusion-color', building3DColor(map) as never)
   if (map.getLayer('clay-building-caps')) map.setPaintProperty('clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor(map) as never)
 }
@@ -749,8 +742,8 @@ function applyTheme(map: mapboxgl.Map, theme: MapTheme, night = mapNightModeActi
   set('clay-real-road-stitches', 'line-color', theme.accentHot)
   set('clay-trail-stitches', 'line-color', theme.accent)
   set('clay-buildings-2d', 'fill-color', building2DColor(map))
-  // Buildings stay true-to-life neutral cream in every skin — only the map
-  // surfaces re-colour with the theme. Claimed footprints go Poplur pink.
+  // Unclaimed buildings follow the sky's daypart. Ownership colours remain
+  // outside that palette branch through theme changes and time transitions.
   set('clay-buildings-3d', 'fill-extrusion-color', building3DColor(map))
   set('clay-building-caps', 'fill-extrusion-color', buildingCaps3DColor(map))
 }
@@ -4233,6 +4226,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     const buildClayWorld = () => {
       // Clay palette + landmark/tree toggles on the Standard basemap import.
       const activeShade = skyRef.current ?? skyShadeAt()
+      buildingSkyShades.set(map, activeShade)
       applyStandardConfig(map, theme, activeShade.lightPreset === 'night')
 
       // Standard has no `composite` source (that's a classic-style source), so

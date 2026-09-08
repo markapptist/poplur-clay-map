@@ -1,5 +1,4 @@
-import BuildingStylePreview, { BUILDING_STYLE_PREVIEW } from './BuildingStylePreview'
-import { refreshBuildingPreview } from './ClayMap'
+import BuildingStylePreview, { BUILDING_STYLE_PREVIEW, buildingPreviewShade } from './BuildingStylePreview'
 import { startLandmarkOrbit } from './landmarkCinematic'
 import { onFrame } from './frameGovernor'
 import { useImmersiveControls } from './useImmersiveControls'
@@ -683,6 +682,8 @@ function forcedSkyShade(day: boolean) {
 /** Optional deterministic preview switch, forwarded by Home into this map
  * document. Production has no parameter and always follows the local clock. */
 function currentSkyShade() {
+  const buildingPreview = buildingPreviewShade()
+  if (buildingPreview) return buildingPreview
   if (typeof window !== 'undefined') {
     const forced = new URLSearchParams(window.location.search).get('map-night')
     if (forced === '1') return forcedSkyShade(false)
@@ -5027,7 +5028,8 @@ export default function MapApp() {
       )}
 
       {BUILDING_STYLE_PREVIEW && <BuildingStylePreview
-        onChange={() => { if (mapRef.current) refreshBuildingPreview(mapRef.current) }}
+        sky={sky}
+        onChange={() => { wakeManagedRendering(1200); setSky(currentSkyShade()) }}
         onCity={center => {
           const map = mapRef.current
           if (!map) return

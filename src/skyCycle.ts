@@ -142,6 +142,8 @@ export interface SkyShade {
   hazeColor: string
   horizonBlend: number
   starIntensity: number
+  /** Shared phase blend for surfaces that should follow the sky's clock. */
+  phase: { from: string; to: string; mix: number }
 }
 
 const DAY_MINUTES = 24 * 60
@@ -161,6 +163,7 @@ function mixShade(a: SkyShadeSpec, b: SkyShadeSpec, t: number): Omit<SkyShade, '
   ]
   return {
     name: dominant.name,
+    phase: { from: a.key, to: b.key, mix: s },
     lightPreset: dominant.lightPreset,
     spaceColor: hex(mix3(a.space, b.space)),
     highColor: hex(mix3(a.high, b.high)),
@@ -205,6 +208,7 @@ export function skyShadeAt(when = new Date()): SkyShade {
   }
   return {
     key: cur.key,
+    phase: { from: cur.key, to: cur.key, mix: 1 },
     name: cur.name,
     lightPreset: cur.lightPreset,
     spaceColor: hex(cur.space),
