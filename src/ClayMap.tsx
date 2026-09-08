@@ -7373,7 +7373,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           </div>
         </div>
       )}
-      {!REALISTIC_MAP && (
+      {/* CSS blend modes can only sample pixels inside the WebView. With a
+          native map underneath, these opaque texture sheets become white
+          veils. Native geometry keeps its own clay paints and lighting. */}
+      {!REALISTIC_MAP && !nativeMapRendererEnabled() && (
         <>
           <div className={styles.clayBump} aria-hidden="true" />
           <div className={styles.clayGrain} aria-hidden="true" />
