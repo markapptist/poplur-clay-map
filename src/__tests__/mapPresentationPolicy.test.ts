@@ -1,5 +1,11 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+// Keep the saved rollback policy covered while the user trials full density.
+vi.mock('../mapBuildingExperiment', async importOriginal => ({
+  ...await importOriginal<typeof import('../mapBuildingExperiment')>(),
+  MAP_BUILDING_EXPERIMENT_ENABLED: false,
+}))
 import { buildingFootprintWithinPointDistance } from '../mapBuildingFootprint'
 import {
   MAP_BROWSE_3D_BEARING,

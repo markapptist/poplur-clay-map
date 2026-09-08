@@ -99,3 +99,33 @@
   visibility: hidden;
   pointer-events: none;
 }
+
+.gestureDock {
+  width: min(220px, 54vw);
+  min-height: 52px;
+  gap: 3px;
+  padding: 8px 16px;
+  border-radius: 24px;
+  background: rgba(37, 18, 35, .72);
+  color: #91ecf6;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  font-weight: 800;
+  font-size: 18px;
+}
+
+.gestureDock {
+  width: min(270px, 62vw);
+  min-height: 56px;
+  box-sizing: border-box;
+  border: 2px solid rgba(244, 70, 166, .78);
+  border-radius: 18px;
+  background: linear-gradient(155deg, rgba(47, 23, 47, .93), rgba(16, 11, 26, .88));
+  font-family: system-ui, -apple-system, sans-serif;
+  text-align: center;
+  box-shadow: 0 5px 18px rgba(15, 4, 20, .2);
+}
+.gestureEyebrow { font-style: normal; font-size: 9px; font-weight: 700; letter-spacing: .2em; color: #f78ac4; }
+.gestureInstruction { font-size: 12px; font-weight: 600; line-height: 1.3; color: #fff2f8; }
+.gestureReadout { font-size: 11px; font-weight: 500; color: #91ecf6; }

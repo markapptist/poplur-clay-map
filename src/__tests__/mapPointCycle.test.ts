@@ -24,9 +24,9 @@ describe('unified Map point cycle', () => {
       landmarks,
     })
     expect(route.map(point => point.key)).toEqual([
-      'current:location',
-      'pin:mine',
       'pin:theirs',
+      'pin:mine',
+      'current:location',
       'landmark:eiffel',
       'landmark:rogers-centre',
     ])
@@ -136,7 +136,7 @@ describe('unified Map point cycle', () => {
     expect(mapAppSource).toContain("type: 'poplur-map-point-focus'")
     expect(mapAppSource).toContain('active: mapPointLabelActive')
     expect(mapAppSource).toMatch(/!mapPointLabelActive && \([\s\S]*?className=\{styles\.aiTicker\}/)
-    expect(mapAppSource).toContain('!mapPointLabelActive && !tourOn && areaPops')
+    expect(mapAppSource).not.toContain('pops posted in this area')
     expect(mapAppSource).toContain('<MapRadioStatusLabel className={styles.mapRadioLabel} />')
 
     expect(homeTwinSource).toContain("event.data.type === 'poplur-map-point-focus'")
@@ -149,8 +149,8 @@ describe('unified Map point cycle', () => {
       homeTwinSource.indexOf('<span key={mapPlace} className={styles.mapTitleText}>'),
       homeTwinSource.indexOf('</span>', homeTwinSource.indexOf('<span key={mapPlace}')),
     )
-    expect(homeCard).toContain('!mapTourOn && mapAreaPops')
-    expect(homeCard).toContain('className={styles.mapAreaPops}')
+    expect(homeCard).not.toContain('pops posted in this area')
+    expect(homeCard).not.toContain('className={styles.mapAreaPops}')
     expect(homeTwinSource).toContain('<MapRadioStatusLabel className={styles.mapRadioLabel} />')
   })
 
@@ -190,12 +190,12 @@ describe('traverse a poster’s pops from their map handle', () => {
       pins: all.filter(pin => pinOwnerKey(pin) === armed),
       landmarks: [],
     })
-    expect(route.map(point => point.key)).toEqual(['pin:a1', 'pin:a2'])
+    expect(route.map(point => point.key)).toEqual(['pin:a2', 'pin:a1'])
     // The arrows loop within the two, never escaping to the other poster.
     const first = stepMapPointCycle(route, null, 1)
     expect(first).toMatchObject({ index: 0, total: 2 })
-    const wrapped = stepMapPointCycle(route, 'pin:a2', 1)
-    expect(wrapped).toMatchObject({ point: { key: 'pin:a1' }, index: 0, total: 2 })
+    const wrapped = stepMapPointCycle(route, 'pin:a1', 1)
+    expect(wrapped).toMatchObject({ point: { key: 'pin:a2' }, index: 0, total: 2 })
   })
 
   it('separates posters sharing a publishing account and wraps only their posts', () => {

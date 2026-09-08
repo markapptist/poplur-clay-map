@@ -35,6 +35,7 @@ import TabControlRail from './TabControlRail'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 import { PoplurPerformanceManager } from './poplurPerformanceManager'
 import ClayArrowCluster from './ClayArrowCluster'
+import { GESTURE_NAVIGATION_TRIAL, swipeNavigationAction } from './gestureNavigation'
 import { responsiveChannelControlSize } from './channelControlSizing'
 import { AR_FILTERS } from './ARFilters'
 import { ZOOM_HOLD_DELAY_MS, ZOOM_HOLD_PER_SECOND, ZOOM_HOLD_TICK_MS, filterOrdinal, nextZoomPreset, stepFilterId, zoomReadout, type StepDirection } from './cameraStepper'
@@ -1252,7 +1253,7 @@ export default function Camera({
   }
   const onCameraPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
     const target = event.target as Element
-    if (target.closest('button, [role="button"], input, textarea, select, a')) return
+    if (target.closest('button, [role="button"], [data-poplur-gesture-navigation], input, textarea, select, a')) return
     event.preventDefault()
     gesturePointsRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
     if (gesturePointsRef.current.size === 1) {
@@ -1288,7 +1289,14 @@ export default function Camera({
     const dx = event.clientX - gesture.startX
     const dy = event.clientY - gesture.startY
     const distance = Math.hypot(dx, dy)
-    if (Math.abs(dy) >= 46 && Math.abs(dy) > Math.abs(dx) * 1.15) {
+    const navigation = GESTURE_NAVIGATION_TRIAL ? swipeNavigationAction(dx, dy) : null
+    if (navigation) {
+      if (navigation === 'up' || navigation === 'down') stepArFilter(navigation === 'up' ? 1 : -1)
+      else stepZoomPreset(navigation === 'right' ? 1 : -1)
+      gesture.lastTapAt = 0
+      return
+    }
+    if (!GESTURE_NAVIGATION_TRIAL && Math.abs(dy) >= 46 && Math.abs(dy) > Math.abs(dx) * 1.15) {
       setFlashEnabled(dy < 0)
       playPop()
       gesture.lastTapAt = 0
@@ -1319,7 +1327,7 @@ export default function Camera({
     gesture.lastTapAt = now
     gesture.lastTapX = event.clientX
     gesture.lastTapY = event.clientY
-  }, [flipCamera, nativeCameraBudget, resumeNativePreview, setFlashEnabled])
+  }, [flipCamera, nativeCameraBudget, resumeNativePreview, setFlashEnabled, stepArFilter, stepZoomPreset])
   const onCameraPointerCancel = useCallback((event: React.PointerEvent<HTMLElement>) => {
     gesturePointsRef.current.delete(event.pointerId)
     if (gesturePointsRef.current.size < 2) pinchRef.current = null
@@ -1896,6 +1904,16 @@ export default function Camera({
       {/* Composition grid and the self-timer's count, over the preview and
           under the controls. Neither is part of the capture. */}
       {real && gridOn && <div className={styles.camGrid} aria-hidden="true" />}
+      {/* The focus square: the bracket every camera wears in the middle of the
+          frame, so there is a centre to aim with. It is a SIGHT, not a readout
+          — nothing on the bridge reports where the lens actually focused — so
+          it never moves and never claims a lock, and the green the detector
+          locks with stays the detector's. It comes and goes with the picture
+          rather than with the grid toggle: standard furniture, not an opt-in
+          composition aid. */}
+      {real && effectiveLiveSurfaceVisible && !nativePreviewParked && (
+        <div className={styles.camFocus} aria-hidden="true" />
+      )}
       {real && timerLeft != null && (
         <div
           className={styles.camCountdown}
@@ -2102,8 +2120,8 @@ export default function Camera({
           label={zoomReadout(zoom)}
           upLabel="Next filter"
           downLabel="Previous filter"
-          leftLabel="Zoom out — hold to keep zooming"
-          rightLabel="Zoom in — hold to keep zooming"
+          leftLabel="Zoom out"
+          rightLabel="Zoom in"
           onUp={() => stepArFilter(1)}
           onDown={() => stepArFilter(-1)}
           onLeft={() => stepZoomPreset(-1)}

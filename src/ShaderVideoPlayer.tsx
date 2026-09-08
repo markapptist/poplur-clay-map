@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useCallback, memo } from 'react'
 import { onFrame } from './frameGovernor'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 import { isIOSNativeShell } from './nativeBridge'
+import { usesShared2DUI } from './sharedRenderingPolicy'
 
 const VERT = `attribute vec2 a_pos;
 void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }`
@@ -267,6 +268,10 @@ export default memo(function ShaderVideoPlayer({ src, poster, className, active 
   const [leaseEpoch, setLeaseEpoch] = useState(0)
   const [ownershipRequested, setOwnershipRequested] = useState(false)
   const [playing, setPlaying] = useState(false)
+  const [controlsVisible, setControlsVisible] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [muted, setMuted] = useState(true)
+  const shared2D = usesShared2DUI()
   const iosCompositorSafeVideo = isIOSNativeShell()
 
   const eligible = shouldOwnShaderVideoResources({
@@ -285,7 +290,7 @@ export default memo(function ShaderVideoPlayer({ src, poster, className, active 
     nativeAppActive,
     decoderGranted,
   })
-  const ownsShaderResources = shouldUseShaderVideoGL(ownsLiveResources, iosCompositorSafeVideo)
+  const ownsShaderResources = !shared2D && shouldUseShaderVideoGL(ownsLiveResources, iosCompositorSafeVideo)
   const eligibleRef = useRef(eligible)
   eligibleRef.current = eligible
 
@@ -565,8 +570,9 @@ export default memo(function ShaderVideoPlayer({ src, poster, className, active 
 
   const revealControls = useCallback(() => {
     showTarget.current = 1
+    setControlsVisible(true)
     clearTimeout(hideTimer.current)
-    hideTimer.current = window.setTimeout(() => { showTarget.current = 0 }, 3000)
+    hideTimer.current = window.setTimeout(() => { showTarget.current = 0; setControlsVisible(false) }, 3000)
   }, [])
 
   const handleClick = useCallback((e: React.MouseEvent) => {
@@ -613,9 +619,9 @@ export default memo(function ShaderVideoPlayer({ src, poster, className, active 
     <div
       ref={wrapRef}
       className={className}
-      onClick={iosCompositorSafeVideo ? undefined : handleClick}
-      onPointerMove={iosCompositorSafeVideo ? undefined : revealControls}
-      onPointerLeave={iosCompositorSafeVideo ? undefined : () => { showTarget.current = 0 }}
+      onClick={iosCompositorSafeVideo && !shared2D ? undefined : handleClick}
+      onPointerMove={iosCompositorSafeVideo && !shared2D ? undefined : revealControls}
+      onPointerLeave={iosCompositorSafeVideo && !shared2D ? undefined : () => { showTarget.current = 0; setControlsVisible(false) }}
       style={{ position: 'relative', cursor: 'pointer', overflow: 'hidden', borderRadius: 12 }}
     >
       <video
@@ -624,13 +630,19 @@ export default memo(function ShaderVideoPlayer({ src, poster, className, active 
         muted
         playsInline
         loop
-        controls={iosCompositorSafeVideo}
+        controls={iosCompositorSafeVideo && !shared2D}
         preload="metadata"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
+        onVolumeChange={event => setMuted(event.currentTarget.muted)}
+        onTimeUpdate={event => {
+          if (!shared2D) return
+          const video = event.currentTarget
+          setProgress(Number.isFinite(video.duration) && video.duration > 0 ? video.currentTime / video.duration : 0)
+        }}
         style={{ display: 'block', width: '100%', aspectRatio: '16/9', objectFit: 'cover', background: '#111' }}
       />
-      {!iosCompositorSafeVideo && (
+      {!shared2D && !iosCompositorSafeVideo && (
         <canvas
           ref={canvasRef}
           style={{
@@ -639,6 +651,42 @@ export default memo(function ShaderVideoPlayer({ src, poster, className, active 
           }}
         />
       )}
+      {shared2D && <>
+        <div aria-hidden="true" style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 3, background: 'rgba(115,107,97,.35)', pointerEvents: 'none' }}>
+          <div style={{ height: '100%', width: `${progress * 100}%`, background: '#e0d6c7' }} />
+        </div>
+        <div data-poplur-media-controls="2d" onClick={event => event.stopPropagation()}
+          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 40, display: 'flex', alignItems: 'center', gap: 7,
+            padding: '0 5px', background: 'rgba(210,199,184,.9)', opacity: controlsVisible || !playing ? 1 : 0,
+            pointerEvents: controlsVisible || !playing ? 'auto' : 'none' }}>
+          <button type="button" aria-label={playing ? 'Pause video' : 'Play video'}
+            onClick={() => {
+              revealControls()
+              if (!ownsLiveResources) { if (eligible) setOwnershipRequested(true); return }
+              const video = videoRef.current
+              if (video?.paused) void video.play().catch(() => {})
+              else video?.pause()
+            }} style={{ border: 0, background: 'transparent', color: '#231c18', width: 36, height: 40, padding: 6 }}>
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">{playing
+              ? <path d="M6 5h4v14H6zm8 0h4v14h-4z" />
+              : <path d="M7 4v16l13-8z" />}</svg>
+          </button>
+          <input type="range" min={0} max={1} step={0.001} value={progress} aria-label="Video progress"
+            onChange={event => {
+              const video = videoRef.current
+              if (video && Number.isFinite(video.duration) && video.duration > 0) {
+                video.currentTime = Number(event.target.value) * video.duration
+                setProgress(Number(event.target.value)); revealControls()
+              }
+            }} style={{ flex: 1, minWidth: 0, accentColor: '#6b514f' }} />
+          <button type="button" aria-label={muted ? 'Unmute video' : 'Mute video'} aria-pressed={muted}
+            onClick={() => { if (videoRef.current) videoRef.current.muted = !videoRef.current.muted; revealControls() }}
+            style={{ border: 0, background: 'transparent', color: '#231c18', width: 36, height: 40, padding: 6 }}>
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M3 9h4l6-5v16l-6-5H3z" />
+              {muted ? <path d="m16 8 6 8m0-8-6 8" stroke="#993a24" strokeWidth="2" /> : <path d="M16 7q7 5 0 10" fill="none" stroke="currentColor" strokeWidth="2" />}</svg>
+          </button>
+        </div>
+      </>}
       <span
         ref={timeRef}
         style={{

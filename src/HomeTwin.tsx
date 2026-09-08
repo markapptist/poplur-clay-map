@@ -1,3 +1,9 @@
+import { useOnlinePeople } from './appPresence'
+import { nativeMapRendererEnabled } from './nativeMapMode'
+import { useNativeMapPresentation } from './nativeMapPresentation'
+import { useMapSelfieVideo } from './mapSelfieVideo'
+import './ClayNav.module.css'
+import { useImmersiveControls } from './useImmersiveControls'
 import { installMapDiscoveryRelay } from './mapDiscoveryTransport'
 // Map dialogs portal into this document and need their scoped stylesheet here.
 import './ClayMap.module.css'
@@ -12,6 +18,7 @@ import { radiusTrophyColor } from './radiusTrophies'
 import surfaceStyles from './TransientPopupSurface.module.css'
 import CubeTab3D, { DEFAULT_CUBE_MODEL, TAB_ORDER, type CubeTab } from './CubeTab3D'
 import { shouldHidePersistentCube } from './persistentCubeVisibility'
+import { useNativeFeedAdVisibility } from './useNativeFeedAdVisibility'
 import { onAvatarCubeChange, wornCubeModelUrl } from './avatarCube'
 import ScreenCoach from './ScreenCoach'
 import CubeMotionLab from './CubeMotionLab'
@@ -92,6 +99,7 @@ import InCallBar from './InCallBar'
 import WebSignIn from './WebSignIn'
 import { acceptCall, callState, declineCall, hangup as hangupCall, type CallContext } from './webCall'
 import { normalizeCallContext } from './callContext'
+import { useRadiusCounter } from './useRadiusCounter'
 import { useUIRecoveryWatchdog } from './UIRecoveryWatchdog'
 import { playPop, popHaptic } from './pop'
 import { startRingtone, stopRingtone } from './phoneRingtones'
@@ -105,16 +113,19 @@ import {
 } from './podcastMapDraft'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import {
+  announceMapTour,
   getRadioPlaybackState,
   isMapRadioActive,
   startRadioForMap,
-  startDefaultMapRadio,
   isRadioBackgroundEnabled,
   setMapRadioEnabled,
   startRadioOnBoot,
   stopMapRadio,
   subscribeRadioPlayback,
 } from './mapRadio'
+import { speakWithVoiceAudioFocus } from './voiceAudio'
+import { readMapRadioLocation, type MapRadioLocation } from './mapRadioLocation'
+import { useMapRadio } from './useMapRadio'
 import {
   cancelManagedRenderingWake,
   isIOSNativeShell,
@@ -304,6 +315,7 @@ const POST_VERIFIED_CUBE_DISPLAY_MS = 2_600
 const STUDIO_MIC_MODEL = 'poplur_mic_lite.glb'
 const DISCO_BALL_CUBE_MODEL = 'poplur_cube_disco_ball.glb'
 const DISCO_CUBE_MAX_MS = 30_000
+const RADIO_DISCO_CUBE_MS = 10_000
 // A track has to survive intros, accidental autoplay and quick skips before it
 // earns the ambient disco moment. Navigation restarts this dwell below.
 const DISCO_CUBE_MIN_MUSIC_MS = 20_000
@@ -400,7 +412,8 @@ const TAB_COACH: Record<CubeTab, { title: string; lines: string[]; split?: boole
   profile: {
     title: 'YOUR PROFILE',
     lines: [
-      'Tap the bell for notifications.',
+      'Tap your picture to record a new one.',
+      'Tap the bag for the Store.',
       'Pull down to refresh your grid.',
       'Hold the cube for mail, phone, stats and your avatar cube.',
     ],
@@ -644,8 +657,6 @@ function pageIsVisible(): boolean {
 
 // Sample data matching the rest of the harness: 128 posts, 41.8 km radius.
 const POST_COUNT = 128
-// Stable spoofed reach until presence is wired to the live audience service.
-const SPOOFED_ONLINE_AUDIENCE = 1_200_000
 // Radius describes the content currently playing, so it owns most of the HUD
 // cycle. Presence is a brief status beat, not an equal-priority alternate.
 const RADIUS_STAT_HOLD_MS = 10_000
@@ -659,23 +670,11 @@ interface MapHudContext {
   ownPostIds: string[]
   totalRadiusKm: number
   popRadiusKm: number | null
-  onlineUsers: number
 }
 
-/** The count-up is the stat card's swap-in flourish: `active` goes true when the
- *  card rotates RADIUS/ONLINE into view (and false with chrome-idle), and the
- *  number counts up from zero. What it was ALSO doing was replaying that whole
- *  880ms volley every time the value merely CHANGED, because `radius`/`value`
- *  sit in the dependency array — and the feed hands these a new radius on every
- *  clip advance. Measured 21 Aug on the shipped bundle: five clip changes drove
- *  1236 DOM mutations and 940 style recalculations, 84% of everything the screen
- *  touched, at 14.8% of a core against 1.6% when settled.
- *
- *  So animate on ARRIVAL only — the false->true edge, which is the swap-in the
- *  effect was designed for — and snap to the new figure when the value changes
- *  under a card that is already showing. The flourish anyone actually looks at
- *  is unchanged; only the accidental replay is gone. */
-function AnimatedRadiusMetrics({
+/** Radius selections share one finite money-counter beat. Feed transitions
+ * interpolate from the last displayed amount so its persistent HUD stays put. */
+export function AnimatedRadiusMetrics({
   radius,
   ceiling,
   unit,
@@ -683,6 +682,7 @@ function AnimatedRadiusMetrics({
   accumulated = false,
   recountKey = null,
   pinColor = '#f53c99',
+  continueCount = false,
 }: {
   radius: number
   ceiling: number
@@ -698,59 +698,13 @@ function AnimatedRadiusMetrics({
    *  same beat (radiusTrophies.ts), so the number and the puck arrive together. */
   recountKey?: string | null
   pinColor?: string
+  continueCount?: boolean
 }) {
-  const [progress, setProgress] = useState(active ? 0 : 1)
-  const [counting, setCounting] = useState(active)
-  const wasActive = useRef(false)
-  const lastRecountKey = useRef<string | null>(null)
-  const lastRadius = useRef(radius)
-
-  useEffect(() => {
-    // Only the false->true edge is an arrival; a value change under a card that
-    // is already showing snaps instead of replaying the whole count — unless
-    // the change IS a selection (a new recount key), which is the one case
-    // where replaying is the point.
-    const arriving = active && !wasActive.current
-    wasActive.current = active
-    const recount = active && recountKey != null && (recountKey !== lastRecountKey.current || radius !== lastRadius.current)
-    lastRadius.current = radius
-    lastRecountKey.current = recountKey
-    let raf = 0
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (!active || reduced || !(arriving || recount)) {
-      setProgress(1)
-      setCounting(false)
-      return
-    }
-
-    setProgress(0)
-    setCounting(true)
-    const started = performance.now()
-    const frame = (now: number) => {
-      const raw = Math.max(0, Math.min(1, (now - started) / 880))
-      // Money counters run hard at the start, then click precisely onto the
-      // final amount rather than coasting past it.
-      const eased = 1 - Math.pow(1 - raw, 2.35)
-      setProgress(eased)
-      playRadiusCounterTick(eased)
-      if (raw < 1) {
-        raf = requestAnimationFrame(frame)
-      } else {
-        setProgress(1)
-        setCounting(false)
-        playRadiusCounterDone()
-      }
-    }
-    raf = requestAnimationFrame(frame)
-    return () => cancelAnimationFrame(raf)
-  }, [active, ceiling, radius, unit, recountKey])
-
-  // Past a thousand the tenths stop meaning anything and the digits stop
-  // fitting: a world-radius pop reads "3,959 mi", the same way its ceiling
-  // does, rather than "3958.8" spilling off the card.
-  const shown = radius * progress
+  const { shown, shownCeiling, counting } = useRadiusCounter({
+    radius, ceiling, active, recountKey, continueCount,
+  })
   const currentText = shown >= 1_000 ? Math.round(shown).toLocaleString() : shown.toFixed(1)
-  const ceilingText = Math.round(ceiling * progress).toLocaleString()
+  const ceilingText = Math.round(shownCeiling).toLocaleString()
   return (
     <>
       <span
@@ -773,62 +727,6 @@ function AnimatedRadiusMetrics({
         {unit}
       </span>
     </>
-  )
-}
-
-/** ONLINE NOW counts up with the same money-counter beat, ticks and motion trail
-    as RADIUS. The two cards share one slot and swap on alternate beats, so only
-    one is ever counting — the tick/done sounds never double up.
-    The count runs on the RAW number and is compacted every frame, so it reads
-    0 → 1.2M rather than animating the digits of an already-shortened string. */
-function AnimatedOnlineCount({ value, active }: { value: number; active: boolean }) {
-  const [progress, setProgress] = useState(active ? 0 : 1)
-  const [counting, setCounting] = useState(active)
-  const wasActive = useRef(false)
-
-  useEffect(() => {
-    // Only the false->true edge is an arrival; a value change under a card that
-    // is already showing snaps instead of replaying the whole count.
-    const arriving = active && !wasActive.current
-    wasActive.current = active
-    let raf = 0
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (!active || reduced || !arriving) {
-      setProgress(1)
-      setCounting(false)
-      return
-    }
-
-    setProgress(0)
-    setCounting(true)
-    const started = performance.now()
-    const frame = (now: number) => {
-      const raw = Math.max(0, Math.min(1, (now - started) / 880))
-      // Same easing as the radius counter: hard out of the gate, then clicks
-      // precisely onto the final figure instead of coasting past it.
-      const eased = 1 - Math.pow(1 - raw, 2.35)
-      setProgress(eased)
-      playRadiusCounterTick(eased)
-      if (raw < 1) {
-        raf = requestAnimationFrame(frame)
-      } else {
-        setProgress(1)
-        setCounting(false)
-        playRadiusCounterDone()
-      }
-    }
-    raf = requestAnimationFrame(frame)
-    return () => cancelAnimationFrame(raf)
-  }, [active, value])
-
-  const text = compactAudience(Math.round(value * progress))
-  return (
-    <span
-      className={`${styles.statValue} ${styles.onlineValueShader} ${motionStyles.radiusCounter}${counting ? ` ${motionStyles.radiusCounterRunning}` : ''}`}
-      data-counter-value={text}
-    >
-      {text}
-    </span>
   )
 }
 
@@ -879,13 +777,6 @@ function AnimatedPostCount({ value, active }: { value: number; active: boolean }
   )
 }
 
-function compactAudience(value: number): string {
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(value % 1_000_000_000 === 0 ? 0 : 1)}B`
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`
-  if (value >= 1_000) return `${(value / 1_000).toFixed(value % 1_000 === 0 ? 0 : 1)}K`
-  return value.toString()
-}
-
 type PostLoginPermission = 'location' | 'photos' | 'notifications' | 'motion'
 
 /**
@@ -918,6 +809,7 @@ const CLAY_MAP_SRC = (() => {
     ? new URLSearchParams(window.location.search)
     : new URLSearchParams()
   const front = '1'
+  const rendererQuery = nativeMapRendererEnabled() ? '&nativeMapRenderer=1' : ''
   const lite = parentParams.get('mapLite')
   const mapNight = parentParams.get('map-night')
   const weatherCycle = parentParams.get('weather-cycle')
@@ -953,8 +845,8 @@ const CLAY_MAP_SRC = (() => {
     ? '&radius-lab=1'
     : ''
   return typeof window !== 'undefined' && window.location.protocol.startsWith('http')
-    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}${radiusBenchQuery}`
-    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}${radiusBenchQuery}`
+    ? `${window.location.origin}/?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}${radiusBenchQuery}${rendererQuery}`
+    : `index.html?map=1&front=${front}${liteQuery}${nightQuery}${weatherQuery}${weatherTestQuery}${newsTestQuery}${buildingDensityLabQuery}${tourSpeedQuery}${locationQuery}${managedLocationQuery}${rnWebShellQuery}${radiusBenchQuery}${rendererQuery}`
 })()
 
 /** The Map navigator's time of day from this document's own clock, used
@@ -1170,7 +1062,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // Preserve the best location across a map iframe remount. An already-active
   // opt-in radio session can reassert itself when that child becomes ready,
   // without falling back to the generic home coordinate or retuning a station.
-  const radioLocationRef = useRef<{ lat: number; lng: number } | null>(null)
+  const radioLocationRef = useRef<MapRadioLocation | null>(null)
+  const selectedRadioLocationRef = useRef<MapRadioLocation | null>(null)
+  const [mapRadioLocation, setMapRadioLocation] = useState<MapRadioLocation | null>(null)
   const mapRadioState = useSyncExternalStore(
     subscribeRadioPlayback,
     getRadioPlaybackState,
@@ -1188,6 +1082,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       const lng = Number(nested?.longitude)
       if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return
       radioLocationRef.current = { lat, lng }
+      if (!selectedRadioLocationRef.current) setMapRadioLocation({ lat, lng })
       if (NATIVE_ADAPTIVE_MAP) setNativeMapCoordinate({ latitude: lat, longitude: lng })
       startRadioOnBoot(lat, lng)
     }
@@ -1568,6 +1463,20 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // actually moves, and it is declared FIRST, so the nonce effect below runs
   // after it in the same commit and gets the last word. With the profile
   // already up, that effect returns early and this one still fires.
+  const [profileNotificationPost, setProfileNotificationPost] = useState<{ postId: string; comments: boolean; nonce: number } | null>(null)
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent).detail
+      if (typeof detail?.postId !== 'string' || !detail.postId || detail.postId.length > 190) return
+      setViewingUser(null)
+      setViewingUserId(null)
+      setHoldOpen(false)
+      setActiveTab('profile')
+      setProfileNotificationPost(current => ({ postId: detail.postId, comments: detail.comments === true, nonce: (current?.nonce ?? 0) + 1 }))
+    }
+    window.addEventListener('poplur-open-post-notification', open)
+    return () => window.removeEventListener('poplur-open-post-notification', open)
+  }, [])
   const [notifOpenNonce, setNotifOpenNonce] = useState(0)
   useEffect(() => {
     const onOpen = () => {
@@ -2200,6 +2109,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const feedEntryVisitRef = useRef(0)
   const autoTunedFeedChannelRef = useRef<number | null>(null)
   const skipNextFeedAutoTuneRef = useRef(false)
+  const changeFeedChannel = useCallback((index: number) => {
+    // A D-pad/dial/content progression owns the selection from now on. A
+    // later feed snapshot must not retune it, even after returning to the
+    // same index that automatic discovery originally picked.
+    autoTunedFeedChannelRef.current = null
+    setChanIndex(index)
+  }, [])
   const interceptingFeedPosts = useSyncExternalStore(
     onNativeFeedPosts,
     nativeFeedPostsSnapshot,
@@ -2251,7 +2167,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     setChanIndex(current => {
       if (autoTunedFeedChannelRef.current !== current) return current
       const next = nextInterceptingChannelIndex(CHANNELS, reaching, current, visit)
-      autoTunedFeedChannelRef.current = next
+      autoTunedFeedChannelRef.current = null
       return next
     })
   }, [activeTab, interceptingFeedPosts, liveSimulationForTune])
@@ -2429,6 +2345,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       setHoldOpen(false)
       setActiveTab('map')
       sendMapAction('focusPin', {
+        notificationId: detail.notificationId,
         ...(postId ? { postId } : { own: 'largest' }),
         ...(deltaKm != null ? { deltaKm } : {}),
         ...(pulse ? { pulse } : {}),
@@ -3029,7 +2946,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       if (event.source !== mapFrameRef.current?.contentWindow) return
       if (!event.data || typeof event.data !== 'object') return
       if (event.data.type === 'poplur-map-loading') {
-        authoritativeAccountRadiusKmRef.current = publishAccountRadiusKm(0)
+        // Reloading the Map is not a change to the account. Keep the last
+        // authenticated total until its next snapshot arrives.
         mapReadyRef.current = false
         setMapReady(false)
         setMapFailedVisible(false)
@@ -3063,6 +2981,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       // this shell still had no CoreLocation fix. Publish it here as THE fix,
       // so the Feed measures reach from the same place the Map does — a pin
       // that stands on the map must stand in the feed too.
+      if (event.data.type === 'poplur-map-radio-location') {
+        const location = readMapRadioLocation(event.data)
+        if (location && mapFrontRef.current) {
+          selectedRadioLocationRef.current = location
+          setMapRadioLocation(location)
+        }
+      }
       if (event.data.type === 'poplur-map-location') {
         publishViewerFix({ latitude: event.data.latitude, longitude: event.data.longitude }, 'map')
       }
@@ -3251,8 +3176,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         const popRadiusKm = Number(event.data.popRadiusKm)
         const ownPostsTotal = Number(event.data.ownPostsTotal)
         const ownPostsArea = Number(event.data.ownPostsArea)
-        const onlineUsers = Number(event.data.onlineUsers)
-        if (scope && Number.isFinite(totalRadiusKm) && Number.isFinite(onlineUsers)) {
+        if (scope && Number.isFinite(totalRadiusKm)) {
           setAccountTotalReachKm(totalRadiusKm)
           const ownPostIds = Array.isArray(event.data.ownPostIds)
             ? (event.data.ownPostIds as unknown[]).filter((value): value is string => typeof value === 'string')
@@ -3264,7 +3188,6 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             ownPostIds,
             totalRadiusKm,
             popRadiusKm: scope === 'pop' && Number.isFinite(popRadiusKm) ? popRadiusKm : null,
-            onlineUsers,
           }
           setMapHudContext(context)
           setMapPopRadiusKm(context.popRadiusKm)
@@ -3276,6 +3199,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             ids: ownPostIds,
             overall: scope === 'world',
           })
+        }
+      }
+      if (event.data.type === 'poplur-map-speak' && typeof event.data.line === 'string') {
+        const line = event.data.line.trim().slice(0, 1000)
+        if (line && !isGateMuted()) {
+          if (isMapRadioActive()) announceMapTour(line)
+          else speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
         }
       }
       if (event.data.type === 'poplur-map-focus-miss') {
@@ -3630,26 +3560,14 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     subscreenRequested,
     permissionOpen: activePermission !== null,
   })
-  // Native MapKit has no MapApp iframe to start its default radio.
-  useEffect(() => {
-    if (!NATIVE_ADAPTIVE_MAP || nativeMapWebFallback || activeTab !== 'map' || committedTab !== 'map'
-      || !surfaceVisible || subscreenRequested || activePermission !== null || faceTimeActive) return
-    const start = () => {
-      const location = radioLocationRef.current
-      startDefaultMapRadio(location?.lat, location?.lng)
-    }
-    start()
-    const unsubscribe = onGateChange(start)
-    return () => {
-      unsubscribe()
-      if (!isRadioBackgroundEnabled()) stopMapRadio()
-    }
-  }, [activeTab, committedTab, surfaceVisible, subscreenRequested, activePermission, faceTimeActive, nativeMapWebFallback])
+  useMapRadio(activeTab === 'map' && committedTab === 'map' && surfaceVisible
+    && !subscreenRequested && activePermission === null && !faceTimeActive, mapRadioLocation)
 
   // The idle fade exists so the chrome stops obstructing a SUBSCREEN you are
   // reading (News, TV Guide, Radio, an RCL capture). On the home view itself the
   // chrome IS the screen — fading it there just makes the app look like it
   // vanished — so the fade only applies while a subscreen is covering the app.
+  useImmersiveControls(!overlayOpen && ['map', 'feed', 'post'].includes(committedTab), committedTab)
   const chromeFaded = chromeIdle && overlayOpen
   // The Times keeps its channel changer and radius readout as persistent
   // navigation. On cream newsprint the generic 10%-opacity subscreen fade made
@@ -3669,6 +3587,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const [ownSelfieVideo, setOwnSelfieVideo] = useState<string | null>(() => {
     try { return window.localStorage.getItem('poplur.profile.selfieVideo') } catch { return null }
   })
+  const [selfieRevision, setSelfieRevision] = useState(0)
+  const mapSelfieVideo = useMapSelfieVideo(ownSelfieVideo, selfieRevision)
   const [ownUid, setOwnUid] = useState<string | null>(() => accountSnapshot().uid)
   // The private desk owns the simulation switch; mirror it here once the
   // account is known so a reviewer's fresh install sees test mode too.
@@ -3690,7 +3610,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     const applyProfileMedia = (detail: ProfileMedia | undefined) => {
       if (typeof detail?.uid === 'string' || detail?.uid === null) setOwnUid(detail.uid ?? null)
       if (typeof detail?.photo === 'string' || detail?.photo === null) setOwnPhoto(detail.photo ?? null)
-      if (typeof detail?.video === 'string' || detail?.video === null) setOwnSelfieVideo(detail.video ?? null)
+      if (typeof detail?.video === 'string' || detail?.video === null) {
+        setOwnSelfieVideo(detail.video ?? null)
+        setSelfieRevision(value => value + 1)
+      }
       if (detail?.username?.trim()) {
         try { window.localStorage.setItem('poplur.username', detail.username.trim().replace(/^@/, '')) } catch { /* embedded */ }
       }
@@ -3710,23 +3633,16 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   }, [])
   // Re-sent on every map (re)load as well as every change: the iframe remounts
   // on tab changes and a message sent to a dead frame is simply lost. If React
-  // state is null but localStorage has a value (race between mount and native
-  // profile response), forward the localStorage copy so the map pin is never
-  // blank when the profile picture exists on disk.
+  // photo state is null but localStorage has a value, forward the stored photo.
+  // Video must come from the compact derivative hook, never the original cache.
   useEffect(() => {
     if (!mapReady) return
     let photo = ownPhoto
-    let video = ownSelfieVideo
+    const video = mapSelfieVideo
     if (!photo) {
       try {
         const raw = window.localStorage.getItem('poplur.profile.photo')
         if (raw && (raw.startsWith('data:image/') || /^https:\/\//i.test(raw))) photo = raw
-      } catch { /* embedded */ }
-    }
-    if (!video) {
-      try {
-        const raw = window.localStorage.getItem('poplur.profile.selfieVideo')
-        if (raw && (raw.startsWith('data:video/') || /^https:\/\//i.test(raw) || /^poplur-clay:\/\//i.test(raw))) video = raw
       } catch { /* embedded */ }
     }
     mapFrameRef.current?.contentWindow?.postMessage(
@@ -3738,7 +3654,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         video,
       }, '*',
     )
-  }, [ownPhoto, ownSelfieVideo, ownUid, mapReady])
+  }, [ownPhoto, mapSelfieVideo, ownUid, mapReady])
   // Hand the phone's posts across to the Map. Swift delivers them with
   // evaluateJavaScript, which lands in THIS document only — the Map is a nested
   // iframe that never sees that event, which is why the board stood empty on
@@ -3798,15 +3714,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // cannot be drawn in here. The chrome has to take itself away while it is up,
   // or the cube and HUD would sit on top of an ad, which is exactly the
   // interruption this placement exists to avoid.
-  const [feedAdSlotOpen, setFeedAdSlotOpen] = useState(false)
-  useEffect(() => {
-    const onFeedAd = (event: Event) => {
-      const detail = (event as CustomEvent).detail as { open?: unknown } | undefined
-      setFeedAdSlotOpen(Boolean(detail?.open))
-    }
-    window.addEventListener('poplur-native-feed-ad', onFeedAd)
-    return () => window.removeEventListener('poplur-native-feed-ad', onFeedAd)
-  }, [])
+  const feedAdSlotOpen = useNativeFeedAdVisibility(committedTab === 'feed' && !overlayOpen)
   /** Chrome fully away — the feed's player mode, a subscreen, an ad slot,
    *  or the post composer (trapped inside contentLayer z-index 4, so the
    *  chrome at 260 must stand down for the composer to be tappable). */
@@ -4070,6 +3978,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [activeTab, committedTab, nativeMapCoordinate, nativeMapWebFallback])
+
+  useNativeMapPresentation(mapFrameRef, mapSurfaceVisible, holdOpen || overlayOpen || mapOverlayOpen || activePermission !== null
+    || subscreenFullscreen || composerOpen || feedAdSlotOpen || Boolean(incomingCall))
 
   // A transparent WKWebView is still a full-screen UIKit hit target. Report
   // the real, currently visible HUD rectangles to native; its managed WebView
@@ -4610,6 +4521,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const ownRadiusColor = ownPinColor ? PIN_COLOR_SWATCH[ownPinColor] : '#f53c99'
   const [feedPinColor, setFeedPinColor] = useState<string | undefined>()
   const [feedReachKm, setFeedReachKm] = useState<number | null>(null)
+  const [feedCounterKey, setFeedCounterKey] = useState<string | null>(null)
   // The open pop's own reach on the PROFILE. The feed has always reported
   // this; the profile never did, so opening a pop there showed the account
   // total instead of that pop's radius — 0.0mi over a 6.5km pop.
@@ -4620,7 +4532,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
    *  and pop count, reported by ProfileTwin. The corner card reports the
    *  person you are looking at; null means the profile is your own. */
   const [visitedTotals, setVisitedTotals] = useState<{ radiusKm: number; posts: number } | null>(null)
-  const onFeedPostReach = useCallback((km: number | null, color?: string) => { setFeedReachKm(km); setFeedPinColor(color) }, [])
+  const onFeedPostReach = useCallback((km: number | null, color?: string, postKey?: string) => {
+    setFeedReachKm(km); setFeedPinColor(color); setFeedCounterKey(postKey ?? null)
+  }, [])
   /** The Times reports the story the reader is currently dwelling on. */
   const [newsReachKm, setNewsReachKm] = useState<number | null>(null)
   useEffect(() => {
@@ -4716,13 +4630,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // accumulate behaviour and the trend line all have to agree about that or
   // the card contradicts itself.
   const profileHasPopSubject = activeTab === 'profile' && profileReachKm != null
-  const onlineAudience = activeTab === 'map'
-    ? (mapHudContext?.onlineUsers ?? SPOOFED_ONLINE_AUDIENCE)
-    : SPOOFED_ONLINE_AUDIENCE
-  const onlineIsGlobal = activeTab !== 'map'
-    || mapHudContext == null
-    || mapHudContext.scope === 'world'
-    || mapHudContext.scope === 'current'
+  const onlineAudience = useOnlinePeople()
+  const onlineText = onlineAudience == null ? '—' : onlineAudience.toLocaleString()
   const mapRadiusTrend = mapHudContext == null
     ? `${POST_COUNT} nearby`
     : mapHudContext.scope === 'world'
@@ -5025,13 +4934,16 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       window.clearTimeout(discoDeadlineTimerRef.current)
       discoDeadlineTimerRef.current = null
     }
+    const isRadio = musicPlayback.sources.some(source => source.endsWith(':radio'))
+    const maxMs = isRadio ? RADIO_DISCO_CUBE_MS : DISCO_CUBE_MAX_MS
+    const minMs = isRadio ? 0 : DISCO_CUBE_MIN_MUSIC_MS
     const decision = reconcileDiscoCubeSession(
       musicSessionRef.current,
       musicPlayback.playing,
       Date.now(),
-      DISCO_CUBE_MAX_MS,
+      maxMs,
       discoCubeVisible,
-      DISCO_CUBE_MIN_MUSIC_MS,
+      minMs,
       discoNavigationContext,
     )
     musicSessionRef.current = decision.session
@@ -5049,9 +4961,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           current,
           getMusicPlaybackSnapshot().playing,
           Date.now(),
-          DISCO_CUBE_MAX_MS,
+          maxMs,
           discoCubeVisible,
-          DISCO_CUBE_MIN_MUSIC_MS,
+          minMs,
           discoNavigationContext,
         )
         musicSessionRef.current = ready.session
@@ -5070,7 +4982,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         discoDeadlineTimerRef.current = null
       }
     }
-  }, [discoCubeActive, discoCubeVisible, discoNavigationContext, musicPlayback.playing])
+  }, [discoCubeActive, discoCubeVisible, discoNavigationContext, musicPlayback.playing, musicPlayback.sources])
 
   // Focused Map news and weather win while Map is the current surface; music
   // remains global. When those signals clear, this falls through to the model
@@ -5496,12 +5408,11 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // The feed's comment box is the same kind of layer — no ✕ of its own, so
     // the cube is how you leave it.
     if (activeTab === 'feed' && feedBackRef.current?.()) { playPop(); return }
-    // On the unobstructed Feed, the TV cube is the deliberate ad action. The
-    // playing post supplies the suggestion; passive playback never opens it.
+    // Feed's TV cube reveals its side rails. Ads belong to content breaks.
     if (activeTab === 'feed') {
       playPop()
       setPopping(true)
-      feedActionsRef.current?.('suggestion')
+      window.dispatchEvent(new CustomEvent('poplur-feed-reveal-controls'))
       return
     }
     // On the map the globe is an affirmative action, not a decorative tab
@@ -5695,7 +5606,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                   stopMapRadio()
                   return
                 }
-                const location = radioLocationRef.current
+                const location = selectedRadioLocationRef.current ?? radioLocationRef.current
                 if (location) startRadioForMap(location.lat, location.lng)
                 else startRadioForMap()
               }}
@@ -5704,7 +5615,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               active={Boolean(radiusRewardDiceSignal)}
               onPress={() => {
                 playPop(0.25)
-                if (!radiusRewardDiceSignal) announceRadiusRewardNavigator(true)
+                announceRadiusRewardNavigator(true)
               }}
             />
             <SideControlIconButton
@@ -5833,7 +5744,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         {mainSurfaceVisible && committedTab === 'feed' && (
           <FeedTwin
             index={chanIndex}
-            onIndexChange={setChanIndex}
+            onIndexChange={changeFeedChannel}
             onPostReach={onFeedPostReach}
             onContentAdvance={reportFeedContentAdvance}
             focusedContent={feedFocusedContent}
@@ -5953,6 +5864,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             viewUser={viewingUser}
             viewUserId={viewingUserId}
             highlightPops={profilePopFlash}
+            openPostRequest={profileNotificationPost}
+            onPostRequestHandled={() => setProfileNotificationPost(null)}
             onPostCountChange={setProfilePostCount}
             onPostReach={onProfilePostReach}
             onVisitedTotals={setVisitedTotals}
@@ -6090,20 +6003,18 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                 : mapHasAccumulatedRadius || activeTab === 'profile'
                   ? 'TOTAL RADIUS ◆'
                   : 'RADIUS ◆'}</span>
-            {/* `&& !chromeIdle`: the counter re-counts on every DATA change —
-                and the feed changes `radius` on every clip advance (~10s), so
-                an untouched feed ran an 880ms rAF volley, per-frame restyle,
-                ~23 tick oscillators and an AudioContext wake every ten seconds
-                forever. Idle snaps the number instead; the first touch
-                un-idles the chrome and the very next change beats again. */}
+            {/* One short counter per visible post; no whole-HUD remount. */}
             <AnimatedRadiusMetrics
               pinColor={(activeTab === 'map' ? mapFocusedPoint?.color : activeTab === 'profile' ? profilePinColor : activeTab === 'feed' ? feedPinColor : undefined) ?? ownRadiusColor}
               radius={shownRadiusKm * (unitMi ? KM_TO_MI : 1)}
               ceiling={unitMi ? EARTH_RADIUS_KM * KM_TO_MI : EARTH_RADIUS_KM}
               unit={unitMi ? 'mi' : 'km'}
-              active={recordMs == null && !chromeIdle}
+              active={recordMs == null && !chromeIdle && !chromeGone && surfaceVisible}
               accumulated={!seenUser && (mapHasAccumulatedRadius || (activeTab === 'profile' && !profileHasPopSubject))}
-              recountKey={activeTab === 'map'
+              continueCount={activeTab === 'feed'}
+              recountKey={activeTab === 'feed'
+                ? feedCounterKey
+                : activeTab === 'map'
                 ? traversedPinKey
                 // The profile's radius tower (RadiusStrikerRail) climbs on
                 // this same beat whenever its subject changes — coming to the
@@ -6161,10 +6072,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
               </div>
             </div>
             <div className={styles.statsRows}>
-              <div className={styles.statsRow} aria-label={`${compactAudience(onlineAudience)} users online ${onlineIsGlobal ? 'in the app' : 'in this area'}`}>
-                <span className={styles.statLabel}>{onlineIsGlobal ? 'ONLINE NOW' : 'ONLINE HERE'}</span>
-                <AnimatedOnlineCount value={onlineAudience} active />
-                <span className={styles.statSub}>{onlineIsGlobal ? 'users in app' : 'users in this area'}</span>
+              <div className={styles.statsRow} aria-label={onlineAudience == null ? 'Online count unavailable' : `${onlineText} people online in Poplur`}>
+                <span className={styles.statLabel}>ONLINE NOW</span>
+                <span className={`${styles.statValue} ${styles.onlineValueShader}`}>{onlineText}</span>
+                <span className={styles.statSub}>{onlineAudience == null ? 'Live count unavailable' : onlineAudience === 1 ? 'person in app' : 'people in app'}</span>
               </div>
               <div className={styles.statsRow} aria-label={`${statsPostCount} posts published`}>
                 <span className={styles.statLabel}>YOUR POPS ◆</span>
@@ -6261,32 +6172,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             <span key={mapPlace} className={styles.mapTitleText}>
               {/* The eyebrow is what makes this the same object as the focused
                   point's card rather than a lookalike: type first, name second,
-                  and the area count as a sub-line inside the same card. */}
+                  with the selected place name beneath it. */}
               <em className={styles.mapTitleKind}>{mapAreaPops?.overall ? 'WORLD' : 'AREA'}</em>
               <strong className={styles.mapTitleName}>{mapPlace}</strong>
-              {!mapTourOn && mapAreaPops && (
-                <button
-                  type="button"
-                  data-poplur-native-hit-region
-                  key={`area-${mapAreaPops.overall ? 'world' : 'local'}-${mapAreaPops.count}-${mapAreaPops.ids[0] ?? ''}`}
-                  className={styles.mapAreaPops}
-                  disabled={mapAreaPops.ids.length === 0}
-                  onClick={() => {
-                    if (!mapAreaPops.ids.length) return
-                    playPop()
-                    setProfilePopFlash(prev => ({ ids: mapAreaPops.ids, seq: (prev?.seq ?? 0) + 1 }))
-                    setViewingUser(null)
-                    setViewingUserId(null)
-                    setActiveTab('profile')
-                  }}
-                >
-                  {mapAreaPops.overall
-                    ? `${mapAreaPops.count} pops posted overall`
-                    : mapAreaPops.count === 1
-                      ? '1 pop posted in this area'
-                      : `${mapAreaPops.count} pops posted in this area`}
-                </button>
-              )}
             </span>
           )}
           <MapRadioStatusLabel className={styles.mapRadioLabel} />

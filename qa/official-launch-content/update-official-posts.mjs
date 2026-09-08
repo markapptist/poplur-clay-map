@@ -4,8 +4,8 @@
 // ceiling as reaching everyone, which is what keeps App Review's feed full
 // anywhere on the planet); every other post drops to the city-scale radius
 // its creative was DESIGNED with (demoFeedMedia.ts DEMO_CREATIVES /
-// DEMO_PHOTOS). Reach still ships as permanent boost, so radiusDecay keeps
-// ignoring these. Each post also gains one of the five supplied clay pin
+// DEMO_PHOTOS). Seeded reach follows the same decay as other posts; these
+// records are not credit purchases. Each post also gains a supplied clay pin
 // colours so the takeover terrain paints varied colour across the map.
 import { execFileSync } from 'node:child_process'
 const FS = 'https://firestore.googleapis.com/v1/projects/poplur2025/databases/(default)/documents'
@@ -63,8 +63,8 @@ for (const [postId, designedMeters, pinColor] of POSTS) {
     body: JSON.stringify({ fields: {
       radiusMeters: { integerValue: String(radius) },
       radius: { integerValue: String(radius) },
-      boostedRadiusMeters: { integerValue: String(radius) },
-      organicRadiusMeters: { integerValue: '0' },
+      boostedRadiusMeters: { integerValue: '0' },
+      organicRadiusMeters: { integerValue: String(radius) },
       pinColor: { stringValue: pinColor },
     } }),
   })

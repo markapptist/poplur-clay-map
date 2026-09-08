@@ -1,3 +1,5 @@
+import GestureNavigationDock from './GestureNavigationDock'
+import { GESTURE_NAVIGATION_TRIAL } from './gestureNavigation'
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { SideControlIconImage } from './SideControlIcon'
 import iconStyles from './SideControlIcon.module.css'
@@ -183,6 +185,12 @@ export default function ClayArrowCluster({
       />
     </button>
   )
+
+  if (GESTURE_NAVIGATION_TRIAL) return <GestureNavigationDock
+    {...rest} className={className} label={[topLabel, label].filter(Boolean).join(' · ')}
+    hints={{ up: upLabel, down: downLabel, left: leftLabel, right: rightLabel }}
+    onAction={step}
+  />
 
   return (
     <div

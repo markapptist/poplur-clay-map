@@ -26,6 +26,7 @@ export const NOTIFICATION_FOCUS_PIN_EVENT = 'poplur-notification-focus-pin'
 export interface PinFocusRequest {
   /** The post the notification is about. Absent for account-wide radius news
    *  (the daily check-in), which focuses the largest of your own pops. */
+  notificationId?: string
   postId?: string
   /** Signed kilometres when the row names them; the map badges and pulses with
    *  it. Absent for an engagement whose weight the push does not carry — the
@@ -73,7 +74,7 @@ function pinFocusRequest(n: Notification): PinFocusRequest | null {
   // A trend/insight row with no post and no number has nowhere on the map to
   // point; it keeps the profile route.
   if (!postId && kind === 'trend') return null
-  return { ...(postId ? { postId } : {}), ...(deltaKm != null ? { deltaKm } : {}), ...(pulse ? { pulse } : {}), kind }
+  return { ...(n.key ? { notificationId: n.key } : {}), ...(postId ? { postId } : {}), ...(deltaKm != null ? { deltaKm } : {}), ...(pulse ? { pulse } : {}), kind }
 }
 
 /**
@@ -88,6 +89,10 @@ export function followNotification(n: Notification): void {
       return
     }
     window.dispatchEvent(new CustomEvent('poplur-open-notification', { detail: n }))
+    return
+  }
+  if (notifIconKind(n.kind) === 'comment' && target?.mode === 'media' && target.postId) {
+    window.dispatchEvent(new CustomEvent('poplur-open-post-notification', { detail: { postId: target.postId, comments: true } }))
     return
   }
   const focus = pinFocusRequest(n)

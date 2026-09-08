@@ -1,3 +1,7 @@
+import BuildingStylePreview, { BUILDING_STYLE_PREVIEW, buildingPreviewShade } from './BuildingStylePreview'
+import { onFrame } from './frameGovernor'
+import { cutMapCamera } from './cutMapCamera'
+import { useImmersiveControls } from './useImmersiveControls'
 import { useMapDiscovery } from './useMapDiscovery'
 import { MapDiscoveryLayers } from './MapDiscoveryLayers'
 import React, { useRef, useState, useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
@@ -204,9 +208,6 @@ import {
   mapPointCycleDestinationPose,
   mapPointRadiusFrameZoom,
   programmaticCameraBlurAllowed,
-  programmaticCameraPoseMatches,
-  programmaticCameraPlan,
-  programmaticCameraPlanForMode,
   type MapPointCameraSubject,
   type ProgrammaticCameraMode,
 } from './programmaticCameraMotion'
@@ -237,6 +238,8 @@ import {
 // stationName), which is data, not web playback.
 import { cancelVoiceSpeech, estimatedVoiceDurationMs, speakWithVoiceAudioFocus } from './voiceAudio'
 import { smartCardFor } from './tourSmarts'
+import { useIdleMapBroadcast } from './useIdleMapBroadcast'
+import { nativeAmbientDeadline } from './ambientWorkBudget'
 import { startEngagementChips, engagementVerb, type EngagementEvent } from './engagement'
 import { ambientAllowed, currentQuality, onAmbientSleepChange, onQualityChange, onTick } from './frameGovernor'
 import PopupHost, { showPopup, clearPopups, onFoodSuggestionVisibilityChange, onMapContentPopupChange } from './popups'
@@ -296,9 +299,11 @@ import {
 } from './regionAudio'
 import {
   announceMapTour, getRadioPlaybackState, isMapRadioActive, isRadioBackgroundEnabled,
-  nowPlayingStation, startRadioForMap, startDefaultMapRadio, setMapRadioEnabled, stopMapRadio, subscribeRadioPlayback, tuneLiveRadio,
+  nowPlayingStation, startRadioForMap, setMapRadioEnabled, stopMapRadio, subscribeRadioPlayback, tuneLiveRadio,
+  tuneMapRadioLocation,
 } from './mapRadio'
-import { isNativeShell, isRNWebShellRoute, postNativeEvent, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
+import { publishMapRadioLocation } from './mapRadioLocation'
+import { isNativeShell, isRNWebShellRoute, postNativeEvent, wakeManagedRendering } from './nativeBridge'
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { onAudioFocusChange } from './audioFocus'
 import { playPop } from './pop'
@@ -560,6 +565,9 @@ const PIN_FOCUS_WAIT_MS = 10_000
 
 /** A notification's ask, validated off the wire (see notificationBanner.ts). */
 interface PinFocusMapRequest {
+  notificationId?: string
+  beforeKm?: number
+  afterKm?: number
   postId?: string
   own?: 'largest'
   deltaKm?: number
@@ -574,14 +582,9 @@ function pinFocusMapRequest(data: Record<string, unknown>): PinFocusMapRequest |
     ? data.deltaKm
     : undefined
   const pulse = data.pulse === 'gain' || data.pulse === 'loss' ? data.pulse : undefined
-  return { ...(postId ? { postId } : {}), ...(own ? { own } : {}), ...(deltaKm != null ? { deltaKm } : {}), ...(pulse ? { pulse } : {}) }
+  return { ...(typeof data.notificationId === 'string' ? { notificationId: data.notificationId.slice(0, 500) } : {}), ...(postId ? { postId } : {}), ...(own ? { own } : {}), ...(deltaKm != null ? { deltaKm } : {}), ...(pulse ? { pulse } : {}) }
 }
 const DEFAULT_NAV_ORIGIN: [number, number] = [-79.3811, 43.6487]
-// Cross-country movement on Mercator stays top-down. The shared map's zoom-3
-// floor still keeps the finite world sheet well outside a phone viewport for
-// every tour destination, while requesting fewer detailed corridor tiles than
-// the former zoom-4 floor.
-const FLAT_TRAVEL_MIN_ZOOM = MAP_MIN_ZOOM
 // Mapbox resolves its final camera frame just after the advertised duration.
 // Keep that small settle tail inside the finite lease instead of reopening the
 // map's ambient renderer for an arbitrary window.
@@ -615,17 +618,6 @@ const TOUR_MAP_READY_RETRY_MS = 160
 const TOUR_MAP_READY_MAX_ATTEMPTS = 32
 const TOUR_3D_REVEAL_START_ZOOM = 13.9
 const NO_MAP_PINS: PopPin[] = []
-const MAP_GLOBAL_ONLINE = 1_200_000
-
-// ── The pop-to-pop trip ─────────────────────────────────────────────────────
-// Climb, cross, descend (see flyToPop). Module-level because the trip is no
-// longer the only thing that needs its length: whatever draws the arrival has
-// to land WITH the camera, and a second hand-tuned delay somewhere else would
-// drift the moment these are retuned.
-const TRIP_CLIMB_MS = 950
-const TRIP_CROSS_MS = 2200
-/** Take-off to touchdown. The crossing starts 60ms before the climb settles. */
-const TRIP_TOTAL_MS = TRIP_CLIMB_MS - 60 + TRIP_CROSS_MS
 
 // ── Engagement traversal ────────────────────────────────────────────────────
 // Engagement is news about a post, and a post is a place: when one lands while
@@ -671,6 +663,8 @@ function forcedSkyShade(day: boolean) {
 /** Optional deterministic preview switch, forwarded by Home into this map
  * document. Production has no parameter and always follows the local clock. */
 function currentSkyShade() {
+  const buildingPreview = buildingPreviewShade()
+  if (buildingPreview) return buildingPreview
   if (typeof window !== 'undefined') {
     const forced = new URLSearchParams(window.location.search).get('map-night')
     if (forced === '1') return forcedSkyShade(false)
@@ -758,14 +752,6 @@ function accountPostedClaims(pins: readonly LiveMapPostPin[]) {
   }))
 }
 
-/** Stable local presence until the live audience service replaces it. Keeping
- *  it coordinate-derived avoids a number that flickers every time moveend
- *  fires while still making different neighbourhoods feel different. */
-function mapAreaOnline(center: [number, number], popCount: number): number {
-  const seed = Math.abs(Math.round(center[0] * 1_000 * 31 + center[1] * 1_000 * 17))
-  return 24 + popCount * 29 + (seed % 83)
-}
-
 function destinationsForTopics(topics: readonly MapTourTopic[]): TourDestination[] {
   const selected = new Set(topics)
   return TOUR_DESTINATIONS.filter(destination => selected.has(TOUR_TOPIC_FOR_KIND[destination.kind]))
@@ -849,12 +835,15 @@ export default function MapApp() {
     setProgrammaticCameraMoving(true)
     return finish
   }, [clearProgrammaticCameraMotion])
-  // Generation guard for the flat-map camera's three stages. Any new flight,
+  // Generation guard for asynchronous destination frames. Any new flight,
   // touch, stop, or background transition invalidates the outstanding stage
   // listener before it can pull the camera away again.
+  const cameraCutCancelRef = useRef<(() => void) | null>(null)
   const stagedCameraFlightRef = useRef({ serial: 0 })
   const cancelStagedCameraFlight = useCallback((preserveCameraOwnership = false) => {
     stagedCameraFlightRef.current.serial += 1
+    cameraCutCancelRef.current?.()
+    cameraCutCancelRef.current = null
     clearProgrammaticCameraMotion()
     const map = mapRef.current as (mapboxgl.Map & {
       __cinematic?: boolean
@@ -1261,6 +1250,7 @@ export default function MapApp() {
   const tourIdleRef = useRef<{ schedule: () => void; cancel: () => void }>({
     schedule: () => {}, cancel: () => {},
   })
+  const idleBroadcastControlRef = useRef({ restart: () => {}, stop: () => {} })
   // The shell can move the always-mounted map iframe behind another tab before
   // this component's tour callbacks are declared. Route that early lifecycle
   // message to the current stop function without capturing a stale callback.
@@ -1467,6 +1457,7 @@ export default function MapApp() {
 
   const flyToPlace = useCallback((center: [number, number], name: string) => {
     playPop(0.3)
+    publishMapRadioLocation(center)
     searchInterruptRef.current()
     manualDestinationGuardUntilRef.current = Date.now() + MANUAL_DESTINATION_ENGAGEMENT_GRACE_MS
     setCurrentPlace(displayPlaceName(name))
@@ -1525,41 +1516,18 @@ export default function MapApp() {
       ? landmarkCameraFrame(framedDestination.id)
       : null
     const destinationZoom = landmarkFrame?.zoom ?? 15.4
-    const cameraPlan = programmaticCameraPlan(
-      (map as unknown as mapboxgl.Map).getZoom(),
-      destinationZoom,
-    )
-    if (landmarkFrame) {
-      // Wide browsing deliberately locks maxPitch to zero. Release that lock
-      // before this one authored landmark flight or Mapbox clamps the requested
-      // hero angle to a top-down view before the animation even begins.
-      map.setMinPitch?.(0)
-      map.setMaxPitch?.(MAP_BROWSE_3D_MAX_PITCH)
-      map.__cinematic = true
-    }
-    wakeManagedRendering(3400 + (landmarkFrame
-      ? LANDMARK_RENDER_SETTLE_MS
-      : MANAGED_CAMERA_SETTLE_MS))
-    if (cameraPlan.kind === 'translate') {
-      beginProgrammaticCameraMotion(map as unknown as mapboxgl.Map, 3400)
-      map.easeTo({
-        center: landmarkFrame?.center ?? center,
-        zoom: cameraPlan.zoom,
-        duration: 3400,
-        easing: (t: number) => t * t * (3 - 2 * t),
-        essential: true,
-      })
-    } else {
-      map.easeTo({
-        center: landmarkFrame?.center ?? center,
-        bearing: landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING,
-        zoom: destinationZoom,
-        pitch: landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH,
-        duration: 3400,
-        easing: (t: number) => t * t * (3 - 2 * t),
-        essential: true,
-      })
-    }
+    map.setMinPitch?.(0)
+    map.setMaxPitch?.(MAP_BROWSE_3D_MAX_PITCH)
+    map.__cinematic = true
+    wakeManagedRendering(landmarkFrame ? LANDMARK_RENDER_SETTLE_MS : MANAGED_CAMERA_SETTLE_MS)
+    map.easeTo({
+      center: landmarkFrame?.center ?? center,
+      bearing: landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING,
+      zoom: destinationZoom,
+      pitch: landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH,
+      ...(landmarkFrame?.offset ? { offset: landmarkFrame.offset } : {}),
+      duration: 0, essential: true,
+    })
     // A search hit inside the post picker is TRAVEL, not sightseeing: the
     // person is telling us where they want the post to go. Move the pending
     // point with the camera, or "Use this spot" would still be aimed at the
@@ -1567,7 +1535,7 @@ export default function MapApp() {
     // this only while the picker is up, so the browse map is untouched.
     ;(map as unknown as { __poplurPickerAnchor?: (target: [number, number]) => void })
       .__poplurPickerAnchor?.(landmarkFrame?.center ?? center)
-  }, [beginProgrammaticCameraMotion, closeSearch, mapRef])
+  }, [closeSearch, mapRef])
 
   // Keep the place half of the status truthful after a manual pan as well as
   // after a tour/search action. Curated destinations win near their own
@@ -1679,9 +1647,13 @@ export default function MapApp() {
 
   const speakMapLine = useCallback((line: string, stations: ReadonlyArray<RadioStationCue> = []): boolean => {
     if (!applySoundState(true)) return false
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: 'poplur-map-speak', line }, '*')
+      return true
+    }
     // Narration may duck/mix with a station the listener deliberately started,
     // but it must never allocate a radio bed merely because a tour line fired.
-    if (isRadioBackgroundEnabled() && isMapRadioActive()) return announceMapTour(line, stations)
+    if (isMapRadioActive()) return announceMapTour(line, stations)
     return speakWithVoiceAudioFocus(line, { rate: 0.95, pitch: 0.98 })
   }, [applySoundState])
 
@@ -1907,38 +1879,20 @@ export default function MapApp() {
       setCenter: (lng: number, lat: number, zoom?: number) => {
         const map = mapRef.current
         if (!map) return
-        const duration = 800
-        const cameraPlan = programmaticCameraPlan(map.getZoom(), zoom ?? map.getZoom())
-        wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
-        if (cameraPlan.kind === 'translate') beginProgrammaticCameraMotion(map, duration)
-        map.easeTo({ center: [lng, lat], zoom: cameraPlan.zoom, duration })
+        wakeManagedRendering(MANAGED_CAMERA_SETTLE_MS)
+        map.easeTo({ center: [lng, lat], zoom: zoom ?? map.getZoom(), duration: 0 })
       },
       flyTo: (lng: number, lat: number, zoom: number) => {
         const map = mapRef.current
         if (!map) return
-        ;(map as unknown as { __cinematic?: boolean }).__cinematic = true
-        const duration = 4600
-        const cameraPlan = programmaticCameraPlan(map.getZoom(), zoom)
-        wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
-        if (cameraPlan.kind === 'translate') {
-          beginProgrammaticCameraMotion(map, duration)
-          map.easeTo({
-            center: [lng, lat],
-            zoom: cameraPlan.zoom,
-            duration,
-            easing: (t: number) => t * t * (3 - 2 * t),
-            essential: true,
-          })
-          return
-        }
-        map.flyTo({
-          center: [lng, lat],
-          zoom: cameraPlan.zoom,
+        wakeManagedRendering(MANAGED_CAMERA_SETTLE_MS)
+        map.setMinPitch(0)
+        map.setMaxPitch(streetView ? 85 : MAP_BROWSE_3D_MAX_PITCH)
+        map.easeTo({
+          center: [lng, lat], zoom,
           pitch: streetView ? 82 : MAP_BROWSE_3D_PITCH,
           bearing: streetView ? map.getBearing() : MAP_BROWSE_3D_BEARING,
-          duration,
-          curve: 1.7,
-          essential: true,
+          duration: 0, essential: true,
         })
       },
       setSky: (day: boolean) => setSky(forcedSkyShade(day)),
@@ -1950,9 +1904,11 @@ export default function MapApp() {
     return () => { delete w.__poplurNative }
   }, [applySoundState, beginProgrammaticCameraMotion, streetView])
 
+  // Selecting another point is a cut to its framed location. No intermediate
+  // cities, flattened travel stage or cross-world pan should be rendered.
   const flyToCenter = useCallback((
     center: [number, number],
-    duration = 4600,
+    _duration = 4600,
     landmarkFrame?: LandmarkCameraFrame | null,
     motionMode: ProgrammaticCameraMode = 'default',
     onArrival?: () => void,
@@ -1960,351 +1916,63 @@ export default function MapApp() {
   ) => {
     const map = mapRef.current
     if (!map) return false
-    const mapCamera = map as unknown as {
-      __cinematic?: boolean
-      __tripping?: boolean
-      __claimCamera?: () => void
-      __poplurCameraClaimed?: boolean
-      __suppressNextMapClickUntil?: number
+    publishMapRadioLocation(center)
+    const camera = map as unknown as {
+      __cinematic?: boolean; __tripping?: boolean; __claimCamera?: () => void
+      __poplurCameraClaimed?: boolean; __suppressNextMapClickUntil?: number
       __cancelAdaptiveCameraSettle?: () => void
     }
     cancelStagedCameraFlight()
-    mapCamera.__claimCamera?.()
-    mapCamera.__poplurCameraClaimed = true
-    // Hold ownership before retiring the old easing. Mapbox emits moveend from
-    // stop() synchronously; without these flags ClayMap can queue its ordinary
-    // adaptive settle in the tiny gap before the new authored flight begins.
-    mapCamera.__cinematic = true
-    mapCamera.__tripping = true
-    mapCamera.__cancelAdaptiveCameraSettle?.()
-    // Retire any older Mapbox animation before arming this generation. Its
-    // moveend listener sees the invalid serial and cannot launch another stage.
+    camera.__claimCamera?.()
+    camera.__poplurCameraClaimed = true
+    camera.__cinematic = true
+    camera.__tripping = true
+    camera.__cancelAdaptiveCameraSettle?.()
     map.stop()
-    const flightSerial = stagedCameraFlightRef.current.serial
-    const ownsFlight = () => stagedCameraFlightRef.current.serial === flightSerial
+    const serial = stagedCameraFlightRef.current.serial
     const targetCenter = landmarkFrame?.center ?? center
     const targetZoom = landmarkFrame?.zoom ?? (streetView ? 18.9 : BUILDING_REVEAL_ZOOM)
-    const targetPitch = streetView
-      ? 82
-      : subtleLandmarkPitch(landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH)
-    const targetBearing = landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING
     const currentZoom = map.getZoom()
-    const currentPitch = map.getPitch()
-    const currentBearing = map.getBearing()
-    const authoredMotion = motionMode !== 'default'
     const currentCenter = map.getCenter()
-    const atWorldOverview = worldCountryZoomActive(currentZoom, MAP_MIN_ZOOM)
-    const hopMeters = distanceMeters([currentCenter.lng, currentCenter.lat], targetCenter)
-    const cameraPlan = motionMode === 'map-point-cycle'
+    const atWorldOverview = motionMode === 'map-point-cycle' && worldCountryZoomActive(currentZoom, MAP_MIN_ZOOM)
+    const plan = motionMode === 'map-point-cycle'
       ? mapPointCycleCameraPlan({
-        currentZoom,
-        targetZoom,
-        distanceMeters: hopMeters,
+        currentZoom, targetZoom,
+        distanceMeters: distanceMeters([currentCenter.lng, currentCenter.lat], targetCenter),
         requiresTargetFraming: Boolean(landmarkFrame),
         holdWideOverview: atWorldOverview,
       })
-      : programmaticCameraPlanForMode(currentZoom, targetZoom, motionMode)
-
-    if (motionMode === 'map-point-cycle' && cameraPlan.kind === 'translate') {
-      // Arrow browsing is selection, not a replay of the cinematic tour: no
-      // flatten, pull-back, or second reveal move. The next point is put
-      // under the camera in ONE frame — a flip, not a pan. A paced ease
-      // between points was tried and rejected (5 Sep 2026): stepping pin to
-      // pin, a cut reads as "next", a glide reads as travel nobody asked for.
-      // Zoom is the nearby-preserved or subject-framed destination chosen
-      // above. Close pins regain the shallow isometric board after a world
-      // view; landmarks use their authored hero angle. A zero-duration ease
-      // (rather than jumpTo) keeps Mapbox's support for an authored landmark
-      // offset.
-      const destinationPose = mapPointCycleDestinationPose({
-        finalZoom: cameraPlan.zoom,
-        currentZoom,
-        currentPitch,
-        currentBearing,
-        targetPitch,
-        targetBearing,
-        subject: pointSubject ?? 'pin',
-        streetView,
-      })
-      mapCamera.__suppressNextMapClickUntil = Date.now() + 500
-      wakeManagedRendering(MANAGED_CAMERA_SETTLE_MS)
-      map.setMinPitch(0)
-      // A world frame leaves Mapbox's pitch ceiling at zero. Raise it without
-      // moving the camera before the single atomic destination ease.
-      map.setMaxPitch(Math.max(destinationPose.maxPitch, currentPitch, destinationPose.pitch))
-      try {
-        map.easeTo({
-          center: targetCenter,
-          zoom: cameraPlan.zoom,
-          pitch: destinationPose.pitch,
-          bearing: destinationPose.bearing,
-          // The authored offset is pixel framing for the hero close-up; a
-          // held birds-eye survey centres the subject instead.
-          ...(landmarkFrame?.offset && !atWorldOverview ? { offset: landmarkFrame.offset } : {}),
-          duration: 0,
-          essential: true,
-        })
-      } catch {
-        if (ownsFlight()) {
-          mapCamera.__tripping = false
-          mapCamera.__cinematic = false
-        }
-        return false
-      }
-      // A zero-duration ease lands synchronously, so ownership and the pitch
-      // ceiling are handed back right here — and the arrival callback (SELECT
-      // MODE opening the pop's card) fires on the frame the pin appears.
-      if (ownsFlight()) {
-        map.setMaxPitch(destinationPose.maxPitch)
-        mapCamera.__tripping = false
-        mapCamera.__cinematic = false
-        onArrival?.()
-      }
-      return true
-    }
-
-    // The authored tour crosses flat and stops just below the 3D threshold.
-    // Only the destination reveal requests close tiles/extrusions/GLB work;
-    // doing that work during the tail of the world crossing rendered the same
-    // expensive scene twice on iPhone.
-    const travelTargetZoom = authoredMotion && targetZoom > TOUR_3D_REVEAL_START_ZOOM
-      ? TOUR_3D_REVEAL_START_ZOOM
-      : targetZoom
-    const flattenMs = authoredMotion
-      ? Math.max(120, Math.round(duration * 0.08))
-      : Math.min(700, Math.max(320, Math.round(duration * 0.08)))
-    const arrivalMs = authoredMotion
-      ? Math.max(260, Math.round(duration * 0.275))
-      : Math.min(1100, Math.max(520, Math.round(duration * 0.12)))
-    const travelMs = Math.max(authoredMotion ? 300 : 800, duration - flattenMs - arrivalMs)
-    mapCamera.__suppressNextMapClickUntil = Date.now() + duration + 500
-    // Close adaptive views normally lock pitch into the 3D band. Temporarily
-    // release that floor so the first beat can genuinely flatten.
+      : { zoom: targetZoom }
+    const pose = mapPointCycleDestinationPose({
+      finalZoom: plan.zoom, currentZoom,
+      currentPitch: map.getPitch(), currentBearing: map.getBearing(),
+      targetPitch: streetView ? 82 : subtleLandmarkPitch(landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH),
+      targetBearing: landmarkFrame?.bearing ?? MAP_BROWSE_3D_BEARING,
+      subject: pointSubject ?? (landmarkFrame ? 'landmark' : 'pin'), streetView,
+    })
+    camera.__suppressNextMapClickUntil = Date.now() + 500
+    wakeManagedRendering(MANAGED_CAMERA_SETTLE_MS)
     map.setMinPitch(0)
-    map.setMaxPitch(85)
-    if (authoredMotion) {
-      sustainManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
-    } else {
-      wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
-    }
-
-    if (cameraPlan.kind === 'translate') {
-      // Already-close cameras travel across the board at their current scale.
-      // Centering the authored frame is enough to keep the destination in
-      // view; there is no flatten/pull-back/reveal cycle to make the map pulse.
-      map.setMinPitch(0)
-      map.setMaxPitch(streetView ? 85 : Math.max(MAP_BROWSE_3D_MAX_PITCH, targetPitch))
-      beginProgrammaticCameraMotion(map, duration)
-      map.once('moveend', () => {
-        if (!ownsFlight()) return
-        mapCamera.__tripping = false
-        mapCamera.__cinematic = false
+    map.setMaxPitch(Math.max(pose.maxPitch, map.getPitch(), pose.pitch))
+    try {
+      cameraCutCancelRef.current = cutMapCamera(map, {
+        center: targetCenter, zoom: plan.zoom, pitch: pose.pitch, bearing: pose.bearing,
+        ...(landmarkFrame?.offset && !atWorldOverview ? { offset: landmarkFrame.offset } : {}),
+      }, () => {
+        if (stagedCameraFlightRef.current.serial !== serial) return
+        camera.__cinematic = camera.__tripping = false
+        map.setMaxPitch(pose.maxPitch)
         onArrival?.()
       })
-      map.easeTo({
-        center: targetCenter,
-        zoom: cameraPlan.zoom,
-        ...(landmarkFrame ? { pitch: targetPitch, bearing: targetBearing } : {}),
-        ...(landmarkFrame?.offset ? { offset: landmarkFrame.offset } : {}),
-        duration,
-        easing: (t: number) => t * t * (3 - 2 * t),
-        essential: true,
-      })
-      return true
+    } catch {
+      camera.__cinematic = camera.__tripping = false
+      return false
     }
-
-    // Beat 1: flatten while still close to the ground. No world edge can enter
-    // the frustum because the map has not pulled back yet.
-    map.once('moveend', () => {
-      if (!ownsFlight()) return
-      if (!programmaticCameraPoseMatches(
-        { zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() },
-        { pitch: 0, bearing: 0 },
-        { pitch: 0.75, bearing: 1.5 },
-      )) return
-      window.setTimeout(() => {
-        if (!ownsFlight()) return
-        mapCamera.__cinematic = true
-        mapCamera.__tripping = true
-        map.setMinPitch(0)
-        map.setMaxPitch(0)
-
-        // Beat 2: cross the world top-down. The old globe-era shot combined
-        // zoom 0.9 with a 60-degree pitch, which literally looked beyond the
-        // finite Mercator sheet and produced the black triangle.
-        map.once('moveend', () => {
-          if (!ownsFlight()) return
-          const travelledCenter = map.getCenter()
-          if (distanceMeters(
-            [travelledCenter.lng, travelledCenter.lat],
-            targetCenter,
-          ) > 650 || !programmaticCameraPoseMatches(
-            { zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() },
-            { zoom: travelTargetZoom, pitch: 0, bearing: 0 },
-          )) return
-          window.setTimeout(() => {
-            if (!ownsFlight()) return
-            mapCamera.__cinematic = true
-            mapCamera.__tripping = true
-            map.setMaxPitch(streetView ? 85 : Math.max(MAP_BROWSE_3D_MAX_PITCH, targetPitch))
-            map.setMinPitch(0)
-
-            // Beat 3: only restore the landmark's hero angle after the camera
-            // is back at its close target zoom, where the map fills the view.
-            map.once('moveend', () => {
-              if (!ownsFlight()) return
-              if (!programmaticCameraPoseMatches(
-                { zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() },
-                { zoom: targetZoom, pitch: targetPitch, bearing: targetBearing },
-              )) return
-              mapCamera.__tripping = false
-              mapCamera.__cinematic = false
-              onArrival?.()
-            })
-            map.easeTo({
-              center: targetCenter,
-              zoom: targetZoom,
-              pitch: targetPitch,
-              bearing: targetBearing,
-              ...(landmarkFrame?.offset ? { offset: landmarkFrame.offset } : {}),
-              duration: arrivalMs,
-              essential: true,
-            })
-          }, 0)
-        })
-        map.flyTo({
-          center: targetCenter,
-          zoom: travelTargetZoom,
-          pitch: 0,
-          bearing: 0,
-          duration: travelMs,
-          minZoom: FLAT_TRAVEL_MIN_ZOOM,
-          curve: 1.35,
-          essential: true,
-        })
-      }, 0)
-    })
-    map.easeTo({ pitch: 0, bearing: 0, duration: flattenMs, essential: true })
     return true
-  }, [beginProgrammaticCameraMotion, cancelStagedCameraFlight, streetView])
+  }, [cancelStagedCameraFlight, streetView])
 
-  /**
-   * Travelling between pops, as distinct from the ambient tour.
-   *
-   * The arrows used to reuse TOUR_FLIGHT_MS — a THIRTY SECOND flight that rises
-   * all the way to the globe. That is right for a cinematic tour and wrong for
-   * pressing a button: you press, nothing appears to happen, and pressing again
-   * interrupts the flight you could not see. This is the same camera language —
-   * rise, cross, dive, with pitch and a bearing swing — compressed to the length
-   * of a deliberate action, and it lifts only to city height rather than orbit,
-   * so you can still see the ground you are travelling over.
-   */
-  // A trip has three beats: climb, cross, descend. Mapbox's flyTo will not do
-  // this on its own — it sizes its arc from the DISTANCE travelled, and the
-  // pops are neighbourhoods 2-3km apart, so at street zoom the arc never
-  // leaves the rooftops and the camera reads as sliding sideways. That is the
-  // "it just flips to the next post" report. `minZoom` does not fix it either:
-  // it is a floor on how far flyTo MAY zoom out, not an altitude to climb to.
-  // So the altitude is commanded rather than inferred.
-  const tripTimer = useRef(0)
-
-  const flyToPop = useCallback((center: [number, number], onArrive?: () => void) => {
-    const map = mapRef.current
-    if (!map) return false
-    const api = map as unknown as { __cinematic?: boolean; __tripping?: boolean }
-    cancelStagedCameraFlight()
-    // __cinematic keeps the orbit's per-frame hands off the camera, but it is
-    // cleared by ClayMap's moveend — and Mapbox fires a synchronous moveend
-    // when the crossing interrupts the climb, which restarted the orbit in the
-    // middle of the trip and snapped the camera to its globe shot (the
-    // "flips to each post" report, second edition). __tripping spans the WHOLE
-    // trip: ClayMap's moveend leaves the orbit alone while it is up, and only
-    // the trip's own final moveend (or the user grabbing the map mid-flight,
-    // which also ends in a moveend) takes it down.
-    api.__cinematic = true
-    api.__tripping = true
-    window.clearTimeout(tripTimer.current)
-
-    const cameraPlan = programmaticCameraPlan(map.getZoom(), BUILDING_REVEAL_ZOOM)
-    if (cameraPlan.kind === 'translate') {
-      const duration = TRIP_CROSS_MS
-      beginProgrammaticCameraMotion(map, duration)
-      wakeManagedRendering(duration + MANAGED_CAMERA_SETTLE_MS)
-      map.once('moveend', () => {
-        const arrived = map.getCenter()
-        const reachedTarget = distanceMeters([arrived.lng, arrived.lat], center) <= 650
-        api.__tripping = false
-        api.__cinematic = false
-        if (reachedTarget) onArrive?.()
-        ;(map as unknown as { __startOrbit?: () => void }).__startOrbit?.()
-      })
-      map.easeTo({
-        center,
-        zoom: cameraPlan.zoom,
-        duration,
-        easing: (t: number) => t * t * (3 - 2 * t),
-        essential: true,
-      })
-      return true
-    }
-
-    // High enough that you see the city you are leaving and the one you are
-    // arriving at in the same shot; low enough that the clay terrain never
-    // flattens into a basemap.
-    const TRAVEL_ZOOM = 12.8
-    const CLIMB_MS = TRIP_CLIMB_MS
-    const CROSS_MS = TRIP_CROSS_MS
-
-    // Beat 1 — climb straight up off the current pop. Centre is untouched, so
-    // the ground you are leaving stays under you while the camera rises.
-    wakeManagedRendering(CLIMB_MS + MANAGED_CAMERA_SETTLE_MS)
-    map.easeTo({
-      zoom: Math.min(map.getZoom(), TRAVEL_ZOOM),
-      pitch: 16,
-      duration: CLIMB_MS,
-      essential: true,
-    })
-
-    // Beats 2 and 3 — cross at altitude and settle onto the new claim, as one
-    // flight so the descent is the tail of the crossing rather than a cut.
-    // Driven by a timer, not `moveend`: the climb's moveend is also ClayMap's
-    // cue to restart the orbit, and chaining off it puts this flight and that
-    // orbit in the same tick.
-    tripTimer.current = window.setTimeout(() => {
-      const live = mapRef.current
-      if (!live) return
-      const liveApi = live as unknown as { __cinematic?: boolean; __tripping?: boolean }
-      liveApi.__cinematic = true
-      liveApi.__tripping = true
-      wakeManagedRendering(CROSS_MS + MANAGED_CAMERA_SETTLE_MS)
-      live.flyTo({
-        center,
-        zoom: BUILDING_REVEAL_ZOOM,
-        pitch: MAP_BROWSE_3D_PITCH,
-        bearing: MAP_BROWSE_3D_BEARING,
-        duration: CROSS_MS,
-        curve: 1.1,
-        essential: true,
-      })
-      // Registered AFTER the flight starts, so the interruption-moveend from
-      // the climb has already passed: this fires when the crossing itself ends
-      // — or when the user grabs the map and ends it early. Either way the
-      // trip is over; hand the camera back to ClayMap's idle orbit.
-      live.once('moveend', () => {
-        const arrived = live.getCenter()
-        const reachedTarget = distanceMeters([arrived.lng, arrived.lat], center) <= 650
-        liveApi.__tripping = false
-        liveApi.__cinematic = false
-        if (reachedTarget) onArrive?.()
-        // ClayMap's own moveend ran before this listener and — correctly —
-        // left the orbit alone while __tripping was up, so the trip restarts
-        // it here or the camera sits dead until the next user pan.
-        ;(live as unknown as { __startOrbit?: () => void }).__startOrbit?.()
-      })
-    }, CLIMB_MS - 60)
-
-    return true
-  }, [beginProgrammaticCameraMotion, cancelStagedCameraFlight])
+  const flyToPop = useCallback((center: [number, number], onArrive?: () => void) =>
+    flyToCenter(center, 0, null, 'default', onArrive, 'pin'), [flyToCenter])
 
   // Only live timer IDs are retained. The former append-only array kept every
   // expired stop/arrival ID for an hours-long tour.
@@ -2391,10 +2059,6 @@ export default function MapApp() {
     return timer
   }, [])
   const tourStartedRef = useRef(false)
-  /** Radio starts itself once per map, the way the button would have. Only
-   *  once: a person who then presses STOP has made a choice, and a later
-   *  landing must not overrule it. */
-  const radioAutoStartedRef = useRef(false)
   const clearTourTimers = useCallback(() => {
     tourTimers.current.forEach(timer => window.clearTimeout(timer))
     tourTimers.current.clear()
@@ -2665,15 +2329,14 @@ export default function MapApp() {
   // Whether the tour is running. The hold menu's tile has to read STOP TOUR
   // for as long as it is, so the map owns the truth and reports it upward —
   // the menu can't infer it from a tile it tapped once.
-  // Untouched means static. This diagnostic is intentionally readable from a
-  // device/WebView test so a long-idle run can assert the policy directly
-  // instead of inferring it from a warm phone after the fact. The looping 3D
-  // tour still exists, but only the Hold-menu TOUR action below may start it.
+  // Hidden maps stay static. Foreground idle exploration is a separate sparse
+  // pin sequence; the diagnostic records every automatic camera start.
   const mapIdleDiagnosticsRef = useRef({
-    policy: 'static' as const,
+    policy: 'idle-pins',
     autonomousCameraStarts: 0,
     explicitTourStarts: 0,
     idleTimerArmed: false,
+    flightActive: false,
   })
   useEffect(() => {
     const debugWindow = window as typeof window & {
@@ -2682,9 +2345,9 @@ export default function MapApp() {
     }
     const diagnostics = mapIdleDiagnosticsRef.current
     const assertStaticIdle = () => {
-      const pass = diagnostics.policy === 'static'
-        && diagnostics.autonomousCameraStarts === 0
+      const pass = diagnostics.autonomousCameraStarts === 0
         && diagnostics.idleTimerArmed === false
+        && diagnostics.flightActive === false
       console.assert(pass, '[Poplur] untouched map started autonomous camera work')
       return pass
     }
@@ -3049,17 +2712,14 @@ export default function MapApp() {
     cancelTourTimer(tourNextTimerRef.current)
   }), [cancelTourTimer])
 
-  // ── Static long idle ──────────────────────────────────────────────────────
-  // An untouched map used to arm a raw one-minute timer, then start a 30-second
-  // globe flight every five minutes forever. That made a 20-minute "idle" test
-  // three full 3D tours, which explains the slow temperature climb even though
-  // ClayMap's own orbit and renderer were correctly parked. No timer is armed
-  // now: the last rendered 3D frame remains visible until a person acts.
+  // Foreground browsing uses short pin approaches with still holds. This
+  // bridge lets the existing Map foreground/audio lifecycle park its timer.
   const cancelTourIdle = useCallback(() => {
+    idleBroadcastControlRef.current.stop()
     mapIdleDiagnosticsRef.current.idleTimerArmed = false
   }, [])
   const scheduleTourIdle = useCallback(() => {
-    mapIdleDiagnosticsRef.current.idleTimerArmed = false
+    idleBroadcastControlRef.current.restart()
   }, [])
 
   // Every real input still stops an explicitly running tour. Capture phase on
@@ -3135,8 +2795,9 @@ export default function MapApp() {
   // its own Firestore client (see the forwarded-posts listener below).
   const nativeShell = isNativeShell()
   const liveSimulation = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
+  const [notificationFocusId, setNotificationFocusId] = useState<string | null>(null)
   const [discoveryFocusPostId, setDiscoveryFocusPostId] = useState<string | null>(null)
-  const discovery = useMapDiscovery(mapRef, mapLive, ownUid, true, mapFrontRef, rnWebShellRoute, discoveryFocusPostId)
+  const discovery = useMapDiscovery(mapRef, mapLive, ownUid, true, mapFrontRef, rnWebShellRoute, discoveryFocusPostId, notificationFocusId)
   const discoveryEnabled = discovery.page?.enabled ?? null
   const [accountMapPosts, setAccountMapPosts] = useState<LiveMapPostPin[]>([])
   useEffect(() => {
@@ -3453,6 +3114,8 @@ export default function MapApp() {
     } catch { return null }
   })
   const [ownSelfieVideo, setOwnSelfieVideo] = useState<string | null>(() => {
+    // Home supplies the compact native derivative; never decode the stored original here.
+    if (isNativeShell()) return null
     try {
       const raw = window.localStorage.getItem('poplur.profile.selfieVideo')
       return raw && (raw.startsWith('data:video/') || /^https:\/\//i.test(raw) || /^poplur-clay:\/\//i.test(raw)) ? raw : null
@@ -3560,6 +3223,11 @@ export default function MapApp() {
   mapPointRouteRef.current = mapPointRoute
   const focusedMapPointKeyRef = useRef<string | null>(null)
   const [focusedMapPoint, setFocusedMapPoint] = useState<MapCyclePoint | null>(null)
+  useEffect(() => {
+    if (!focusedMapPoint) return
+    publishMapRadioLocation(focusedMapPoint.coords)
+    if (!isEmbedded) tuneMapRadioLocation(focusedMapPoint.coords[1], focusedMapPoint.coords[0])
+  }, [focusedMapPoint?.coords[0], focusedMapPoint?.coords[1], isEmbedded])
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapLive) return
@@ -3766,6 +3434,8 @@ export default function MapApp() {
   /** The cluster's ▲ ▼. ClayMap owns the camera and installs this handle on
    *  the map object; the arrows live in this document, so they reach it the
    *  same way every other cross-component camera request here does. */
+  useImmersiveControls(true, 'map')
+
   const zoomTravel = useCallback((direction: 'in' | 'out') => {
     playPop(0.25)
     stopTour()
@@ -3992,6 +3662,8 @@ export default function MapApp() {
     }
     return null
   }, [accountMapPosts])
+  const stopRadiusReplayRef = useRef<((restore?: boolean) => void) | null>(null)
+  useEffect(() => () => stopRadiusReplayRef.current?.(false), [])
   const focusPinCamera = useCallback((pin: PopPin, request: PinFocusMapRequest) => {
     const map = mapRef.current
     if (!map) return
@@ -4000,6 +3672,9 @@ export default function MapApp() {
     clearPopups('suggestion')
     clearPopups('mapContent')
     setCurrentPlace(displayPlaceName(pin.name))
+    stopRadiusReplayRef.current?.()
+    focusedUserKeyRef.current = null
+    setFocusedUserKey(null)
     const land = () => {
       const live = mapRef.current
       if (!live) return
@@ -4009,7 +3684,35 @@ export default function MapApp() {
         installPinSpotlight(live)
         updatePinSpotlight(live, pin)
       } catch { /* style not ready yet; the camera has still arrived */ }
-      focusMapPointForPin(pin.id)
+      const showRadius = (radiusKm: number) => {
+        const point: MapCyclePoint = { key: `pin:${pin.id}`, kind: 'pin', id: pin.id, name: pin.name, coords: pin.coords, mine: pin.mine, radiusKm, color: pin.color }
+        focusedMapPointKeyRef.current = point.key
+        setFocusedMapPoint(point)
+        window.parent?.postMessage({ type: 'poplur-map-point', ...point, index: 0, total: 0, ownerKey: pointOwnerRef.current(pin.id)?.key ?? null }, '*')
+        try { updatePinSpotlight(live, { ...pin, radiusKm }) } catch { /* map removed */ }
+      }
+      const beforeKm = request.beforeKm
+      const afterKm = request.afterKm
+      if (beforeKm != null && afterKm != null && beforeKm !== afterKm) {
+        showRadius(beforeKm)
+        let elapsed = 0, lastPaint = -Infinity
+        wakeManagedRendering(4000)
+        const cancel = (restore = true) => { stop(); live.getCanvas().removeEventListener('pointerdown', onInput); stopRadiusReplayRef.current = null; if (restore) showRadius(pin.radiusKm) }
+        const onInput = () => cancel()
+        const stop = onFrame(dt => {
+          elapsed += dt
+          const t = Math.max(0, Math.min(1, (elapsed - 800) / 1800))
+          if (elapsed - lastPaint >= 100) {
+            lastPaint = elapsed
+            showRadius(beforeKm + (afterKm - beforeKm) * (t * t * (3 - 2 * t)))
+          }
+          // Hold the recorded result briefly, then return to the latest
+          // radius. An old notification must not replace today's live value.
+          if (elapsed >= 3600) cancel()
+        }, 'interactive')
+        stopRadiusReplayRef.current = cancel
+        live.getCanvas().addEventListener('pointerdown', onInput, { once: true })
+      } else showRadius(pin.radiusKm)
       // The pulse: ring flash, ground flash, and the pin's own bounce or dip.
       // Direction comes off the notification even when it named no number, so
       // a change you arrived at still reads as growth or loss before any badge
@@ -4044,13 +3747,24 @@ export default function MapApp() {
       pendingPinFocusRef.current = null
       return
     }
+    if (pending.request.notificationId?.startsWith('radius-loss:')) return
     const pin = resolvePinForFocus(pending.request)
     if (!pin) return
     pendingPinFocusRef.current = null
     focusPinCamera(pin, pending.request)
   }, [liveMapPosts, focusPinCamera, resolvePinForFocus])
 
-  const openClickedMapPinContent = useCallback((pin: PopPin) => {
+  useEffect(() => {
+    const focus = discovery.page?.notificationFocus
+    if (!focus || !notificationFocusId || focus.notificationId !== notificationFocusId
+      || pendingPinFocusRef.current?.request.notificationId !== notificationFocusId) return
+    pendingPinFocusRef.current = null
+    const pin: PopPin = { id: focus.id, name: focus.name, coords: focus.coords, mine: true, user: null, avatar: null, color: focus.color, radiusKm: focus.currentKm }
+    focusPinCamera(pin, { postId: focus.id, notificationId: notificationFocusId, beforeKm: focus.beforeKm, afterKm: focus.afterKm, deltaKm: focus.afterKm - focus.beforeKm, pulse: focus.afterKm < focus.beforeKm ? 'loss' : 'gain' })
+    setNotificationFocusId(null)
+  }, [discovery.page?.notificationFocus, notificationFocusId, focusPinCamera])
+
+  const openClickedMapPinContent = useCallback((pin: PopPin, automatic = false) => {
     // A pin you can see and press must answer the press. This used to bail when
     // the media record was missing, so a real claim — with a place, a poster,
     // a channel and a radius — read as a dead pin: nothing opened, nothing
@@ -4064,7 +3778,7 @@ export default function MapApp() {
     const mapInteractionState = mapRef.current as unknown as {
       __suppressNextMapClickUntil?: number
     } | null
-    if ((mapInteractionState?.__suppressNextMapClickUntil ?? 0) > Date.now()) return
+    if (!automatic && (mapInteractionState?.__suppressNextMapClickUntil ?? 0) > Date.now()) return
     clearPopups('suggestion')
     clearPopups('mapContent')
     openedPinRef.current = pin.id
@@ -4094,7 +3808,6 @@ export default function MapApp() {
       ownPostIds: ownNearby.map(claim => claim.id),
       totalRadiusKm: accountTotalReachKm,
       popRadiusKm: pin.radiusKm,
-      onlineUsers: mapAreaOnline(pin.coords, ownNearby.length),
       popId: pin.id,
     }, '*')
 
@@ -4123,6 +3836,66 @@ export default function MapApp() {
   }, [mapPins, benchPin])
   const mapPinsRef = useRef(mapPins)
   mapPinsRef.current = mapPins
+
+  const idleSeenPins = useRef(new Set<string>())
+  const idleBroadcast = useIdleMapBroadcast({
+    // Discovery snapshots wake this hook when content arrives. An empty map
+    // must park completely instead of polling for a destination every 30s.
+    enabled: Boolean(mapLive) && mapPins.some(pin => pin.radiusKm > 0 && !pin.ghost)
+      && !focusedPostPicker && !BUILDING_STYLE_PREVIEW,
+    visible: () => mapFrontRef.current,
+    available: () => {
+      const map = mapRef.current
+      const blocked = 'input:focus, textarea:focus, [role="dialog"], [data-map-directions] > *'
+      let parentBlocked = false
+      try { parentBlocked = window.parent !== window && Boolean(window.parent.document.querySelector(blocked)) } catch { /* separate origin */ }
+      return Boolean(map && !map.isMoving() && !streetView && !tourOnRef.current
+        && !searchOpen && !weatherOpen && !mapConquerBoardOpen && !mapContentPopupOpen
+        && !focusedUserKeyRef.current && !map.getSource('clay-nav-route')
+        && !parentBlocked && !document.querySelector(blocked))
+    },
+    explore: () => {
+      const map = mapRef.current
+      if (!map || nativeAmbientDeadline(2_400) <= performance.now()) return
+      const pins = mapPinsRef.current.filter(pin => pin.radiusKm > 0 && !pin.ghost)
+        .sort((a, b) => b.radiusKm - a.radiusKm || a.id.localeCompare(b.id))
+      const ids = new Set(pins.map(pin => pin.id))
+      for (const id of idleSeenPins.current) if (!ids.has(id)) idleSeenPins.current.delete(id)
+      let pin = pins.find(candidate => !idleSeenPins.current.has(candidate.id))
+      if (!pin) { idleSeenPins.current.clear(); pin = pins[0] }
+      if (!pin || pins.length === 1 && openedPinRef.current === pin.id) return
+      idleSeenPins.current.add(pin.id)
+      clearPopups('mapContent')
+      const diagnostics = mapIdleDiagnosticsRef.current
+      diagnostics.autonomousCameraStarts++
+      diagnostics.flightActive = true
+      let cancelled = false, arrived = false
+      const finish = () => {
+        if (cancelled || arrived) return
+        arrived = true; diagnostics.flightActive = false
+        map.off('moveend', finish)
+        window.clearTimeout(deadline)
+        const current = mapPinsRef.current.find(candidate => candidate.id === pin!.id)
+        if (current && mapFrontRef.current && !document.hidden && currentQuality() > 1) {
+          openClickedMapPinContent(current, true)
+        }
+      }
+      // A short city-level approach avoids repeatedly rebuilding the full
+      // street scene. One visible card then rests before the next destination.
+      wakeManagedRendering(2_400)
+      const deadline = window.setTimeout(finish, 2_200)
+      map.once('moveend', finish)
+      map.flyTo({ center: pin.coords, zoom: 14.5, pitch: 35,
+        bearing: (map.getBearing() + 12) % 360, duration: 0, essential: false })
+      return () => {
+        cancelled = true; window.clearTimeout(deadline); map.off('moveend', finish)
+        if (diagnostics.flightActive) map.stop()
+        diagnostics.flightActive = false
+      }
+    },
+    diagnostics: mapIdleDiagnosticsRef.current,
+  })
+  idleBroadcastControlRef.current = idleBroadcast.current
 
   // ── One map context drives every line in the shell HUD ───────────────────
   // Report only on settled camera states. This keeps the title/counters stable
@@ -4169,9 +3942,6 @@ export default function MapApp() {
       const scope = atWorld ? 'world' : atPop ? 'pop' : atCurrent ? 'current' : 'area'
       const count = atWorld ? accountPostCount : ownArea.length
       const ids = atWorld ? ownPosts.map(claim => claim.id) : ownArea.map(claim => claim.id)
-      const onlineUsers = scope === 'world' || scope === 'current'
-        ? MAP_GLOBAL_ONLINE
-        : mapAreaOnline(center, ownArea.length)
       const totalRadius = accountTotalReachKm
       // Every pop's radius, not just your own. The camera settles a beat after
       // an arrow step, and this report is what the shell trusts last — leaving
@@ -4179,7 +3949,7 @@ export default function MapApp() {
       // which the shell reads as "no pop subject" and wipes the radius the
       // arrow just put on the card. The number is public post data either way.
       const popRadius = atPop ? nearestPin?.radiusKm : undefined
-      const signature = [scope, count, ids.join(','), totalRadius.toFixed(2), popRadius?.toFixed(2), onlineUsers].join('|')
+      const signature = [scope, count, ids.join(','), totalRadius.toFixed(2), popRadius?.toFixed(2)].join('|')
       if (!force && signature === previous) return
       previous = signature
 
@@ -4193,7 +3963,6 @@ export default function MapApp() {
         totalRadiusKm: totalRadius,
         popRadiusKm: popRadius,
         popId: atPop ? nearestPin?.id : undefined,
-        onlineUsers,
       }, '*')
     }
 
@@ -4227,17 +3996,7 @@ export default function MapApp() {
       return
     }
 
-    // Radio is ON by default in the app. The same call the rail's Radio
-    // button makes, made for you on arrival — the packaged bed at once, the
-    // nearest real station as soon as the directory answers. Respects the
-    // master mute (a muted app starts nothing, and the unmute below starts it
-    // then) and the standalone map (the thermal gate drives that one
-    // headless, and a bed it never asked for would be measured as heat).
-    if (isEmbedded && !radioAutoStartedRef.current && !isMapRadioActive() && !isGateMuted()) {
-      radioAutoStartedRef.current = true
-      const [autoLng, autoLat] = landingCenter ?? DEFAULT_NAV_ORIGIN
-      startDefaultMapRadio(autoLat, autoLng)
-    }
+    publishMapRadioLocation(landingCenter ?? DEFAULT_NAV_ORIGIN)
 
     // Begin looking up the local station now, but do not sound it yet. The
     // greeting below gets the first beat; its mixer feathers Radio underneath
@@ -4448,10 +4207,7 @@ export default function MapApp() {
       } catch { /* no parent frame in the standalone map route */ }
     }
 
-    // The takeover lands WITH the camera. Drawing it at take-off would show you
-    // the claim you are still three seconds away from — and fit:false because
-    // the trip owns the camera until it touches down (see the note on
-    // updateComposeRadiusPreview).
+    // Point changes cut immediately; draw the matching claim on the next tick.
     window.clearTimeout(engagementClaimTimer.current)
     engagementClaimTimer.current = window.setTimeout(() => {
       const live = mapRef.current
@@ -4460,7 +4216,7 @@ export default function MapApp() {
         installComposeRadiusPreview(live)
         updateComposeRadiusPreview(live, new mapboxgl.LngLat(coords[0], coords[1]), radiusKm, theme, { fit: false })
       } catch { /* style not ready yet; the next arrival draws it */ }
-    }, TRIP_TOTAL_MS)
+    }, 0)
   }, [flyToPop, liveMapPosts, theme])
   engagementTraverseRef.current = traverseToEngagement
   useEffect(() => {
@@ -4545,6 +4301,20 @@ export default function MapApp() {
           if (!request) break
           if (request.postId) setDiscoveryFocusPostId(request.postId.replace(/^firestore:/, '').slice(0, 180))
           const pin = resolvePinForFocus(request)
+          if (request.notificationId?.startsWith('radius-loss:')) {
+            pendingPinFocusRef.current = { request, expiresAt: Date.now() + PIN_FOCUS_WAIT_MS }
+            setNotificationFocusId(request.notificationId)
+            window.setTimeout(() => {
+              if (pendingPinFocusRef.current?.request !== request) return
+              pendingPinFocusRef.current = null
+              setNotificationFocusId(null)
+              const currentPin = resolvePinForFocus(request)
+              if (currentPin) focusPinCameraRef.current?.(currentPin, request)
+              else window.parent?.postMessage({ type: 'poplur-map-focus-miss' }, '*')
+            }, PIN_FOCUS_WAIT_MS)
+            break
+          }
+          setNotificationFocusId(null)
           if (pin) { focusPinCamera(pin, request); break }
           // Not on the board yet. Hold the request for the next snapshot; if
           // the post never shows (aged out of the pool, outside reach) tell
@@ -4816,19 +4586,12 @@ export default function MapApp() {
       />
 
       {discovery.page?.enabled && !tourOn && !focusedPostPicker && <MapDiscoveryLayers map={mapRef.current} cells={discovery.page.cells} pins={pinsForRenderer} onOpen={openClickedMapPinContent} />}
-      {!tourOn && discovery.page?.enabled && !discovery.error && !discovery.page.nextCursor && (
-        <span style={{ position: 'absolute', top: '23%', left: '50%', transform: 'translateX(-50%)', zIndex: 19,
-          maxWidth: '60%', borderRadius: 16, padding: '6px 12px', textAlign: 'center', pointerEvents: 'none',
-          fontSize: 12, fontWeight: 800, color: '#8fe7ff', background: '#251223d9' }}>
-          {discovery.page.mode === 'regions' ? (discovery.page.pins.some(pin => pin.competition?.status === 'winner') ? 'Regional leaders · Zoom in for more' : 'New pops · Zoom in for more') : discovery.page.mode === 'cells' ? 'Area leaders · ≈5 km sections' : 'Pops in this area'}
-        </span>
-      )}
-      {!tourOn && (discovery.error || discovery.page?.nextCursor) && (
-        <button type="button" onClick={discovery.error ? discovery.retry : discovery.nextPage} disabled={discovery.loading}
+      {!tourOn && !discovery.error && discovery.page?.nextCursor && (
+        <button type="button" onClick={discovery.nextPage} disabled={discovery.loading}
           style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', top: '23%', zIndex: 20,
             maxWidth: '60%', padding: '8px 14px', borderRadius: 18, background: '#251223ed', color: '#8fe7ff',
             border: '2px solid #ee409b', fontWeight: 800, fontSize: 13 }}>
-          {discovery.loading ? 'Loading…' : discovery.error || 'More pops in this area →'}
+          {discovery.loading ? 'Loading…' : 'More →'}
         </button>
       )}
 
@@ -4891,6 +4654,20 @@ export default function MapApp() {
         </button>
       )}
 
+      {BUILDING_STYLE_PREVIEW && <BuildingStylePreview
+        sky={sky}
+        onChange={() => { wakeManagedRendering(1200); setSky(currentSkyShade()) }}
+        onCity={center => {
+          const map = mapRef.current
+          if (!map) return
+          // A world view parks its pitch ceiling at zero. Lift it before this
+          // explicit preview move so the building sides are visible.
+          map.setMaxPitch(60)
+          wakeManagedRendering(2000)
+          map.flyTo({ center, zoom: 16, pitch: 58, bearing: -20, duration: 0 })
+        }}
+      />}
+
       {/* ── Clay GPS navigation: destination → route → drive in clay street view ── */}
       <ClayNav
         openSignal={directionsSignal}
@@ -4902,6 +4679,7 @@ export default function MapApp() {
         streetView={streetView}
         setStreetView={setStreetView}
         say={setTourLine}
+        onSpeak={speakMapLine}
       />
 
 
@@ -4921,12 +4699,6 @@ export default function MapApp() {
             setMuted(next)
             if (next) return
             playPop(0.2)
-            // Unmuting an app that was muted on arrival is the arrival the
-            // default-on radio was waiting for.
-            if (isEmbedded && !radioAutoStartedRef.current && !isMapRadioActive()) {
-              radioAutoStartedRef.current = true
-              startDefaultMapRadio(navigationOrigin[1], navigationOrigin[0])
-            }
           }}
         />
         <MapRadioButton
@@ -5245,19 +5017,6 @@ export default function MapApp() {
             </div>
           )}
           <MapRadioStatusLabel className={styles.mapRadioLabel} />
-          {/* Your pops standing in this area, in the same outlined-blue voice
-              as the place line above it. Standalone has no profile to open, so
-              the line is informational here; the embedded shell owns the
-              clickable version (see HomeTwin). */}
-          {!mapPointLabelActive && !tourOn && areaPops && (
-            <div className={styles.areaPops} key={`area-${areaPops.count}-${areaPops.ids[0] ?? ''}`}>
-              {areaPops.overall
-                ? `${areaPops.count} pops posted overall`
-                : areaPops.count === 1
-                  ? '1 pop posted in this area'
-                  : `${areaPops.count} pops posted in this area`}
-            </div>
-          )}
         </div>
       )}
 
@@ -5456,15 +5215,10 @@ export default function MapApp() {
           data-map-point-total={mapPointRoute.length}
           aria-hidden={activeNewsStop ? true : undefined}
           size={channelControlSize}
-          label={newsTourPosition >= 0
-            ? `${newsTourPosition + 1}/${newsTourDisplayCount}`
-            : mapPointPosition
-              ? `${mapPointPosition.n}/${mapPointPosition.of}`
-              : `0/${mapPointRoute.length}`}
           aria-label="Map point and zoom controls"
           leftLabel={tourMode === 'news' ? 'Previous news story' : 'Previous map point'}
           rightLabel={tourMode === 'news' ? 'Next news story' : 'Next map point'}
-          upLabel={mapPointPosition ? 'Frame this pop' : 'Zoom in to the buildings'}
+          upLabel="Zoom in"
           downLabel="Zoom all the way out"
           onLeft={() => {
             // These arrows already live in this map document. Invoke the news

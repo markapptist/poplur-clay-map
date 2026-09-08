@@ -1,7 +1,7 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { CAPTION_CUES } from './captionCues'
-import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
+import { isPlaybackBlocked, onGateChange } from './audioGate'
 import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudioFocus, requestAudioFocus, type AudioOwner } from './audioFocus'
 import { feedSuggestionFor } from './tourSmarts'
 import { feedUrl, channelUrl } from './assetPacks'
@@ -42,12 +42,14 @@ const deferToOwner = (owner: AudioOwner | null): boolean =>
 import ClayCornerButton from './ClayCornerButton'
 import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import PoplurDialog from './PoplurDialog'
+import PostDeleteDialog from './PostDeleteDialog'
+import { playFeedVideo } from './feedVideoPlayback'
 import PoplurStatusToast from './PoplurStatusToast'
 import FeedChannelRail from './FeedChannelRail'
+import FeedAuthor from './FeedAuthor'
 import ClayArrowCluster from './ClayArrowCluster'
 import { responsiveChannelControlSize } from './channelControlSizing'
-import { nextFilledChannelIndex } from './feedChannelSelection'
-import { VERIFIED_CHECK_SRC, verifiedKindForHandle, type VerifiedCheckKind } from './verifiedCheck'
+import { verifiedKindForHandle, type VerifiedCheckKind } from './verifiedCheck'
 import { businessDirectorySnapshot, subscribeBusinessDirectory } from './businessDirectory'
 import { PIN_COLOR_SWATCH } from './pinColors'
 import PostActionRail from './PostActionRail'
@@ -57,7 +59,7 @@ import { playPop, playPopAmbient } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
 import { createFeedLikeActivationGate } from './feedLikeActivation'
 import { showPopup, clearPopups, setPopupKindSuppressed, setPopupsSuppressed } from './popups'
-import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd } from './feedPreferences'
+import { readFeedCommentsAtEnd, writeFeedCommentsAtEnd, readFeedMuted, writeFeedMuted } from './feedPreferences'
 import { recordPostEngagement, recordVisiblePostView } from './feedEngagements'
 import styles from './FeedTwin.module.css'
 import surfaceStyles from './TransientPopupSurface.module.css'
@@ -69,9 +71,9 @@ import {
   recordProfileVisitAfterView,
 } from './radiusLedger'
 import { currentViewerCoords as viewerCoordsFromFix } from './viewerFix'
-import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
 import { useFeedPostComments } from './feedPostComments'
-import { mediaTimeLabel, nextRadiusPost } from './mediaTiming'
+import { mediaTimeLabel } from './mediaTiming'
+import { FEED_CHANNEL_STATIC_MS, FEED_LIVE_DWELL_SECONDS, FEED_PHOTO_DWELL_SECONDS, nextBroadcastPost } from './feedBroadcast'
 import { blockUser, blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } from './blockedUsers'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
@@ -79,7 +81,7 @@ import { blockUser, blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } 
 // tapping the left/right edge steps through the posts in the channel you are on;
 // each channel is a full-bleed video with the TV overlay that auto-cycles
 // username↔"CH 101" and coordinates↔CATEGORY in green monospace, a flag +
-// channel icon, a bottom AI caption, and a clean channel change with no static.
+// channel icon, a bottom AI caption, and a brief static channel detent.
 //
 // One shared Firestore listener supplies the bounded media rows users actually
 // publish. Empty channels remain honestly empty in browser and native shells;
@@ -180,8 +182,8 @@ function shouldUnlockFeedAudioOnMount(explicitNavigation: boolean): boolean {
   // absent and the picture ran muted until you happened to tap it. Nothing about
   // that was discoverable.
   //
-  // The rest of the decision is unchanged and still governs: `isGateMuted()`
-  // (user mute, backgrounded app) and whether Feed owns the audio floor — the
+  // Playback still respects the host/lifecycle gate, the Feed speaker choice
+  // and whether Feed owns the audio floor — the
   // radio or the AI voice still take the sound when they should.
   if (isNativeShell()) return true
   return explicitNavigation
@@ -196,6 +198,7 @@ export interface ChannelPost {
   id: string
   ownerId?: string
   user: string
+  ownerAvatarURL?: string
   video: string
   poster?: string
   mediaType?: 'photo' | 'video'
@@ -250,6 +253,7 @@ export function feedPostsForChannel(
       id: post.id,
       ownerId: post.ownerId,
       user: post.username,
+      ownerAvatarURL: post.ownerAvatarURL,
       video: post.mediaURL,
       poster: post.mediaType === 'photo' ? post.mediaURL : post.posterURL,
       mediaType: post.mediaType,
@@ -358,44 +362,6 @@ function cuesFor(video: string | undefined, fallback: string) {
 // the store contract wants a bare change notification.
 const subscribeAccountUid = (onStoreChange: () => void) => onAccountChange(onStoreChange)
 
-// The headline's title line. A title wider than its cell scrolls (a paced
-// ping-pong drift, see .feedTitleScrolls) instead of being ellipsed; one that
-// fits sits still. The overflow is measured here, per title, so the CSS can
-// pace the drift by distance rather than guess at it.
-function FeedTitle({ title }: { title: string }) {
-  const trackRef = useRef<HTMLDivElement>(null)
-  const spanRef = useRef<HTMLSpanElement>(null)
-  const [overflow, setOverflow] = useState(0)
-  useLayoutEffect(() => {
-    const track = trackRef.current
-    const span = spanRef.current
-    if (!track || !span) return
-    const measure = () => {
-      const extra = span.scrollWidth - track.clientWidth
-      setOverflow(extra > 2 ? extra : 0)
-    }
-    measure()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(track)
-    return () => observer.disconnect()
-  }, [title])
-  const scrolls = overflow > 0
-  return (
-    <div
-      ref={trackRef}
-      className={scrolls ? `${styles.feedTitleTrack} ${styles.feedTitleScrolls}` : styles.feedTitleTrack}
-      style={scrolls ? {
-        '--feed-title-overflow': `${overflow}px`,
-        // ~30px/s: slow enough to read, quick enough to reach the end.
-        '--feed-title-scroll-s': `${Math.max(3, overflow / 30).toFixed(1)}s`,
-      } as React.CSSProperties : undefined}
-    >
-      <span ref={spanRef}>{title}</span>
-    </div>
-  )
-}
-
 export default function FeedTwin({
   index: controlledIndex,
   onIndexChange,
@@ -434,7 +400,7 @@ export default function FeedTwin({
   /** The playing post's reach, reported on every video change so the home
       RADIUS card can re-run its money counter — the user is shown how much
       radius each video carries, in the card that owns that number. */
-  onPostReach?: (km: number | null, color?: string) => void
+  onPostReach?: (km: number | null, color?: string, postKey?: string) => void
   /** A real feed progression (swipe or completed clip), reported to the
       native shell so its ad cadence follows posts rather than channel buttons. */
   onContentAdvance?: (channelId: string, contentIndex: number) => void
@@ -465,7 +431,9 @@ export default function FeedTwin({
   const ownHandle = useMemo(() => (
     typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('username')
   ), [])
-  const [muted, setMuted] = useState(isUserMuted)
+  const [muted, setMuted] = useState(readFeedMuted)
+  const mutedRef = useRef(muted)
+  mutedRef.current = muted
   const suppressedRef = useRef(suppressed)
   suppressedRef.current = suppressed
   const frontMostRef = useRef(frontMost)
@@ -639,10 +607,8 @@ export default function FeedTwin({
   const [, setLiveRevision] = useState(0)
   useEffect(() => onLiveStore(() => setLiveRevision(value => value + 1)), [])
   const contentIdxRef = useRef<Record<string, number>>({})
-  // Which way the person last stepped the dial, so steering past an empty
-  // channel keeps going the way they were going.
-  const lastChannelDirRef = useRef<1 | -1>(1)
   const [contentRevision, forceContentRender] = useState(0)
+  const [broadcastRevision, setBroadcastRevision] = useState(0)
 
   const consumedFocusRef = useRef('')
   // A Discovery post result is a direct navigation, not a recommendation
@@ -844,22 +810,31 @@ export default function FeedTwin({
     else setOwnIndex(next)
   }, [ch, focusedContent, index, onIndexChange, publishedPosts])
 
-  // The dial is a loop: up from the highest channel lands on the first, down
-  // from the first on the highest. No dead end at either edge — and no dead
-  // channel either: a step keeps going in its direction past channels with
-  // nothing in reach, because the feed should always be showing something.
+  // Manual tuning walks the whole catalogue, including empty channels. With
+  // only one populated channel, skipping empties loops back to the same index
+  // and makes the D-pad look broken. Initial discovery belongs to Home.
   const change = useCallback((dir: 1 | -1) => {
-    lastChannelDirRef.current = dir
-    const snapshot = radiusDiscoverySnapshot()
-    const isFilled = (candidate: number) =>
-      rankedPostsFor(CHANNELS[candidate], publishedPosts, snapshot).some(post => !post.demo)
-    goToChannel(nextFilledChannelIndex(CHANNELS.length, index, dir, isFilled))
-  }, [goToChannel, index, publishedPosts])
+    goToChannel((index + dir + CHANNELS.length) % CHANNELS.length)
+  }, [goToChannel, index])
 
   const toggleMute = () => {
     const next = !muted
-    setUserMuted(next)
+    if (!next) {
+      // The sound button is itself the user gesture. Unlock and start audio
+      // synchronously instead of requiring a second tap on the video.
+      audioUnlockedRef.current = true
+      setAudioUnlocked(true)
+    }
+    mutedRef.current = next
+    writeFeedMuted(next)
     setMuted(next)
+    const video = adVideoRef.current
+    if (!next && video && frontMostRef.current && !suppressedRef.current && !deferToOwner(currentAudioOwner())) {
+      requestAudioFocus('feed')
+      video.muted = isPlaybackBlocked() || mutedRef.current
+      video.volume = 0.85
+      void video.play().catch(() => {})
+    }
   }
 
   // Within a channel, horizontal navigation steps through its content. The
@@ -894,19 +869,25 @@ export default function FeedTwin({
   // Keep this separate from the arrow handler: a passive completion should
   // not make the physical navigator say "pop".
   const watchedMediaRef = useRef(new Set<string>())
+  const watchedChannelsRef = useRef(new Set<string>())
   const advanceCompletedContent = useCallback(() => {
+    if (!frontMostRef.current || suppressedRef.current || document.hidden || commentOpen || playerModeRef.current) return
     const discovery = radiusDiscoverySnapshot()
     const ranked = rankedPostsFor(ch, publishedPosts, discovery, focusedContent?.target)
     const current = ranked[(contentIdxRef.current[ch.id] ?? 0) % Math.max(1, ranked.length)]
     const candidates = CHANNELS.flatMap((channel, channelIndex) =>
       rankedPostsFor(channel, publishedPosts, discovery, focusedContent?.target).map((post, postIndex) =>
         ({ ...post, channelId: channel.id, channelIndex, postIndex })))
-    const next = nextRadiusPost(candidates, watchedMediaRef.current, current?.id)
+    const next = nextBroadcastPost(candidates, watchedChannelsRef.current, watchedMediaRef.current,
+      current ? { id: current.id, channelId: ch.id } : undefined)
     if (current && !current.demo) recordFeedDiscoverySignal({ id: current.id, channelId: ch.id }, 'watch')
     if (!next) return
     const video = adVideoRef.current
     if (video) retireFeedVideo(video)
     releaseAudioFocus('feed')
+    completedAdRef.current = null
+    setCompletedAdSrc(null)
+    setBroadcastRevision(value => value + 1)
     contentIdxRef.current[next.channelId] = next.postIndex
     onContentAdvance?.(next.channelId, next.postIndex)
     if (next.channelIndex !== index) {
@@ -914,7 +895,7 @@ export default function FeedTwin({
       else setOwnIndex(next.channelIndex)
     }
     forceContentRender(n => n + 1)
-  }, [ch, focusedContent, index, onContentAdvance, onIndexChange, publishedPosts])
+  }, [ch, commentOpen, focusedContent, index, onContentAdvance, onIndexChange, publishedPosts])
 
   const handleEdgeTap = useCallback((side: 'left' | 'right') => {
     changeContent(side === 'left' ? -1 : 1)
@@ -1049,41 +1030,9 @@ export default function FeedTwin({
       window.removeEventListener('poplur-native-profile-post-delete-result', receive)
     }
   }, [deletePending])
-  // Never sit on an empty channel — and "empty" means nothing IN REACH: a
-  // channel full of pops that cannot reach the viewer is empty to them, and
-  // demo padding does not count. Whenever the channel under the viewer has
-  // nothing, steer to the nearest one with a real pop in reach, in the
-  // direction they were last stepping (the pool, the location fix and the
-  // simulation switch all arrive after open, so this must re-run, not fire
-  // once). A Map handoff names its own channel and is left alone.
-  const liveSimulation = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
-  const [viewerFixTick, setViewerFixTick] = useState(0)
-  useEffect(() => {
-    const bump = () => setViewerFixTick(tick => tick + 1)
-    window.addEventListener('poplur-native-location', bump)
-    window.addEventListener('poplur-location', bump)
-    return () => {
-      window.removeEventListener('poplur-native-location', bump)
-      window.removeEventListener('poplur-location', bump)
-    }
-  }, [])
-  useEffect(() => {
-    void liveSimulation
-    void viewerFixTick
-    if (focusedContent || publishedPosts.length === 0) return
-    const filledInReach = (channel: Channel) =>
-      rankedPostsFor(channel, publishedPosts, discovery).some(post => !post.demo)
-    if (filledInReach(ch)) return
-    const next = nextFilledChannelIndex(
-      CHANNELS.length,
-      index,
-      lastChannelDirRef.current,
-      candidate => filledInReach(CHANNELS[candidate]),
-    )
-    if (next === index || !filledInReach(CHANNELS[next])) return
-    if (onIndexChange) onIndexChange(next)
-    else setOwnIndex(next)
-  }, [ch, discovery, focusedContent, index, liveSimulation, onIndexChange, publishedPosts, viewerFixTick])
+  // Home chooses a populated channel on arrival. Once this screen is live,
+  // an empty selection is intentional: updates to posts or location must not
+  // pull the dial back to the one populated channel.
   // Going to a channel is seeing what it holds: the badge on its tile comes
   // off on arrival, not one pop at a time. The pop actually on screen is
   // marked too, which is what clears the same pop's badge on the Map.
@@ -1102,7 +1051,7 @@ export default function FeedTwin({
     const signature = km == null ? 'none' : `${postId}:${km}:${post?.pinColor ?? ''}`
     if (signature === reportedReachRef.current) return
     reportedReachRef.current = signature
-    onPostReach?.(km, post?.pinColor ? PIN_COLOR_SWATCH[post.pinColor] : undefined)
+    onPostReach?.(km, post?.pinColor ? PIN_COLOR_SWATCH[post.pinColor] : undefined, postId)
   }, [onPostReach, post?.reachKm, post?.pinColor, postId])
   // Leaving reports "no post". The signature ref is FORGOTTEN here on purpose:
   // a remount (React's dev-mode double mount included) runs this cleanup and
@@ -1123,7 +1072,7 @@ export default function FeedTwin({
     // loss without replacing somebody's upload with unrelated stock media.
     ? [desiredAdSrc, desiredAdSrc]
     : []
-  const sourceKey = `${ch.id}:${post?.id ?? post?.user ?? 'no-post'}:${desiredAdSrc ?? 'stream'}`
+  const sourceKey = `${ch.id}:${post?.id ?? post?.user ?? 'no-post'}:${desiredAdSrc ?? 'stream'}:${broadcastRevision}`
   const [recoveryAttempt, setRecoveryAttempt] = useState(0)
   const recoveryAttemptRef = useRef(0)
   const [playbackUnavailable, setPlaybackUnavailable] = useState(false)
@@ -1140,15 +1089,15 @@ export default function FeedTwin({
   const photoClock = useRef({ key: '', elapsed: 0, completed: false })
   useEffect(() => {
     photoClock.current = { key: sourceKey, elapsed: 0, completed: false }
-    setRemainingSeconds(post?.mediaType === 'photo' ? post.photoViewSeconds ?? null : null)
+    setRemainingSeconds(post?.mediaType === 'photo' ? post.photoViewSeconds ?? FEED_PHOTO_DWELL_SECONDS : null)
   }, [sourceKey, post?.photoViewSeconds, post?.mediaType])
   useEffect(() => {
-    const duration = post?.photoViewSeconds
-    if (post?.mediaType !== 'photo' || !duration || !posterReady || suppressed || !frontMost || commentOpen) return
+    const duration = post?.photoViewSeconds ?? FEED_PHOTO_DWELL_SECONDS
+    if (post?.mediaType !== 'photo' || !posterReady || suppressed || !frontMost || commentOpen || playerMode) return
     let last = performance.now()
-    const resetClock = () => { last = performance.now() }
-    document.addEventListener('visibilitychange', resetClock)
-    const timer = window.setInterval(() => {
+    let timer = 0
+    let nativeActive = (window as Window & { __poplurNativeAppActive?: boolean }).__poplurNativeAppActive !== false
+    const tick = () => {
       const now = performance.now()
       const delta = now - last
       last = now
@@ -1160,12 +1109,48 @@ export default function FeedTwin({
         photoClock.current.completed = true
         advanceCompletedContent()
       }
-    }, 1000)
+    }
+    const resetClock = () => {
+      last = performance.now(); window.clearInterval(timer)
+      if (!document.hidden && nativeActive) timer = window.setInterval(tick, 1000)
+    }
+    const lifecycle = (event: Event) => {
+      const active = (event as CustomEvent).detail?.active
+      if (typeof active === 'boolean') { nativeActive = active; resetClock() }
+    }
+    resetClock()
+    document.addEventListener('visibilitychange', resetClock)
+    window.addEventListener('poplur-native-app-lifecycle', lifecycle)
     return () => {
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', resetClock)
+      window.removeEventListener('poplur-native-app-lifecycle', lifecycle)
     }
-  }, [sourceKey, post?.mediaType, post?.photoViewSeconds, posterReady, suppressed, frontMost, commentOpen, advanceCompletedContent])
+  }, [sourceKey, post?.mediaType, post?.photoViewSeconds, posterReady, suppressed, frontMost, commentOpen, playerMode, advanceCompletedContent])
+
+  // Unlimited live streams and empty channels still yield to the broadcast.
+  const broadcastDwellMs = post?.stream ? FEED_LIVE_DWELL_SECONDS * 1000 : !post ? 4_000 : 0
+  useEffect(() => {
+    if (!broadcastDwellMs || suppressed || !frontMost || commentOpen || playerMode) return
+    let timer = 0
+    let nativeActive = (window as Window & { __poplurNativeAppActive?: boolean }).__poplurNativeAppActive !== false
+    const arm = () => {
+      window.clearTimeout(timer)
+      if (!document.hidden && nativeActive) timer = window.setTimeout(advanceCompletedContent, broadcastDwellMs)
+    }
+    const lifecycle = (event: Event) => {
+      const active = (event as CustomEvent).detail?.active
+      if (typeof active === 'boolean') { nativeActive = active; arm() }
+    }
+    arm()
+    document.addEventListener('visibilitychange', arm)
+    window.addEventListener('poplur-native-app-lifecycle', lifecycle)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', arm)
+      window.removeEventListener('poplur-native-app-lifecycle', lifecycle)
+    }
+  }, [sourceKey, broadcastDwellMs, suppressed, frontMost, commentOpen, playerMode, advanceCompletedContent])
   useEffect(() => {
     recoveryAttemptRef.current = 0
     setRecoveryAttempt(0)
@@ -1205,9 +1190,40 @@ export default function FeedTwin({
     setRecoveringPlayback(true)
     setRecoveryAttempt(nextAttempt)
   }, [sourceCandidates.length])
+  // A failed stream cools down before retrying automatically. No user-owned
+  // pause is overridden; leaving the screen cancels the pending retry.
+  const retryCycleRef = useRef(0)
+  useEffect(() => { retryCycleRef.current = 0 }, [sourceKey])
+  useEffect(() => {
+    if (!playbackUnavailable || suppressed || !frontMost) return
+    const retry = () => {
+      if (document.hidden || playerPausedByUserRef.current) return
+      // A dead upload must not hold an otherwise active TV channel forever.
+      if (retryCycleRef.current >= 2 && !playerModeRef.current && !commentOpen) {
+        advanceCompletedContent()
+        return
+      }
+      recoveryAttemptRef.current = 0
+      recoveringAdSrcRef.current = null
+      settledAdRef.current = null
+      setRecoveryAttempt(0)
+      setReadyPlaybackKey(null)
+      setRecoveringPlayback(true)
+      setPlaybackUnavailable(false)
+      setRemainingSeconds(null)
+    }
+    const delay = Math.min(30_000, 3_000 * 2 ** Math.min(retryCycleRef.current++, 4))
+    const timer = window.setTimeout(retry, delay)
+    window.addEventListener('online', retry)
+    document.addEventListener('visibilitychange', retry)
+    return () => { clearTimeout(timer); window.removeEventListener('online', retry); document.removeEventListener('visibilitychange', retry) }
+  }, [playbackUnavailable, suppressed, frontMost, sourceKey, commentOpen, advanceCompletedContent])
+
   const retryAdPlayback = useCallback((source: string, video: HTMLVideoElement) => {
     if (adVideoRef.current !== video || video.getAttribute('src') !== source) return
     if (completedAdRef.current === source) return
+    if (suppressedRef.current || !frontMostRef.current || document.hidden
+      || !(window.__poplurDisplayActive?.() ?? true) || playerPausedByUserRef.current) return
     if (!mediaUnlockedRef.current) {
       video.muted = true
       video.pause()
@@ -1217,10 +1233,8 @@ export default function FeedTwin({
     // WebKit resumes it. Re-arming the static/first-frame latch here created a
     // circular wait: `waiting` cleared readiness, but an already-playing video
     // did not owe us a second `playing` event to set it again.
-    void video.play().catch(() => {
-      if (adVideoRef.current === video && video.getAttribute('src') === source) {
-        advanceAdSource(source)
-      }
+    void playFeedVideo(video, () => adVideoRef.current === video && video.getAttribute('src') === source).then(result => {
+      if (result === 'failed' && adVideoRef.current === video && video.getAttribute('src') === source) advanceAdSource(source)
     })
   }, [advanceAdSource])
 
@@ -1355,11 +1369,19 @@ export default function FeedTwin({
   // and spending two decoder leases on one visible surface. Static remains an
   // explicit QA/transition treatment only.
   const [recoveringPlayback, setRecoveringPlayback] = useState(true)
+  const [settledChannel, setSettledChannel] = useState(index)
+  const channelTuning = settledChannel !== index
+  useEffect(() => {
+    if (!channelTuning) return
+    const timer = window.setTimeout(() => setSettledChannel(index), FEED_CHANNEL_STATIC_MS)
+    return () => window.clearTimeout(timer)
+  }, [index, channelTuning])
   // Static is only a brief bridge to a real frame or a loaded poster. The
   // poster is the honest fallback when WebKit cannot provide a decoder, so it
   // must never remain hidden behind the buffering grid.
-  const showStatic = forceStatic || forceTransition
+  const showStatic = !suppressed && frontMost && (channelTuning || forceStatic || forceTransition
     || (!posterReady && !playbackUnavailable && (recoveringPlayback || !decoderGranted))
+  )
   const staticKey = `${adSrc ?? 'no-creative'}:${forceTransition ? 'transition' : 'static'}`
   const [readyStaticKey, setReadyStaticKey] = useState<string | null>(null)
   const staticReady = readyStaticKey === staticKey
@@ -1451,8 +1473,8 @@ export default function FeedTwin({
     settleAfterFrame(video, () => {
       if (adVideoRef.current === video && video.getAttribute('src') === source) {
         setReadyPlaybackKey(key)
-        // A decoded/composited frame is stronger evidence than the 900ms
-        // progress poll. Lift the static cover immediately instead of waiting
+        // A decoded/composited frame is stronger evidence than a recovery
+        // deadline. Lift the static cover immediately instead of waiting
         // for a watchdog tick that may be throttled by WKWebView.
         setRecoveringPlayback(false)
       }
@@ -1554,7 +1576,7 @@ export default function FeedTwin({
         video.load()
         awaitingPostLoadProgress = true
         checkpoint = video.currentTime
-        void video.play().catch(() => {})
+        retryAdPlayback(adSrc, video)
         const retryCheckpoint = video.currentTime
         rotateTimer = window.setTimeout(() => {
           rotateTimer = 0
@@ -1562,8 +1584,8 @@ export default function FeedTwin({
           const recovered = video.currentTime > retryCheckpoint + 0.03
           if (recovered) onProgress()
           else advanceAdSource(adSrc)
-        }, 1800)
-      }, 900)
+        }, 6_000)
+      }, 6_000)
     }
     const onPlaying = () => {
       if (
@@ -1571,12 +1593,13 @@ export default function FeedTwin({
         && !video.paused
         && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
       ) {
-        // `playing` only means WebKit left its paused state. Some failed
-        // decoders emit it with one frame and never advance currentTime, so it
-        // is not strong enough to cancel the bounded startup deadline. A real
-        // `timeupdate` calls onProgress and retires both recovery timers.
+        // A late first frame must cancel the STARTUP deadline. Previously a
+        // healthy `playing` at 880ms was reloaded at 900ms before its first
+        // timeupdate. The resulting AbortErrors exhausted both source attempts.
+        // The separate no-progress deadline still catches a frozen first frame.
+        if (!awaitingPostLoadProgress) clearRecovery()
         markAdReady(adSrc)
-        armRecovery()
+        armSilence()
       }
     }
     const onForeground = (event?: Event) => {
@@ -1595,10 +1618,21 @@ export default function FeedTwin({
       clearSilence()
       if (stillOwnsVideo()) advanceAdSource(adSrc)
     }
-    const onRest = () => clearSilence()
+    const onRest = () => { clearSilence(); clearRecovery() }
+    const onPause = () => {
+      onRest()
+      // Native audio/ad interruptions may pause without a later focus event.
+      // Defer one task so a tab transition can commit its suppression first.
+      retryTimer = window.setTimeout(() => {
+        retryTimer = 0
+        if (!stillOwnsVideo() || video.ended) return
+        retryAdPlayback(adSrc, video)
+        armRecovery()
+      }, 200)
+    }
     video.addEventListener('timeupdate', onProgress)
     video.addEventListener('playing', onPlaying)
-    video.addEventListener('pause', onRest)
+    video.addEventListener('pause', onPause)
     video.addEventListener('ended', onRest)
     video.addEventListener('waiting', armRecovery)
     video.addEventListener('stalled', armRecovery)
@@ -1615,7 +1649,7 @@ export default function FeedTwin({
       clearSilence()
       video.removeEventListener('timeupdate', onProgress)
       video.removeEventListener('playing', onPlaying)
-      video.removeEventListener('pause', onRest)
+      video.removeEventListener('pause', onPause)
       video.removeEventListener('ended', onRest)
       video.removeEventListener('waiting', armRecovery)
       video.removeEventListener('stalled', armRecovery)
@@ -1624,13 +1658,11 @@ export default function FeedTwin({
       window.removeEventListener('pageshow', onForeground)
       window.removeEventListener('poplur-native-app-lifecycle', onForeground)
     }
-  }, [adReady, adSrc, completedAdSrc, suppressed, frontMost, mediaUnlocked, decoderGranted, markAdReady, advanceAdSource])
+  }, [adReady, adSrc, completedAdSrc, suppressed, frontMost, mediaUnlocked, decoderGranted, markAdReady, advanceAdSource, retryAdPlayback, recoveryAttempt])
 
-  // Channel audio. The ad creative is the channel's soundtrack, so it plays
-  // aloud — but iOS/Safari block unmuted autoplay until the user has interacted,
-  // and the shared gate must still win (user mute, backgrounded app). So the
-  // element autoplays muted, then unmutes on the first gesture and re-applies
-  // whenever the gate changes.
+  // Apply sound after the decoder mounts as well as after source/focus changes.
+  // The decoder lease can arrive after the first render; an effect that ran
+  // only before that edge left the new video muted indefinitely.
   useEffect(() => {
     const apply = () => {
       const video = adVideoRef.current
@@ -1663,13 +1695,13 @@ export default function FeedTwin({
       // first frame while its own stop callback is still running.
       if (!deferToOwner(currentAudioOwner())) requestAudioFocus('feed')
       const audible = audioUnlockedRef.current
-        && !isGateMuted()
+        && !isPlaybackBlocked() && !mutedRef.current
         && currentAudioOwner() === 'feed'
       video.muted = !audible
       video.volume = 0.85
       if (audible) requestAudioFocus('feed')
       // A muted element may already be playing; unmuting can still need a nudge.
-      if (video.paused) void video.play().catch(() => {})
+      if (video.paused && adSrc) retryAdPlayback(adSrc, video)
     }
     apply()
     const offGate = onGateChange(apply)
@@ -1705,7 +1737,7 @@ export default function FeedTwin({
       // visible screen instead of leaving Feed muted until the next gesture.
       if (currentAudioOwner() !== 'feed') requestAudioFocus('feed')
       video.muted = !audioUnlockedRef.current
-        || isGateMuted()
+        || isPlaybackBlocked() || mutedRef.current
         || currentAudioOwner() !== 'feed'
       // Focus callbacks used to restore only the mute bit. WKWebView can pause
       // the element when Voice/system audio takes the floor, so returning focus
@@ -1733,7 +1765,7 @@ export default function FeedTwin({
       setMusicPlayback('feed', false)
       releaseAudioFocus('feed')
     }
-  }, [adSrc, sourceKey, audioUnlocked, frontMost, retryAdPlayback])
+  }, [adSrc, sourceKey, audioUnlocked, muted, frontMost, decoderGranted, recoveryAttempt, retryAdPlayback])
 
   // One pointer path for touch, pen, and desktop mouse drag. Capturing the
   // pointer keeps the swipe alive when it finishes outside the feed. The
@@ -2113,11 +2145,11 @@ export default function FeedTwin({
     } else {
       if (audioUnlockedRef.current && !deferToOwner(currentAudioOwner())) requestAudioFocus('feed')
       video.muted = !audioUnlockedRef.current
-        || isGateMuted()
+        || isPlaybackBlocked() || mutedRef.current
         || currentAudioOwner() !== 'feed'
       if (completedAdRef.current !== adSrc) void video.play().catch(() => {})
     }
-  }, [suppressed, adSrc, sourceKey, audioUnlocked, frontMost])
+  }, [suppressed, adSrc, sourceKey, audioUnlocked, muted, frontMost, decoderGranted, recoveryAttempt])
 
   // Your comment belongs in the comments, on the post you left it on. Keyed by
   // the post rather than held in one list, or a comment written on the ramen
@@ -2224,7 +2256,7 @@ export default function FeedTwin({
           autoPlay
           // Ended media enters the cross-channel radius queue.
           loop={false}
-          muted
+          muted={muted || !audioUnlocked || isPlaybackBlocked() || suppressed || !frontMost || currentAudioOwner() !== 'feed'}
           playsInline
           controls={false}
           disablePictureInPicture
@@ -2243,7 +2275,6 @@ export default function FeedTwin({
           onLoadedMetadata={event => {
             if (Number.isFinite(event.currentTarget.duration)) setRemainingSeconds(event.currentTarget.duration)
           }}
-          onWaiting={event => retryAdPlayback(adSrc, event.currentTarget)}
           onEnded={event => {
             completedAdRef.current = adSrc
             // Retire synchronously before the state update unmounts this node.
@@ -2256,15 +2287,13 @@ export default function FeedTwin({
             releaseAudioFocus('feed')
             advanceCompletedContent()
           }}
-          onError={event => retryAdPlayback(adSrc, event.currentTarget)}
-          onStalled={event => retryAdPlayback(adSrc, event.currentTarget)}
         />
       )}
 
       {/* Static + channel identity while the video buffers or swaps; fades out
           over 0.5s (ease-out) exactly like the app, and stays up as the
           "no signal" card on channels with no creative yet. */}
-      <div className={showStatic ? styles.staticLayer : styles.staticLayerHidden} aria-hidden="true">
+      <div className={showStatic ? styles.staticLayer : styles.staticLayerHidden} data-channel-tuning={channelTuning || undefined} aria-hidden="true">
         {/* Once the ad's real frames arrive the static cover fades out — but a
             fully-transparent <video> keeps its decoder running, a second live
             decoder behind the ad for no visible gain. Unmount it when the ad is
@@ -2434,17 +2463,11 @@ export default function FeedTwin({
           </div>
         )}
         {deletePromptPost && !deletePending && (
-          <div className={surfaceStyles.scrim} onClick={() => setDeletePromptPost(null)} data-feed-delete-dialog="">
-            <PoplurDialog
-              eyebrow="Poplur"
-              title="Delete this post?"
-              subtitle="It comes off the feed, the map and your profile. This cannot be undone."
-              primaryAction={{ label: 'Delete', onActivate: () => { playPop(); confirmDelete() } }}
-              secondaryAction={{ label: 'Keep it', onActivate: () => { playPop(); setDeletePromptPost(null) } }}
-              onClose={() => { playPop(); setDeletePromptPost(null) }}
-              dataId={`feed-delete:${deletePromptPost.id ?? ''}`}
-            />
-          </div>
+          <PostDeleteDialog
+            onDelete={() => { playPop(); confirmDelete() }}
+            onCancel={() => { playPop(); setDeletePromptPost(null) }}
+            dataId={`feed-delete:${deletePromptPost.id ?? 'post'}`}
+          />
         )}
         {/* The no-signal card above is aria-hidden, so with nothing on the
             live channel would otherwise announce nothing at all. */}
@@ -2466,50 +2489,14 @@ export default function FeedTwin({
         <div className={`${styles.topBar} ${controlSide === 'right' ? styles.topBarRailRight : styles.topBarRailLeft}`}>
           <div className={styles.infoRow}>
             <div className={styles.feedHeaderCopy}>
-              {/* One line, two turns: the title and the handle share a cell and
-                  trade places on a slow fade. Keyed on the title so a new pop
-                  restarts both in step — title first.
-                  The WHOLE cell is the poster's button, not the handle span:
-                  the handle is faded out half the time and is display:none
-                  under reduced motion, so the cell is the only target that is
-                  always there to press. The feed's gesture recogniser stands
-                  aside for anything inside a button, so this tap can never
-                  arm the long-press or count as a swipe. Without an opener
-                  (a standalone preview) it stays a plain line. */}
-              {onOpenProfile ? (
-                <button
-                  type="button"
-                  className={`${styles.feedHeadline} ${styles.feedHeadlineButton}`}
-                  aria-label={post.ownerId && post.ownerId === accountUid
-                    ? `${title}. Open your profile`
-                    : `${title}. Open ${post.user}'s profile`}
-                  key={title}
-                  onClick={openPosterProfile}
-                  data-feed-byline="true"
-                >
-                  <span className={styles.feedHeadlineSwap}>
-                    <FeedTitle title={title} />
-                    <div className={`${styles.feedHandle} ${styles.feedMetaHandle}`} aria-hidden="true">
-                      {post.user}
-                      {bylineVerified && (
-                        <img src={VERIFIED_CHECK_SRC[bylineVerified]} className={styles.verifyBadge} alt="" draggable="false" />
-                      )}
-                    </div>
-                  </span>
-                </button>
-              ) : (
-              <div className={styles.feedHeadline} aria-label={`${title}, ${post.user}`} key={title}>
-                <span className={styles.feedHeadlineSwap}>
-                  <FeedTitle title={title} />
-                  <div className={`${styles.feedHandle} ${styles.feedMetaHandle}`} aria-hidden="true">
-                    {post.user}
-                    {bylineVerified && (
-                      <img src={VERIFIED_CHECK_SRC[bylineVerified]} className={styles.verifyBadge} alt="" draggable="false" />
-                    )}
-                  </div>
-                </span>
-              </div>
-              )}
+              <FeedAuthor
+                username={post.user}
+                caption={title}
+                avatarURL={post.ownerId === accountUid ? accountSnapshot().photoURL ?? post.ownerAvatarURL : post.ownerAvatarURL}
+                verified={bylineVerified}
+                onOpen={onOpenProfile ? openPosterProfile : undefined}
+                own={Boolean(post.ownerId && post.ownerId === accountUid)}
+              />
               {(post.live || remainingSeconds !== null) && (
                 <output className={styles.mediaTimer} aria-label="Media time remaining" data-feed-timer="">
                   {post.live ? 'LIVE' : mediaTimeLabel(remainingSeconds)}

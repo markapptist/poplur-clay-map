@@ -68,9 +68,14 @@ let userMuted = (() => {
 })()
 const listeners = new Set<(muted: boolean) => void>()
 
-export function isGateMuted(): boolean {
+/** Lifecycle/host permission, separate from the Map's persisted speaker toggle. */
+export function isPlaybackBlocked(): boolean {
   const lifecycleHidden = nativeAppActive === null ? hidden : !nativeAppActive
-  return embedMuted || lifecycleHidden || userMuted
+  return embedMuted || lifecycleHidden
+}
+
+export function isGateMuted(): boolean {
+  return isPlaybackBlocked() || userMuted
 }
 
 /** One-line census for the on-device heat probe: every AudioContext this page

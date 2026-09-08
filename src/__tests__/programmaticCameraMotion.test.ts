@@ -13,6 +13,7 @@ import {
   programmaticCameraPlan,
   programmaticCameraPlanForMode,
 } from '../programmaticCameraMotion'
+import { MAP_BROWSE_3D_PITCH, MAP_BROWSE_3D_MAX_PITCH } from '../mapPresentationPolicy'
 
 const mapAppSource = readFileSync(resolve(process.cwd(), 'src', 'MapApp.tsx'), 'utf8')
 const clayMapSource = readFileSync(resolve(process.cwd(), 'src', 'ClayMap.tsx'), 'utf8')
@@ -117,7 +118,7 @@ describe('programmatic Map camera motion', () => {
       mapAppSource.indexOf('const flyToCenter = useCallback'),
       mapAppSource.indexOf('const flyToPop = useCallback'),
     )
-    expect(flight).toContain('const atWorldOverview = worldCountryZoomActive(currentZoom, MAP_MIN_ZOOM)')
+    expect(flight).toContain("const atWorldOverview = motionMode === 'map-point-cycle' && worldCountryZoomActive(currentZoom, MAP_MIN_ZOOM)")
     expect(flight).toContain('holdWideOverview: atWorldOverview')
     expect(flight).toContain("...(landmarkFrame?.offset && !atWorldOverview ? { offset: landmarkFrame.offset } : {})")
   })
@@ -146,7 +147,7 @@ describe('programmatic Map camera motion', () => {
       targetBearing: 0,
       subject: 'pin',
       streetView: false,
-    })).toEqual({ pitch: 28, bearing: 0, maxPitch: 36 })
+    })).toEqual({ pitch: MAP_BROWSE_3D_PITCH, bearing: 0, maxPitch: MAP_BROWSE_3D_MAX_PITCH })
 
     expect(mapPointCycleDestinationPose({
       finalZoom: 14.65,
@@ -157,25 +158,25 @@ describe('programmatic Map camera motion', () => {
       targetBearing: 22,
       subject: 'landmark',
       streetView: false,
-    })).toEqual({ pitch: 42, bearing: 22, maxPitch: 42 })
+    })).toEqual({ pitch: MAP_BROWSE_3D_PITCH, bearing: 22, maxPitch: MAP_BROWSE_3D_MAX_PITCH })
   })
 
   it('retains an existing local isometric pose but keeps wide destination frames flat', () => {
     expect(mapPointCycleDestinationPose({
       finalZoom: 17.2,
       currentZoom: 17.4,
-      currentPitch: 34,
+      currentPitch: MAP_BROWSE_3D_PITCH + 2,
       currentBearing: 51,
       targetPitch: 28,
       targetBearing: 0,
       subject: 'current',
       streetView: false,
-    })).toEqual({ pitch: 34, bearing: 51, maxPitch: 36 })
+    })).toEqual({ pitch: MAP_BROWSE_3D_PITCH + 2, bearing: 51, maxPitch: MAP_BROWSE_3D_MAX_PITCH })
 
     expect(mapPointCycleDestinationPose({
       finalZoom: 11.8,
       currentZoom: 17.4,
-      currentPitch: 34,
+      currentPitch: MAP_BROWSE_3D_PITCH + 2,
       currentBearing: 51,
       targetPitch: 28,
       targetBearing: 0,
@@ -217,44 +218,22 @@ describe('programmatic Map camera motion', () => {
       mapAppSource.indexOf('const flyToCenter = useCallback'),
       mapAppSource.indexOf('const flyToPop = useCallback'),
     )
-    const claimsCamera = flight.indexOf('mapCamera.__cinematic = true')
-    const cancelsAdaptive = flight.indexOf('mapCamera.__cancelAdaptiveCameraSettle?.()')
+    const claimsCamera = flight.indexOf('camera.__cinematic = true')
+    const cancelsAdaptive = flight.indexOf('camera.__cancelAdaptiveCameraSettle?.()')
     const stopsPrevious = flight.indexOf('map.stop()')
     expect(claimsCamera).toBeGreaterThanOrEqual(0)
     expect(cancelsAdaptive).toBeGreaterThan(claimsCamera)
     expect(stopsPrevious).toBeGreaterThan(cancelsAdaptive)
   })
 
-  it('moves a close point-cycle selection once into its resolved subject pose', () => {
+  it('uses the same direct cut for point selections and tour destinations', () => {
     const flight = mapAppSource.slice(
       mapAppSource.indexOf('const flyToCenter = useCallback'),
       mapAppSource.indexOf('const flyToPop = useCallback'),
     )
-    const directPointMove = flight.slice(
-      flight.indexOf("motionMode === 'map-point-cycle'"),
-      flight.indexOf('// The authored tour crosses flat'),
-    )
-    expect(flight.indexOf('cancelStagedCameraFlight()')).toBeLessThan(
-      flight.indexOf("motionMode === 'map-point-cycle'"),
-    )
-    expect(flight.indexOf('map.stop()')).toBeLessThan(
-      flight.indexOf("motionMode === 'map-point-cycle'"),
-    )
-    expect(directPointMove).toContain("cameraPlan.kind === 'translate'")
-    expect(directPointMove).toContain('if (ownsFlight())')
-    expect(directPointMove.match(/map\.easeTo\(\{/g)).toHaveLength(1)
-    expect(directPointMove).toContain('zoom: cameraPlan.zoom')
-    expect(directPointMove).toContain('pitch: destinationPose.pitch')
-    expect(directPointMove).toContain('bearing: destinationPose.bearing')
-    expect(directPointMove).toContain('map.setMaxPitch(Math.max(destinationPose.maxPitch')
-    // The arrows FLIP to the next point: one zero-duration ease, arrival
-    // handed back synchronously. A paced pan was tried and rejected
-    // (5 Sep 2026) — stepping pin to pin, a cut reads as "next".
-    expect(directPointMove).toContain('duration: 0')
-    expect(directPointMove).not.toContain('mapPointCyclePanMs')
-    expect(directPointMove).not.toContain("map.once('moveend'")
-    expect(directPointMove).not.toContain('beginProgrammaticCameraMotion')
-    expect(directPointMove).not.toContain('map.flyTo({')
+    expect(flight).toContain('cutMapCamera(map, {')
+    expect(flight).not.toContain('map.flyTo(')
+    expect(flight).not.toContain('startLandmarkOrbit')
   })
 
   it('recovers a lost arrival with its authored offset and bounds Mapbox-readiness retries', () => {

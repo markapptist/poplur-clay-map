@@ -1,79 +1,12 @@
-/* One filter per button. The shared rail (TabControlRail.module.css) already
-   owns the 44px box, the column geometry and the selected clay bed, so this
-   file only says how a filter's own artwork sits inside that box. */
-
-.filter {
-  display: block;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  border-radius: 15px;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  /* The catalog thumbnails are photographs; keep them from being dragged out
-     of the app as images while the user is scrubbing the column. */
-  -webkit-user-select: none;
-  user-select: none;
-}
-
+/* Photograph crops fill the same clay frame used by channel artwork. */
 .thumb {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 15px;
-  transition: transform 140ms cubic-bezier(.2, .8, .2, 1), border-radius 140ms;
+  border-radius: inherit;
 }
 
-/* Selected: shrink the artwork so the rail's pink clay bed reads as a frame
-   around it. Same cue the other rails use for an active control, without
-   inventing a second selected look for this one column. */
-.filter[aria-pressed='true'] .thumb {
-  transform: scale(0.82);
-  border-radius: 12px;
-}
-
-.filter:active .thumb { transform: scale(0.9); }
-.filter[aria-pressed='true']:active .thumb { transform: scale(0.78); }
-
-.filter:focus-visible {
-  outline: 2px solid rgba(255, 221, 239, 0.9);
-  outline-offset: 2px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .thumb { transition: none; }
-}
-
-/* Five wheel slots tall, one tile wide: a fixed window the wheel spins
-   inside rather than a column that grows with the catalog. */
-/* The AR dial's own column. It used to be a fixed-height child of the 44px
-   control rail, which stacked it under the rail's other buttons and left it
-   sitting high on the screen. It spans the same band as the feed's channel
-   dial now, so both wheels centre on the same line. */
-.rail {
-  position: absolute;
-  /* The mirror of the camera's control rail, which runs in fill mode and so
-     starts at the HEADER line (--poplur-feed-action-top, right under the
-     wordmark) — not at the generic rail line 154px down. Anchoring here put
-     the grid and timer a whole row and a half lower than the first control
-     opposite, floating mid-screen instead of sitting in the corner. */
-  top: var(
-    --poplur-feed-action-top,
-    var(--poplur-rail-top, max(154px, calc(env(safe-area-inset-top, 0px) + 112px)))
-  );
-  bottom: var(--poplur-home-clearance, 120px);
-  width: 96px;
-  z-index: 46;
-  pointer-events: auto;
-}
-.railLeft { left: max(0px, calc(env(safe-area-inset-left, 0px) - 8px)); }
-.railRight { right: max(0px, calc(env(safe-area-inset-right, 0px) - 8px)); }
-
-/* Fills that column, so ClayWheel's own centre line is the column's centre. */
-/* The column is a stack now: the head's two controls, then the wheel taking
-   whatever is left. The wheel used to be the whole column. */
-.rail { display: flex; flex-direction: column; }
 .head {
   display: flex;
   flex-direction: column;
@@ -93,26 +26,21 @@
 }
 .head > * img { width: 100%; height: 100%; object-fit: contain; }
 /* The head's controls hug the screen edge at exactly the control rail's inset
-   (max(12px, safe-inset)), not the centre of this 96px column, which left them
+   (max(12px, safe-inset)), not the centre of this shared column, which left them
    26px in. The column itself keeps its own edge-bleeding offset for the wheel
    below, so the padding is the difference between the two, and stays exact
    when a safe-area inset applies on that side. */
-.railRight .head {
+.headRight {
   align-items: flex-end;
   padding-right: calc(
     max(12px, env(safe-area-inset-right, 0px))
     - max(0px, calc(env(safe-area-inset-right, 0px) - 8px))
   );
 }
-.railLeft .head {
+.headLeft {
   align-items: flex-start;
   padding-left: calc(
     max(12px, env(safe-area-inset-left, 0px))
     - max(0px, calc(env(safe-area-inset-left, 0px) - 8px))
   );
-}
-.wheelBox {
-  width: 100%;
-  flex: 1;
-  min-height: 0;
 }

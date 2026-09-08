@@ -2,7 +2,8 @@ import { onFrame } from './frameGovernor'
 import { cancelManagedRenderingWake, wakeManagedRendering } from './nativeBridge'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type mapboxgl from 'mapbox-gl'
-import { modelSprite } from './modelSprite'
+import ShellOverlayPortal from './ShellOverlayPortal'
+import { createNavigationCar, type NavigationCar } from './navigationCar3D'
 import type { MapTheme } from './data'
 import styles from './ClayNav.module.css'
 import surfaceStyles from './TransientPopupSurface.module.css'
@@ -28,6 +29,7 @@ interface ClayNavProps {
   setStreetView: (on: boolean) => void
   /** Show a line in the AI ticker (mirrors the Poplur AI voice). */
   say: (line: string | null) => void
+  onSpeak: (line: string) => boolean
 }
 
 type Mode = 'idle' | 'searching' | 'preview' | 'navigating' | 'arrived'
@@ -144,9 +146,10 @@ const MANEUVER_ICON: Record<string, string> = {
   straight: 'M12 20V5m0 0-4 4m4-4 4 4', arrive: 'M12 21s7-5.5 7-11a7 7 0 1 0-14 0c0 5.5 7 11 7 11Z',
 }
 
-export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteIntent, streetView, setStreetView, say, openSignal = 0 }: ClayNavProps) {
+export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteIntent, streetView, setStreetView, say, onSpeak, openSignal = 0 }: ClayNavProps) {
   const [mode, setMode] = useState<Mode>('idle')
   const [query, setQuery] = useState('')
+  const [startQuery, setStartQuery] = useState('')
   const [destName, setDestName] = useState('')
   const [route, setRoute] = useState<Route | null>(null)
   const [banner, setBanner] = useState<{ text: string; dist: number; type: string } | null>(null)
@@ -154,35 +157,18 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
   const [error, setError] = useState<string | null>(null)
   const [isRouting, setIsRouting] = useState(false)
 
-  const carRef = useRef<mapboxgl.Marker | null>(null)
+  const carRef = useRef<NavigationCar | null>(null)
   const destMarkRef = useRef<mapboxgl.Marker | null>(null)
   // Unsubscribe from the shared frame clock (frameGovernor) while driving.
   const stopTickRef = useRef<(() => void) | null>(null)
   const driveLeaseTimerRef = useRef(0)
-  const carSpriteRef = useRef<string | null>(null)
   const spokenRef = useRef<Set<number>>(new Set())
 
   // ---- speech (the Poplur AI voice) ----
   const speak = useCallback((text: string) => {
     say(text)
-    try {
-      const synth = window.speechSynthesis
-      if (!synth) return
-      synth.cancel()
-      const u = new SpeechSynthesisUtterance(text)
-      const gb = synth.getVoices().find(v => /en-GB/i.test(v.lang)) || synth.getVoices().find(v => /en/i.test(v.lang))
-      if (gb) u.voice = gb
-      u.rate = 1.02; u.pitch = 1.05
-      synth.speak(u)
-    } catch { /* speech unsupported */ }
-  }, [say])
-
-  // preload the Poplur car sprite (same GLB the ambient cars use)
-  useEffect(() => {
-    modelSprite('models/car.glb', { pitch: 62, yaw: 90, size: 256 })
-      .then(s => { carSpriteRef.current = s })
-      .catch(() => {})
-  }, [])
+    onSpeak(text)
+  }, [say, onSpeak])
 
   const removeRouteLayers = useCallback(() => {
     const map = mapRef.current
@@ -219,8 +205,13 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
     onRouteIntent?.()
     setError(null)
     setIsRouting(true)
-    const origin: LngLat = routeOrigin
+    let origin: LngLat = routeOrigin
     try {
+      if (startQuery.trim()) {
+        const startPlace = await findDestination(startQuery.trim(), routeOrigin, token)
+        if (!startPlace) { setError('Starting location not found. Try a full address.'); return }
+        origin = startPlace.center
+      }
       const destination = await findDestination(query.trim(), origin, token)
       if (!destination) { setError('No place found. Try another name or a full address.'); return }
       const dest = destination.center
@@ -297,7 +288,7 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
     } finally {
       setIsRouting(false)
     }
-  }, [mapRef, query, isRouting, onRouteIntent, routeOrigin, token, theme, removeRouteLayers])
+  }, [mapRef, query, startQuery, isRouting, onRouteIntent, routeOrigin, token, theme, removeRouteLayers])
 
   // ---- drive the route ----
   const start = useCallback(() => {
@@ -309,12 +300,9 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
     spokenRef.current.clear()
     speak(`Starting navigation to ${destName}. ${route.steps[1]?.text ?? ''}`)
 
-    import('mapbox-gl').then(({ default: mapboxgl }) => {
-      const carEl = document.createElement('div')
-      carEl.className = styles.navCar
-      if (carSpriteRef.current) carEl.innerHTML = `<img src="${carSpriteRef.current}" alt="">`
+    {
       carRef.current?.remove()
-      carRef.current = new mapboxgl.Marker({ element: carEl, anchor: 'center', rotationAlignment: 'map' }).setLngLat(route.coords[0]).addTo(map)
+      carRef.current = createNavigationCar(map, route.coords[0])
 
       let progress = 0
       let smBrg = alongRoute(route, 0).brg
@@ -332,8 +320,8 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
         let d = ((lead.brg - smBrg + 540) % 360) - 180
         smBrg += d * Math.min(1, dt * 4)
 
-        map.jumpTo({ center: me.pos, bearing: smBrg, pitch: 82, zoom: 18.4 })
-        carRef.current?.setLngLat(lead.pos).setRotation(lead.brg)
+        map.jumpTo({ center: me.pos, bearing: smBrg, pitch: 68, zoom: 19.2 })
+        carRef.current?.setPose(lead.pos, lead.brg)
 
         // next maneuver banner + spoken turn
         const next = route.steps.find(s => s.at > progress + 4)
@@ -380,7 +368,7 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
         }
       }
       renewDriveLease()
-    })
+    }
   }, [mapRef, route, destName, onRouteIntent, setStreetView, speak])
 
   const end = useCallback(() => {
@@ -400,7 +388,7 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
   const maneuverPath = (t: string) => MANEUVER_ICON[t] || (/(left)/i.test(t) ? MANEUVER_ICON.left : /(right)/i.test(t) ? MANEUVER_ICON.right : MANEUVER_ICON.straight)
 
   return (
-    <div className={styles.wrap}>
+    <ShellOverlayPortal><div className={styles.wrap} data-map-directions="">
       {/* Directions FAB removed — the hold menu's DIRECTIONS entry opens the
           search via openSignal (declutter the map). */}
 
@@ -432,11 +420,12 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
               placeholder="Search a place" className={styles.searchInput}
             />
           </label>
-          <div className={styles.routeOrigin} aria-label="Route starts at your location">
-            <span className={styles.originDot} aria-hidden="true" />
-            <span>FROM</span>
-            <strong>Your location</strong>
-          </div>
+          <label className={styles.destinationField}>
+            <span>STARTING LOCATION</span>
+            <input value={startQuery} disabled={isRouting}
+              onChange={event => { setStartQuery(event.target.value); setError(null) }}
+              placeholder="Your current location" className={styles.searchInput} />
+          </label>
           <div className={styles.searchRow}>
             <button type="button" className={`${styles.ghostBtn} ${surfaceStyles.secondary}`} disabled={isRouting} onClick={() => { setMode('idle'); setError(null) }}>Cancel</button>
             <button type="submit" className={`${styles.goBtn} ${surfaceStyles.primary}`} disabled={isRouting}>{isRouting ? 'Routing…' : 'Search route'}</button>
@@ -479,6 +468,6 @@ export default function ClayNav({ mapRef, token, theme, routeOrigin, onRouteInte
           <button type="button" className={styles.endBtn} onClick={end}>{mode === 'arrived' ? 'Done' : 'End'}</button>
         </div>
       )}
-    </div>
+    </div></ShellOverlayPortal>
   )
 }

@@ -1,4 +1,4 @@
-import { isGateMuted, onGateChange } from './audioGate'
+import { isGateMuted, onGateChange, setUserMuted } from './audioGate'
 import { currentAudioOwner, holdThroughSilence, registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
 import { setMusicPlayback } from './musicPlayback'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -227,6 +227,21 @@ export function startRadioOnBoot(_lat = HOME[1], _lng = HOME[0]): void {
 }
 
 const MAP_RADIO_ENABLED_KEY = 'poplur.mapRadio.enabled'
+const MAP_RADIO_DEFAULT_VERSION = 'poplur.mapRadio.default.v3'
+let mapRadioDefaultApplied = false
+function applyMapRadioDefault(): void {
+  if (mapRadioDefaultApplied) return
+  mapRadioDefaultApplied = true
+  try {
+    if (window.localStorage.getItem(MAP_RADIO_DEFAULT_VERSION) === '1') return
+    // Correct earlier trial builds once; subsequent manual off/mute choices persist.
+    // v3 re-applies it: the map is meant to arrive with radio playing, and a
+    // stale mute from an earlier build was leaving it silent on every arrival.
+    window.localStorage.setItem(MAP_RADIO_DEFAULT_VERSION, '1')
+    window.localStorage.setItem(MAP_RADIO_ENABLED_KEY, '1')
+  } catch { /* The requested default still applies for this session. */ }
+  setUserMuted(false)
+}
 export function mapRadioEnabledByDefault(): boolean {
   try { return window.localStorage.getItem(MAP_RADIO_ENABLED_KEY) !== '0' } catch { return true }
 }
@@ -235,8 +250,11 @@ export function setMapRadioEnabled(on: boolean): void {
 }
 /** Arrival on Map starts radio unless the listener explicitly switched it off. */
 export function startDefaultMapRadio(lat = HOME[1], lng = HOME[0]): void {
+  applyMapRadioDefault()
   if (!mapRadioEnabledByDefault() || isGateMuted() || isMapRadioActive()) return
-  startAutomaticRadioSession(lat, lng)
+  const owner = currentAudioOwner()
+  if (owner === 'voice' || owner === 'feed' || owner === 'ipod') return
+  startRadioForMap(lat, lng)
 }
 
 /** Start Radio when its physical deck is on screen, regardless of scope. */
@@ -250,12 +268,26 @@ export function startRadioForVisibleScreen(lat = HOME[1], lng = HOME[0]): void {
  * local-station lookup may replace it when a suitable stream is available.
  */
 export function startRadioForMap(lat = HOME[1], lng = HOME[0]): void {
+  startMapRadio({ mediaOnly: true })
+  tuneMapRadioLocation(lat, lng)
+}
+
+let mapTuneLocationKey = ''
+/** Retune an existing Map session only. A hidden or stopped Map cannot restart it. */
+export function tuneMapRadioLocation(lat: number, lng: number): void {
+  if (!isMapRadioActive() || !validRadioCoordinates(lat, lng)) return
   const safeLat = validRadioCoordinates(lat, lng) ? lat : HOME[1]
   const safeLng = validRadioCoordinates(lat, lng) ? lng : HOME[0]
-  // Fence any passive boot selection as soon as the person presses Radio.
+  const locationKey = `${safeLat.toFixed(2)},${safeLng.toFixed(2)}`
+  if (mapTuneLocationKey === locationKey) return
+  mapTuneLocationKey = locationKey
+  lastTuneCoords = { lat: safeLat, lng: safeLng }
+  // A new selected location supersedes boot and earlier directory lookups.
   stationSelectionGeneration += 1
-  startMapRadio({ mediaOnly: true })
-  void mapNearbyRadioController.start(safeLat, safeLng)
+  nearbyStationCandidates = []
+  void mapNearbyRadioController.start(safeLat, safeLng).then(station => {
+    if (!station && mapTuneLocationKey === locationKey) scheduleRetune()
+  })
 }
 
 /** Called by RadioScreen so scope changes can stop a hidden session at once. */
@@ -986,6 +1018,8 @@ function getLiveAudio(): HTMLAudioElement | null {
     liveAudio.addEventListener('error', drop)
     liveAudio.addEventListener('playing', () => {
       if (liveStalledTimer !== null) { window.clearTimeout(liveStalledTimer); liveStalledTimer = null }
+      if (retuneTimer !== null) { window.clearTimeout(retuneTimer); retuneTimer = null }
+      retuneDelayMs = 1000
       if (!soundWanted || !liveStation) return
       stopFallbackRadio()
       setRadioLevel(targetRadioLevel, 0.28)
@@ -1021,22 +1055,19 @@ function isLiveRadioPlaying(): boolean {
 }
 
 function syncRadioMusicPlayback(): void {
-  // Radio is an audio surface, not a proof that the listener deliberately
-  // started music. Its bed can be under a spoken tour, a local station can be
-  // talk radio, and it can resume behind the map after a prior session.
-  //
-  // The disco navigator is reserved for explicit music: an opted-in Music
-  // feed video, iPod track, or Studio transport/take. Clear an older radio
-  // assertion on every radio state edge so audio alone can never summon it.
-  setMusicPlayback('radio', false)
+  // Only a playing, audible station starts the bounded music appearance.
+  // The local loading bed does not count as a station starting.
+  setMusicPlayback('radio', soundWanted && !isRadioGateMuted() && isLiveRadioPlaying())
 }
 
 function tryPlayLiveRadio(): void {
   if (!soundWanted || isRadioGateMuted() || !liveStation || !liveAudio) return
-  if (!liveAudio.getAttribute('src')) liveAudio.src = liveStation.url
+  const expectedUrl = liveStation.url
+  if (!liveAudio.getAttribute('src')) liveAudio.src = expectedUrl
   liveAudio.muted = false
   void liveAudio.play()
     .then(() => {
+      if (liveStation?.url !== expectedUrl) return
       stopFallbackRadio()
       setRadioLevel(targetRadioLevel, 0.28)
       syncRadioMusicPlayback()
@@ -1044,7 +1075,7 @@ function tryPlayLiveRadio(): void {
     .catch((error: unknown) => {
       // Autoplay can still be denied in an embedded WebView. Keep WebAudio
       // (or its HTML fallback) audible and retry on the next user gesture.
-      if (!soundWanted || isRadioGateMuted()) return
+      if (!soundWanted || isRadioGateMuted() || liveStation?.url !== expectedUrl) return
       setRadioLevel(targetRadioLevel, 0.12)
       const ctx = audioContext
       if (!ctx || ctx.state === 'suspended') startFallbackRadio()
@@ -1077,6 +1108,8 @@ function setLiveRadioLevel(value: number, timeConstant = 0.18) {
 }
 
 function dropLiveStation() {
+  for (const [url, until] of failedStationUrls) if (until <= Date.now()) failedStationUrls.delete(url)
+  if (liveStation) failedStationUrls.set(liveStation.url, Date.now() + 10 * 60_000)
   liveStation = null
   publishLiveStation()
   if (liveFadeTimer !== null) { window.clearInterval(liveFadeTimer); liveFadeTimer = null }
@@ -1093,15 +1126,19 @@ function dropLiveStation() {
 // the time — go find another one, backing off so a region with nothing on air
 // doesn't turn into a request loop.
 let retuneTimer: number | null = null
-let retuneDelayMs = 6000
+let retuneDelayMs = 1000
+const failedStationUrls = new Map<string, number>()
+let nearbyStationCandidates: LocalStation[] = []
 function scheduleRetune() {
   if (typeof window === 'undefined') return
   if (retuneTimer !== null || !soundWanted || !lastTuneCoords) return
   retuneTimer = window.setTimeout(() => {
     retuneTimer = null
     if (!soundWanted || liveStation || !lastTuneCoords) return
-    void tuneLiveRadio(lastTuneCoords.lat, lastTuneCoords.lng).then(name => {
-      if (name) { retuneDelayMs = 6000; return }
+    const next = nearbyStationCandidates.find(station => (failedStationUrls.get(station.url) ?? 0) <= Date.now())
+    if (next) { playStation(next, 'map'); return }
+    void mapNearbyRadioController.start(lastTuneCoords.lat, lastTuneCoords.lng).then(station => {
+      if (station) { retuneDelayMs = 1000; return }
       retuneDelayMs = Math.min(retuneDelayMs * 2, 5 * 60_000)
       scheduleRetune()
     })
@@ -1211,7 +1248,10 @@ export function startMapRadio({ mediaOnly = false }: { mediaOnly?: boolean } = {
 
 export function stopMapRadio() {
   soundWanted = false
+  mapTuneLocationKey = ''
+  bootTuneLocationKey = ''
   mapNearbyRadioController.stop()
+  nearbyStationCandidates = []
   setMusicPlayback('radio', false)
   // Do not let a slow launch directory response resurrect a station after the
   // listener has explicitly stopped the radio.
@@ -1256,7 +1296,7 @@ export function stopMapRadio() {
 }
 
 export function announceMapTour(line: string, stations: ReadonlyArray<RadioStationCue> = []): boolean {
-  if (!startMapRadio()) return false
+  if (!soundWanted && !startMapRadio({ mediaOnly: true })) return false
   tuneRadioBed(stations)
   // Let the first word arrive alone, then feather the station underneath it.
   // Starting at zero also prevents startMapRadio's idle level from clipping
@@ -1414,7 +1454,7 @@ export async function listLocalRadioStations(
 ): Promise<LocalStation[]> {
   if (typeof window === 'undefined' || signal?.aborted) return []
   const hosts = await radioBrowserHosts(signal)
-  const radii = [...new Set([radiusM, 300_000, 900_000, 1_500_000])]
+  const radii = [...new Set([radiusM, 300_000, 900_000, 1_500_000, 5_000_000, 20_050_000])]
 
   for (const radius of radii) {
     for (const host of hosts) {
@@ -1443,7 +1483,7 @@ export async function listLocalRadioStations(
           const id = typeof row.stationuuid === 'string' ? row.stationuuid : ''
           const url = typeof row.url_resolved === 'string' ? row.url_resolved : ''
           const codec = typeof row.codec === 'string' ? row.codec : ''
-          if (!id || !url.startsWith('https://') || !/mp3|aac/i.test(codec)) return []
+          if (!id || !url.startsWith('https://') || !/mp3|aac/i.test(codec) || (failedStationUrls.get(url) ?? 0) > Date.now()) return []
           if (Number(row.lastcheckok) !== 1 || Number(row.ssl_error) === 1) return []
 
           const stationLat = Number(row.geo_lat)
@@ -1557,6 +1597,12 @@ export function playStation(
     void fetch(station.directoryClickUrl, { cache: 'no-store' }).catch(() => {})
   }
   audio.src = station.url
+  if (liveStalledTimer !== null) window.clearTimeout(liveStalledTimer)
+  const requestedUrl = station.url
+  liveStalledTimer = window.setTimeout(() => {
+    liveStalledTimer = null
+    if (soundWanted && liveStation?.url === requestedUrl && audio.readyState < 3) dropLiveStation()
+  }, 12_000)
   audio.muted = isRadioGateMuted()
   // Do not mute the bed until the stream's `playing` event proves it is
   // audible. A cold WebView can reject play() even after selecting the URL;
@@ -1573,7 +1619,11 @@ export function playStation(
 }
 
 const mapNearbyRadioController = createNearbyRadioController<LocalStation>({
-  lookup: (lat, lng, signal) => listLocalRadioStations(lat, lng, 120_000, signal),
+  lookup: async (lat, lng, signal) => {
+    const stations = await listLocalRadioStations(lat, lng, 120_000, signal)
+    if (!signal.aborted) nearbyStationCandidates = stations
+    return stations
+  },
   isActive: () => soundWanted,
   readSelectionGeneration: () => stationSelectionGeneration,
   play: station => playStation(station, 'map'),

@@ -55,8 +55,8 @@ describe("the camera's stepper", () => {
       label: '1.4×',
       upLabel: 'Next filter',
       downLabel: 'Previous filter',
-      leftLabel: 'Zoom out — hold to keep zooming',
-      rightLabel: 'Zoom in — hold to keep zooming',
+      leftLabel: 'Zoom out',
+      rightLabel: 'Zoom in',
       onUp: () => {},
       onDown: () => {},
       onLeft: () => {},
@@ -64,13 +64,10 @@ describe("the camera's stepper", () => {
     } as unknown as Parameters<typeof ClayArrowCluster>[0]))
     expect(html).toContain('data-camera-step=""')
     expect(html).toContain('data-camera-step-filter="3"')
-    expect(html).toContain('aria-label="Next filter"')
-    expect(html).toContain('aria-label="Previous filter"')
-    expect(html).toContain('data-cluster-arrow="left"')
-    expect(html).toContain('data-cluster-arrow="right"')
-    // The zoom reads BETWEEN the two arrows that change it.
-    expect(html.indexOf('data-cluster-arrow="left"')).toBeLessThan(html.indexOf('>1.4×</span>'))
-    expect(html.indexOf('>1.4×</span>')).toBeLessThan(html.indexOf('data-cluster-arrow="right"'))
-    expect(html).toContain('>3</span>')
+    expect(html).toContain('Up: Next filter')
+    expect(html).toContain('Down: Previous filter')
+    expect(html).toContain('data-poplur-gesture-navigation')
+    expect(html).not.toContain('data-cluster-arrow')
+    expect(html).toContain('3 · 1.4×')
   })
 })

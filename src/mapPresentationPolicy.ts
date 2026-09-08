@@ -1,3 +1,4 @@
+import { MAP_BUILDING_EXPERIMENT_ENABLED, MAP_BUILDING_EXPERIMENT } from './mapBuildingExperiment'
 import type { PoplurPerformanceMode } from './poplurPerformanceManager'
 
 /**
@@ -15,13 +16,13 @@ import type { PoplurPerformanceMode } from './poplurPerformanceManager'
  */
 export const MAP_BROWSE_3D_ENTER_ZOOM = 13.2
 export const MAP_BROWSE_3D_EXIT_ZOOM = 12.4
-export const MAP_BROWSE_3D_PITCH = 28
-export const MAP_BROWSE_3D_MAX_PITCH = 36
+export const MAP_BROWSE_3D_PITCH = MAP_BUILDING_EXPERIMENT_ENABLED ? MAP_BUILDING_EXPERIMENT.pitch : 28
+export const MAP_BROWSE_3D_MAX_PITCH = MAP_BUILDING_EXPERIMENT_ENABLED ? MAP_BUILDING_EXPERIMENT.maxPitch : 36
 export const MAP_BROWSE_3D_BEARING = 0
 
 /** Keep generic massing dormant until the close-detail band so the broader
  * isometric board does not make building tiles an earlier load. */
-export const MAP_BUILDING_DETAIL_LAYER_MIN_ZOOM = 16.35
+export const MAP_BUILDING_DETAIL_LAYER_MIN_ZOOM = MAP_BUILDING_EXPERIMENT_ENABLED ? MAP_BUILDING_EXPERIMENT.revealZoom : 16.35
 
 /**
  * Close-up depth is count-bounded, so a nearby house no longer needs to be
@@ -58,7 +59,7 @@ export const MAP_BUILDING_DENSITY_LAB_DEFAULT = MAP_BUILDING_DETAIL_BUDGET_REDUC
 
 /** Intentional landmark models keep their existing close framing. */
 export const MAP_LANDMARK_3D_MIN_ZOOM = 15
-export const MAP_LANDMARK_3D_MAX_PITCH = 42
+export const MAP_LANDMARK_3D_MAX_PITCH = MAP_BUILDING_EXPERIMENT_ENABLED ? MAP_BUILDING_EXPERIMENT.maxPitch : 42
 
 export interface MapBrowsePresentationInput {
   zoom: number

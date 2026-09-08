@@ -55,7 +55,10 @@ export function radiusKmFromAccountPost(row: DocumentData): number {
 export function accountRadiusSnapshotFromDocuments(
   documents: readonly AccountRadiusPostDocument[],
 ): AccountRadiusSnapshot {
-  return documents.reduce<AccountRadiusSnapshot>((snapshot, document) => ({
+  return documents.filter(document => {
+    const row = document.data()
+    return row.visibilityStatus !== 'expired' && (finite(row.radiusMeters ?? row.radius) ?? 0) > 0
+  }).reduce<AccountRadiusSnapshot>((snapshot, document) => ({
     radiusKm: snapshot.radiusKm + radiusKmFromAccountPost(document.data()),
     totalReachKm: snapshot.totalReachKm + clampRadiusMeters(
       finite(document.data().radiusMeters ?? document.data().radius) ?? 0) / 1_000,

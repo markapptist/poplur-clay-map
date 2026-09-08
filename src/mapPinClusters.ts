@@ -43,7 +43,7 @@ export interface PinCluster {
  * pin's own footprint is 72px (pinSpread), and a little air on top keeps two
  * neighbouring cells' pins from reading as a pair.
  */
-export const CLUSTER_CELL_PX = 96
+export const CLUSTER_CELL_PX = 72
 
 /**
  * Bucket pins into screen cells and pick each cell's holder.

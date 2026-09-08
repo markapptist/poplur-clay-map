@@ -4,6 +4,16 @@
 
 const COMMENTS_KEY = 'poplur.feedCommentsAtEnd'
 const COMMENTS_DEFAULT_MIGRATION = 'poplur.feedCommentsAtEnd.default.v3'
+const SOUND_MUTED_KEY = 'poplur.feed.muted'
+
+/** Feed starts audible independently of the Map speaker setting. */
+export function readFeedMuted(): boolean {
+  try { return window.localStorage.getItem(SOUND_MUTED_KEY) === '1' } catch { return false }
+}
+
+export function writeFeedMuted(muted: boolean): void {
+  try { window.localStorage.setItem(SOUND_MUTED_KEY, muted ? '1' : '0') } catch { /* session only */ }
+}
 
 function migrateCommentsDefault(): void {
   try {

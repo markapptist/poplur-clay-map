@@ -1261,7 +1261,7 @@
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
 }
 
-/* ── camera: composition grid + self-timer ───────────────────────────────── */
+/* ── camera: composition grid + focus square + self-timer ────────────────── */
 .camGrid {
   position: absolute;
   inset: 0;
@@ -1273,6 +1273,37 @@
   background-size: 33.3334% 33.3334%;
   background-position: -1px -1px;
   mix-blend-mode: screen;
+}
+
+/* The focus square. Four corner brackets, open in the middle so the subject is
+   never under a line, drawn from this element's own background layers rather
+   than four children. White with a dark drop shadow instead of the grid's
+   screen blend: the grid vanishes against a bright sky, and a sight that is
+   only there half the time is worse than none. Green belongs to the detector
+   (DetectionOverlay.module.css) — this is furniture, not a lock. */
+.camFocus {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 30;
+  width: min(44vw, 184px);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  background-image:
+    linear-gradient(#fff, #fff), linear-gradient(#fff, #fff),
+    linear-gradient(#fff, #fff), linear-gradient(#fff, #fff),
+    linear-gradient(#fff, #fff), linear-gradient(#fff, #fff),
+    linear-gradient(#fff, #fff), linear-gradient(#fff, #fff);
+  background-position:
+    left top, left top, right top, right top,
+    left bottom, left bottom, right bottom, right bottom;
+  background-size:
+    28px 3px, 3px 28px, 28px 3px, 3px 28px,
+    28px 3px, 3px 28px, 28px 3px, 3px 28px;
+  background-repeat: no-repeat;
+  opacity: 0.85;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
 }
 
 .camCountdown {

@@ -35,6 +35,7 @@ const listen = (type: string) => window.addEventListener(type, event => {
 
 listen(NOTIFICATION_FOCUS_PIN_EVENT)
 listen('poplur-open-dm')
+listen('poplur-open-post-notification')
 listen('poplur-open-notification')
 beforeEach(() => { seen.length = 0 })
 afterEach(() => { popups.show.mockClear() })
@@ -60,18 +61,18 @@ describe('followNotification', () => {
       target: { mode: 'media', postId: 'post-123' },
     }
     followNotification(n)
-    expect(seen).toEqual([{ type: NOTIFICATION_FOCUS_PIN_EVENT, detail: { postId: 'post-123', pulse: 'gain', kind: 'like' } }])
+    expect(seen).toEqual([{ type: NOTIFICATION_FOCUS_PIN_EVENT, detail: { notificationId: 'k1', postId: 'post-123', pulse: 'gain', kind: 'like' } }])
   })
   it('carries the signed radius change when the row names one', () => {
     followNotification({
       who: 'Poplur AI', text: 'Your radius decreased 0.6 km after a downtown pop expired.', when: '7m',
       kind: 'decrease', key: 'k2', target: { mode: 'media', postId: 'post-9' },
     })
-    expect(seen[0].detail).toEqual({ postId: 'post-9', deltaKm: -0.6, pulse: 'loss', kind: 'decrease' })
+    expect(seen[0].detail).toEqual({ notificationId: 'k2', postId: 'post-9', deltaKm: -0.6, pulse: 'loss', kind: 'decrease' })
   })
   it('sends account-wide radius news to your largest pin', () => {
     followNotification({ who: 'Your radius is climbing', text: 'AI check-in: you gained 9 km since the last scan.', when: '1m', kind: 'growth', key: 'daily-1' })
-    expect(seen[0]).toEqual({ type: NOTIFICATION_FOCUS_PIN_EVENT, detail: { deltaKm: 9, pulse: 'gain', kind: 'growth' } })
+    expect(seen[0]).toEqual({ type: NOTIFICATION_FOCUS_PIN_EVENT, detail: { notificationId: 'daily-1', deltaKm: 9, pulse: 'gain', kind: 'growth' } })
   })
   it('opens a DM thread directly', () => {
     followNotification({ who: '@harbourfront', text: 'blue hour meetup?', when: '1h', kind: 'message', key: 'dm:1', target: { mode: 'messages', who: '@harbourfront', threadId: 'thread-1' } })
@@ -111,4 +112,9 @@ it('deduplicates the same event arriving from inbox and foreground push', () => 
 it('uses the stated radius change for likes, views and dislikes', () => {
   expect(radiusDeltaFromText('viewed your post · Radius grew 0.5 km.', 'view')).toBe(0.5)
   expect(radiusDeltaFromText('disliked your post · Radius decreased 1 km.', 'decrease')).toBe(-1)
+})
+
+it('takes a comment notification to the referenced post comments', () => {
+  followNotification({ who: '@friend', text: 'commented on your post', when: 'now', kind: 'comment', key: 'comment-1', target: { mode: 'media', postId: 'post-123' } })
+  expect(seen).toEqual([{ type: 'poplur-open-post-notification', detail: { postId: 'post-123', comments: true } }])
 })

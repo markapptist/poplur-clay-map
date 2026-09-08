@@ -124,7 +124,7 @@ describe('map Conquer screen snapshot', () => {
     }))
     expect(board).toContain('id="poplur-conquer-board"')
     expect(board).toContain('data-poplur-screen="map-conquer"')
-    expect(board).toContain('aria-label="Close Conquer Board"')
+    expect(board).not.toContain('aria-label="Close Conquer Board"')
     expect(board).not.toContain('TAP THE CUBE TO RETURN TO MAP')
   })
 

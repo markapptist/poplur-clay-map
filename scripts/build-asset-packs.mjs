@@ -124,13 +124,22 @@ const UNPUBLISHED = {
   'ar-filters': 'ar-filters',
 }
 
+// Core screens must remain usable when optional Cloud Storage packs are
+// unavailable. Keep their artwork and Store document in the app bundle.
+const BUNDLED_SCREENS = {
+  subscreens: 'subscreens',
+  'profile-themes': 'profile-themes',
+  feed: 'feed',
+  channels: 'channels',
+}
+
 const manifest = {
   baseUrl: useBucket ? BUCKET : '',
   // Local mode serves each pack from where it already lives in public/, so
   // nothing has to move before the upload happens.
   // Bucket mode pins ONLY the unpublished packs; everything else comes from
   // the bucket. Local mode pins everything, as it always did.
-  localPaths: useBucket ? { ...UNPUBLISHED } : { ...LOCAL, ...UNPUBLISHED },
+  localPaths: useBucket ? { ...UNPUBLISHED, ...BUNDLED_SCREENS } : { ...LOCAL, ...UNPUBLISHED },
   packs,
 }
 writeFileSync(join(PUBLIC, 'asset-manifest.json'), JSON.stringify(manifest, null, 2))

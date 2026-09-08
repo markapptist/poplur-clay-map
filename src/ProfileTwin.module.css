@@ -345,6 +345,10 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
+  /* The hold-menu bag is drawn small on its 512 canvas (54% x 61%) against the
+     side-icon set's 78% x 81%, so at 44px it would sit a third smaller than the
+     bell and gear beside it. Scaled back to their weight. */
+  transform: scale(1.3);
   filter: drop-shadow(0 6px 8px rgba(60, 20, 44, 0.35));
   user-select: none;
 }
@@ -2072,3 +2076,6 @@
   max-width: 100%;
   padding: 0;
 }
+
+.radiusSyncStatus { margin: 8px 0; text-align: center; font: 400 11px/1.4 system-ui, sans-serif; color: #765269; }
+.radiusSyncStatus button { font: inherit; color: #c0267e; border: 0; background: none; text-decoration: underline; cursor: pointer; }

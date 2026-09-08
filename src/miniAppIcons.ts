@@ -1,20 +1,14 @@
 // Which clay object stands for a mini-app.
 //
 // Poplur already owns a library of cartoony clay props, and modelSprite bakes
-// any of them to a flat sprite — the pipeline the cube navigator and the map
-// props already use. So an app icon is a RENDER OF A REAL POPLUR ASSET, never
-// drawn art: the same rule the AR filter marks follow. That also means a
-// generated app gets a fitting, on-brand icon the moment it exists, without
-// anyone authoring a file for it.
+// their thumbnail views offline. Every rule below is covered by
+// spritePrerender.json, so opening Apps only loads PNGs; no device-side model
+// downloads, Draco decodes or rendering contexts are needed for stock icons.
 //
 // The match is made from the app's own words and the components its screen
 // actually uses, so it is derived from the definition rather than assigned by
 // hand. `iconUrl` still wins outright when a real icon is supplied.
 //
-// Deliberately avoids the four models in modelSprite's PRODUCTION_SPRITE_SOURCES
-// (camera_kodak, zoom_globe, zoom_airplane, mark_head): those are authoring
-// inputs that fail closed in production unless a view has been pre-baked, and
-// an icon that throws in production is worse than a plain one.
 /** Word-START matching, never bare substring. "Illuminates repeatedly" contains
  *  "eat", so a plain `includes` gave the flashlight a knife and fork — and that
  *  class of collision ("art" in "start", "map" in "champion") would mis-icon

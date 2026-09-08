@@ -122,7 +122,7 @@ describe('grounded world-landmark catalog', () => {
       expect(tourFrame, landmark.id).not.toBeNull()
       expect(revealZoom, landmark.id).not.toBeNull()
       expect(frame!.pitch, landmark.id).toBeGreaterThan(0)
-      expect(frame!.pitch, landmark.id).toBeLessThanOrEqual(42)
+      expect(frame!.pitch, landmark.id).toBeLessThanOrEqual(60)
       expect(revealZoom!, landmark.id).toBeLessThanOrEqual(frame!.zoom)
       expect(tourFrame!.zoom, landmark.id).toBeGreaterThanOrEqual(14.1)
       expect(tourFrame!.zoom, landmark.id).toBeLessThanOrEqual(19)
@@ -136,9 +136,9 @@ describe('grounded world-landmark catalog', () => {
   it('keeps tour-only hero framing out of ordinary map navigation', () => {
     const christFrame = landmarkCameraFrame('christ-redeemer')
     const christTourFrame = landmarkTourCameraFrame('christ-redeemer')
-    expect(christFrame).toMatchObject({ zoom: 16, pitch: 42 })
+    expect(christFrame).toMatchObject({ zoom: 16, pitch: 55 })
     expect(christFrame).not.toHaveProperty('offset')
-    expect(christTourFrame).toMatchObject({ zoom: 18.75, offset: [0, 60], pitch: 42 })
+    expect(christTourFrame).toMatchObject({ zoom: 18.75, offset: [0, 60], pitch: 55 })
 
     expect(landmarkTourCameraFrame('burj-khalifa')).toMatchObject({
       zoom: 14.65,
@@ -163,7 +163,7 @@ describe('grounded world-landmark catalog', () => {
     expect(landmarkCameraFrame('rogers-centre')).toMatchObject({
       center: [-79.38834927, 43.64200635],
       bearing: 0,
-      pitch: 42,
+      pitch: 55,
     })
   })
 

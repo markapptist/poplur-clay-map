@@ -8,6 +8,7 @@ import {
   type SavedAvaturnAvatar,
 } from './avaturnAvatarStore'
 import styles from './AvaturnWardrobe.module.css'
+import { PoplurPerformanceManager } from './poplurPerformanceManager'
 
 const configuredSubdomain = import.meta.env.VITE_AVATURN_SUBDOMAIN as string | undefined
 
@@ -97,12 +98,29 @@ export default function AvaturnWardrobe({ onUseClassic }: { onUseClassic: () => 
 function AvaturnAvatarPreview({ saved }: { saved: SavedAvaturnAvatar }) {
   const [url, setUrl] = useState('')
   const [error, setError] = useState('')
+  const [viewerReady, setViewerReady] = useState(false)
+  const [foreground, setForeground] = useState(() => PoplurPerformanceManager.snapshot.isForeground)
+
+  useEffect(() => PoplurPerformanceManager.subscribe(snapshot => setForeground(snapshot.isForeground)), [])
+  useEffect(() => {
+    if (!foreground) return
+    let alive = true
+    // Only the actual fitted-avatar viewer loads this renderer. Opening the
+    // app, Feed or a stock VFX overlay never initializes model-viewer.
+    void import('@google/model-viewer').then(({ ModelViewerElement }) => {
+      ModelViewerElement.minimumRenderScale = 1
+      ModelViewerElement.meshoptDecoderLocation = `${import.meta.env.BASE_URL}meshopt_decoder.js`
+      if (alive) setViewerReady(true)
+    }).catch(() => { if (alive) setError('Could not open the avatar preview') })
+    return () => { alive = false }
+  }, [foreground])
 
   useEffect(() => {
     let disposed = false
     let revokeUrl = ''
     void resolveSavedAvaturnAvatarUrl(saved).then(result => {
-      if (disposed || !result) return
+      if (!result) return
+      if (disposed) { if (result.revoke) URL.revokeObjectURL(result.url); return }
       if (result.revoke) revokeUrl = result.url
       setUrl(result.url)
     }).catch(reason => {
@@ -115,15 +133,13 @@ function AvaturnAvatarPreview({ saved }: { saved: SavedAvaturnAvatar }) {
   }, [saved])
 
   if (error) return <div className={styles.previewStatus} role='alert'>{error}</div>
-  if (!url) return <div className={styles.previewStatus}>Loading fitted avatar…</div>
+  if (!foreground) return <div className={styles.previewStatus}>Avatar preview paused</div>
+  if (!url || !viewerReady) return <div className={styles.previewStatus}>Loading fitted avatar…</div>
   return React.createElement('model-viewer', {
     src: url,
     alt: `${saved.gender} fitted Poplur avatar`,
     class: styles.avatarPreview,
     'camera-controls': true,
-    'auto-rotate': true,
-    'auto-rotate-delay': 900,
-    'rotation-per-second': '12deg',
     'shadow-intensity': '0.65',
     'environment-image': 'neutral',
     'interaction-prompt': 'none',

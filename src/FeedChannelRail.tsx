@@ -3,6 +3,8 @@ import { CHANNELS } from './FeedTwin'
 import type { ControlSide } from './controlPlacement'
 import { channelUrl } from './assetPacks'
 import ClayWheel from './ClayWheel'
+import { SIDE_DIAL_PRESENTATION } from './sideDialPresentation'
+import dialStyles from './SideDial.module.css'
 import styles from './FeedChannelRail.module.css'
 
 /**
@@ -70,7 +72,7 @@ export default function FeedChannelRail({
 
   return (
     <div
-      className={`${styles.rail} ${side === 'right' ? styles.railRight : styles.railLeft}${hidden ? ` ${styles.railHidden}` : ''}`}
+      className={`${dialStyles.rail} ${side === 'right' ? dialStyles.right : dialStyles.left}${hidden ? ` ${styles.railHidden}` : ''}`}
       data-feed-channel-rail=""
       // The feed beneath owns vertical swipes (channel change) and horizontal
       // edge taps (post change). The wheel takes its own pointer first, then
@@ -82,7 +84,7 @@ export default function FeedChannelRail({
       onWheel={event => event.stopPropagation()}
     >
       {head && <div className={styles.head}>{head}</div>}
-      <div className={styles.wheelBox}>
+      <div className={dialStyles.wheelBox}>
       <ClayWheel
         items={items}
         selectedId={selectedId}
@@ -92,18 +94,10 @@ export default function FeedChannelRail({
         }}
         ariaLabel="Channels"
         side={side}
-        tileSize={52}
-        slotSpacing={64}
-        visibleRadius={3.4}
-        // Shallow bow, unclipped: the outer tiles curl a few px past the
-        // column instead of being cut off inside it, and the column itself
-        // stays one tile wide so the edge-tap lane beside it is still a lane.
-        arcDepth={6}
-        clip={false}
+        {...SIDE_DIAL_PRESENTATION}
         // Not flipped: the list runs UPWARD, 101 at the bottom, so up on the
         // dial, up on the stepper opposite and ArrowUp all mean the same thing
         // — a higher channel, the way a television counts.
-        showLabels
         // goToChannel already pops; a second detent from the wheel doubled it.
         notchSound={false}
       />

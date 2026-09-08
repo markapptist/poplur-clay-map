@@ -1,0 +1,86 @@
+{
+  "renderer": "scripts/render-meshy-gamepiece-review.py",
+  "size": 320,
+  "yaw": 38,
+  "pitch": 18,
+  "icons": {
+    "big-ben": {
+      "glb": "landmarks/big-ben.glb",
+      "glbSha256": "5053483430f3dbede239cae676c6c5d4c4b23805e1e7bd61a8d0eefeb1380203",
+      "image": "sprites/conquer-landmarks/big-ben-s320.png",
+      "imageSha256": "38bb8d1523c8498203ce82f1dd73bb0674fe93528c1f7923d31e5f2b6c4d94bf"
+    },
+    "burj-khalifa": {
+      "glb": "landmarks/burj-khalifa.glb",
+      "glbSha256": "a5b4746e51f1a4fc76e92626bb41a7d150d62e7d89754010f49de8ce7da82d86",
+      "image": "sprites/conquer-landmarks/burj-khalifa-s320.png",
+      "imageSha256": "3dd5fd32641e051452a3e1e5618e167ebe635adbf5b07594814dc4e89f365ac9"
+    },
+    "christ-redeemer": {
+      "glb": "landmarks/christ-redeemer.glb",
+      "glbSha256": "5cf4687bcb1f9615f720e70aecc676c007aa28ed45c56699b0b17781ad686df2",
+      "image": "sprites/conquer-landmarks/christ-redeemer-s320.png",
+      "imageSha256": "6e02d37625011a770a4bb4e5a9454f4eb4fd114f4b90f07015b27c5d3e01d71d"
+    },
+    "cn-tower": {
+      "glb": "landmarks/cn-tower.glb",
+      "glbSha256": "85dc5d5cff6580d320dc4c6f785632f9f35d018712911cc4b7820625dbe697ec",
+      "image": "sprites/conquer-landmarks/cn-tower-s320.png",
+      "imageSha256": "7f81cd5e482f1939121272bf1bcdbe44af39923d747b6f5046c2074386bc7d75"
+    },
+    "rogers-centre": {
+      "glb": "landmarks/rogers-centre.glb",
+      "glbSha256": "65b5ed2da4af557c99c0b01670ab6d16eac2da55e506c50b8c1439737bbaa69f",
+      "image": "sprites/conquer-landmarks/rogers-centre-s320.png",
+      "imageSha256": "a117023cb175b4a52b2eb44b7be6cd45f497ea525ef6863f83c8e9dab289f4eb"
+    },
+    "colosseum": {
+      "glb": "landmarks/colosseum.glb",
+      "glbSha256": "b99b7e8c046e0247b06f5573a142e507ba55caff8eed890bd3205526f67a50a8",
+      "image": "sprites/conquer-landmarks/colosseum-s320.png",
+      "imageSha256": "9c31c171ac547d970fa2e6bef4faf73395311a621c5787910caa6032b884dfa3"
+    },
+    "eiffel": {
+      "glb": "landmarks/eiffel.glb",
+      "glbSha256": "2889fdd30b0e1318c2b046c592c1faf6bd6016e80984b96b6a618167dc4e7763",
+      "image": "sprites/conquer-landmarks/eiffel-s320.png",
+      "imageSha256": "65de99a64946ae5439a766daee0fd40dd0304656aa5325e745bab1343553ab87"
+    },
+    "giza": {
+      "glb": "landmarks/giza.glb",
+      "glbSha256": "7b76aec50ec422e348e9a9a8577f9948df329385b0360dbac2910a429d672de2",
+      "image": "sprites/conquer-landmarks/giza-s320.png",
+      "imageSha256": "d12eb71c17d695b9d1cb9ea9a5907ea3d7c988d6db584cdf12e117b8cb1245a4"
+    },
+    "golden-gate": {
+      "glb": "landmarks/golden-gate.glb",
+      "glbSha256": "046f48a24c74c792083871c31028203f316807fb62d7697766e46ff7a1fbd52b",
+      "image": "sprites/conquer-landmarks/golden-gate-s320.png",
+      "imageSha256": "b5510bd6a38d791fccacd94c46c5f8414da27cdd5e4806f7c862ddea6c7fb524"
+    },
+    "space-needle": {
+      "glb": "landmarks/space-needle.glb",
+      "glbSha256": "ea881866e0800b8760353ce0050df19c37b9ca92f0be3e1ac77748086acdab0d",
+      "image": "sprites/conquer-landmarks/space-needle-s320.png",
+      "imageSha256": "98f8d7a99073bb830330dacab24672d54271b7194de33b3df26ce34fde3e6fb6"
+    },
+    "statue-liberty": {
+      "glb": "landmarks/statue-liberty.glb",
+      "glbSha256": "8d5bfa18866eef75f20d265a982f6a1fe1cce236c2a6fedf511db6d60cd9834c",
+      "image": "sprites/conquer-landmarks/statue-liberty-s320.png",
+      "imageSha256": "65260cc9587bdbe1f95f90c27d72e92573c6bb63594b2395e011d4b07f0d93c7"
+    },
+    "sydney-opera": {
+      "glb": "landmarks/sydney-opera.glb",
+      "glbSha256": "051107a87ad1983f42bed35524debf361c55a7c7a6eaeb18b907570ae463773a",
+      "image": "sprites/conquer-landmarks/sydney-opera-s320.png",
+      "imageSha256": "096b5dfc08ecf9d10055148124e36de42ce1c53f65567be5d016f00e6375e459"
+    },
+    "taj-mahal": {
+      "glb": "landmarks/taj-mahal.glb",
+      "glbSha256": "266b5864f8f513fdd84b851ee6b535ab43db789288138a2befe6c46ace059522",
+      "image": "sprites/conquer-landmarks/taj-mahal-s320.png",
+      "imageSha256": "8fdb26c821278262b17514827bb0b330a5dc39a32b9cd8bc611565105793c622"
+    }
+  }
+}

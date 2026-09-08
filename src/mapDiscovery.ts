@@ -1,8 +1,9 @@
 import { normalizeLiveMapPost, type LiveMapPostPin } from './mapLivePosts'
 export const DISCOVERY_FEATURE_LIMIT = 200
-export const DISCOVERY_PAGE_SIZE = 50
+export const DISCOVERY_PAGE_SIZE = 100
 export interface DiscoveryCell { id: string; bounds: { west: number; east: number; south: number; north: number } }
 export interface DiscoveryPage {
+  notificationFocus?: { notificationId: string; id: string; coords: [number, number]; name: string; beforeKm: number; afterKm: number; currentKm: number; color: string }
   enabled: boolean
   mode: 'posts' | 'cells' | 'regions'
   pins: LiveMapPostPin[]
@@ -30,7 +31,16 @@ export function normalizeDiscoveryPage(value: unknown, ownUid: string | null): D
     return typeof c?.id === 'string' && b && [b.west,b.east,b.south,b.north].every(v => typeof v === 'number' && Number.isFinite(v))
       && b.west >= -180 && b.east <= 180 && b.west <= b.east && b.south >= -90 && b.north <= 90 && b.south <= b.north
   })
-  return { enabled, mode, pins: [...new Map(pins.map(p => [p.id,p])).values()], cells,
+  const focus = data.notificationFocus as DiscoveryPage['notificationFocus']
+  const notificationFocus = focus && typeof focus.id === 'string' && Array.isArray(focus.coords)
+    && typeof focus.notificationId === 'string' && focus.notificationId.length <= 500
+    && typeof focus.name === 'string' && focus.name.length <= 180
+    && typeof focus.color === 'string' && /^#[\da-f]{6}$/i.test(focus.color)
+    && focus.coords.length === 2 && Math.abs(focus.coords[0]) <= 180 && Math.abs(focus.coords[1]) <= 90
+    && focus.coords.every(v => typeof v === 'number' && Number.isFinite(v))
+    && [focus.beforeKm, focus.afterKm, focus.currentKm].every(v => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 6371)
+    ? focus : undefined
+  return { notificationFocus, enabled, mode, pins: [...new Map(pins.map(p => [p.id,p])).values()], cells,
     nextCursor: typeof data.nextCursor === 'string' && data.nextCursor.length <= 1500 ? data.nextCursor : null }
 }
 /** A generation is invalidated at movement START, not just on the next fetch. */

@@ -12,7 +12,7 @@ import {
 
 describe('cube thermal motion policy', () => {
   it('renews native motion only while demanded and gives current iOS messages a stale-demand TTL', () => {
-    const cubeSource = readFileSync(new URL('../CubeTab3D.tsx', import.meta.url), 'utf8')
+    const cubeSource = readFileSync(new URL('../WebGLNavigator.tsx', import.meta.url), 'utf8')
     const iosSource = readFileSync(
       new URL('../../../Poplur2025-iOS/Poplur2025/PostLoginHomeWebView.swift', import.meta.url),
       'utf8',

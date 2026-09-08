@@ -3,7 +3,6 @@ import './audioGate' // must run before any AudioContext is created
 import './stableViewport' // pins --poplur-app-height before first paint
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ModelViewerElement } from '@google/model-viewer'
 // Bundled rather than pulled from api.mapbox.com at runtime — see index.html.
 import 'mapbox-gl/dist/mapbox-gl.css'
 import './index.css'
@@ -116,14 +115,6 @@ initAnalytics()
 if (params.get('profile') === '1') {
   void import('./deviceProfile').then(m => m.startDeviceProfile()).catch(() => { /* probe is never load-bearing */ })
 }
-
-// model-viewer's own renderer silently steps its resolution down (to as low
-// as 25%) whenever it judges recent frame times slow, independent of and
-// invisible to this app's thermal governor — the store cards were rendering
-// visibly jagged/aliased from this, not from a missing devicePixelRatio or
-// antialias setting. Pinning the floor to 1 forces it to always render at
-// full resolution. Set once, globally, before any <model-viewer> can mount.
-ModelViewerElement.minimumRenderScale = 1
 
 const root = createRoot(document.getElementById('root')!)
 if (params.get('radiusPreview') === '1') {

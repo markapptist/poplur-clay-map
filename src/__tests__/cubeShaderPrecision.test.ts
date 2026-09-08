@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest'
  * VALIDATE trips none of the three glFailed paths, so the component reported
  * `ready` while drawing nothing.
  */
-const cube = readFileSync(new URL('../CubeTab3D.tsx', import.meta.url), 'utf8')
+const cube = readFileSync(new URL('../WebGLNavigator.tsx', import.meta.url), 'utf8')
 
 describe('cube tab shader', () => {
   it('never asks the driver for mediump', () => {

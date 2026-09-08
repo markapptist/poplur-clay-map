@@ -8,6 +8,7 @@ export interface DiscoveryQuery {
   includeTest: boolean
   cursor?: string | null
   selectedPostId?: string | null
+  notificationId?: string | null
 }
 const REQUEST = 'poplur-map-discovery-request'
 const RESULT = 'poplur-map-discovery-result'

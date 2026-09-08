@@ -4,13 +4,9 @@
 // the app as "not complete" because radius-gated delivery means a reviewer
 // outside every post's radius sees nothing.
 //
-// Reach ships as a PERMANENT BOOST (boostedRadiusMeters = world, organic 0,
-// no boostExpiresAt): boost never decays and never earns, so these posts are
-// visible everywhere forever, pay nothing for engagement, and radiusDecay
-// ignores them. Owner is the PoplurTest review account; each post wears its
-// channel's brand handle. Doc ids are deterministic, so reruns skip existing
-// posts instead of duplicating. NOT test residue — cleanup scripts must skip
-// officialContent: true.
+// These are seeded official demo posts, not purchased reach. They start at
+// worldwide radius and follow ordinary decay. Deterministic document IDs keep
+// this provisioning script from refreshing or duplicating existing posts.
 import { execFileSync } from 'node:child_process'
 const FS = 'https://firestore.googleapis.com/v1/projects/poplur2025/databases/(default)/documents'
 const PACK = 'https://storage.googleapis.com/poplur2025-assets/asset-packs/feed'
@@ -90,8 +86,9 @@ for (const [index, creative] of ALL.entries()) {
     place: { stringValue: creative.city },
     radiusMeters: { integerValue: String(WORLD) },
     radius: { integerValue: String(WORLD) },
-    organicRadiusMeters: { integerValue: '0' },
-    boostedRadiusMeters: { integerValue: String(WORLD) },
+    organicRadiusMeters: { integerValue: String(WORLD) },
+    boostedRadiusMeters: { integerValue: '0' },
+    decayedAt: { timestampValue: new Date(now).toISOString() },
     viewCount: { integerValue: '0' },
     likeCount: { integerValue: String(creative.likeCount ?? 0) },
     downvoteCount: { integerValue: '0' },
@@ -111,4 +108,4 @@ for (const [index, creative] of ALL.entries()) {
   else if (body.error?.status === 'ALREADY_EXISTS') { existing += 1; console.log(`exists  ${postId}`) }
   else { console.error(`FAILED ${postId}:`, body.error?.message); process.exit(1) }
 }
-console.log(`\n${created} created, ${existing} already existed — official content is world-reaching and decay-proof.`)
+console.log(`\n${created} created, ${existing} already existed — seeded reach follows normal radius decay.`)

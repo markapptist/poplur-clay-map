@@ -332,7 +332,7 @@
   background: radial-gradient(ellipse, rgba(32, 20, 40, 0.28), rgba(32, 20, 40, 0) 72%);
   filter: blur(2px);
   transform-origin: center;
-  animation: bootShadowBreath 2.8s ease-in-out infinite;
+  animation: bootShadowBreath 2.2s ease-in-out 1;
 }
 
 .bootWordmark {
@@ -434,8 +434,8 @@
   inset: 0;
   width: 100%;
   height: 100%;
-  /* The shipped GLB is the visible control surface. The camera-matched PNG
-     remains one layer below until the one-frame Three renderer is ready. */
+  /* Matches the existing pointer regions, without a renderer or fallback layer. */
+  object-fit: contain;
   opacity: 0;
   filter: drop-shadow(0 14px 24px rgba(0,0,0,.72));
   pointer-events: none;
@@ -446,18 +446,7 @@
   opacity: 1;
 }
 
-/* Camera-matched fallback while the live mesh decodes. It never replaces or
-   intercepts the 3D control surface. */
-.controllerPoster {
-  position: absolute;
-  z-index: 1;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  pointer-events: none;
-  filter: drop-shadow(0 14px 24px rgba(0,0,0,.72));
-}
+
 
 .stationController[data-controller-pressed="true"] .controllerModel {
   filter: drop-shadow(0 8px 13px rgba(0,0,0,.78)) drop-shadow(0 0 12px rgba(255,56,158,.28));
@@ -478,3 +467,15 @@
   .row, .playBtn, .stage, .ambient { transition: none; }
   .launchFill { animation-duration: 0.01s; }
 }
+
+.bootModel[data-baked-station-boot] {
+  object-fit: contain;
+  animation: stationArtworkIn 2.2s ease-out 1 both;
+}
+@keyframes stationArtworkIn {
+  0% { opacity: 0; transform: translateY(10px) rotate(-8deg) scale(.84); }
+  28% { opacity: 1; transform: translateY(-5px) rotate(5deg) scale(1.02); }
+  65% { transform: translateY(2px) rotate(-2deg) scale(.99); }
+  100% { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .bootModel[data-baked-station-boot] { animation: none; } }

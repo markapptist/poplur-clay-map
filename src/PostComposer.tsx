@@ -26,6 +26,7 @@ import VFXStudio, {
 } from './VFXStudio'
 import ComposerAIChat from './ComposerAIChat'
 import UploadStatusView from './UploadStatusView'
+import ShellOverlayPortal from './ShellOverlayPortal'
 import {
   createClientPostId,
   POST_RIGHTS_VERSION,
@@ -216,6 +217,9 @@ export default function PostComposer({
   const [rightsAttested, setRightsAttested] = useState(draft?.rightsAttested ?? false)
   const [posted, setPosted] = useState(false)
   const [publishing, setPublishing] = useState(false)
+  const publishingRef = useRef(false)
+  const closeTimerRef = useRef(0)
+  useEffect(() => () => window.clearTimeout(closeTimerRef.current), [])
   const postIdRef = useRef(createClientPostId())
   // A percentage is displayed only when the host reports real transferred
   // bytes. Preparing/awaiting-native phases stay visibly indeterminate rather
@@ -423,7 +427,7 @@ export default function PostComposer({
     }
   }, [step])
 
-  const basePreviewOwnsMedia = !editorOpen && step === 'edit'
+  const basePreviewOwnsMedia = !editorOpen && !publishing && !posted && step === 'edit'
 
   // A captured video loops for as long as the base preview owns it — no play
   // button, no timed lease (product call, 16 Aug 2026). The performance
@@ -496,6 +500,7 @@ export default function PostComposer({
   useEffect(() => {
     if (!bindBack) return
     bindBack(() => {
+      if (publishingRef.current) return
       const { step: current, onClose: close } = backRef.current
       if (current === 'channel' && target?.resume && !reviewMode) {
         parkDraftForLocation()
@@ -591,6 +596,7 @@ export default function PostComposer({
   }, [filterId, step])
 
   const publish = async () => {
+    if (publishingRef.current || posted) return
     playPop()
     const privacyError = validatePublishPrivacy({
       audience: 'public',
@@ -602,6 +608,8 @@ export default function PostComposer({
       return
     }
     setPublishError(null)
+    publishingRef.current = true
+    retirePreview()
     setPublishing(true)
     setUploadProgress(null)
     setUploadPhaseState('preparing')
@@ -726,14 +734,14 @@ export default function PostComposer({
           used_ai: usedAI,
           has_caption: Boolean(caption.trim()),
         })
-        window.setTimeout(onClose, 4200)
+        closeTimerRef.current = window.setTimeout(onClose, 4200)
       } else {
         setUploadNote('Posting needs your Poplur account, so it uploads from the app — nothing was sent from this browser preview.')
         // This is a local confirmation only. `onPosted` drives the verified
         // cube, owned-post registration and map claims, so firing it without a
         // completed native upload made the preview look like a real post.
         setPosted(true)
-        window.setTimeout(onClose, 5200)
+        closeTimerRef.current = window.setTimeout(onClose, 5200)
       }
     } catch (error) {
       setPublishError({
@@ -743,6 +751,7 @@ export default function PostComposer({
         retryable: !(error instanceof NativeUploadError) || error.retryable,
       })
     } finally {
+      publishingRef.current = false
       setPublishing(false)
     }
   }
@@ -818,18 +827,21 @@ export default function PostComposer({
     </div>
   )
 
-  if (posted) {
-    return (
-      <div className={`${styles.stage}${reviewMode ? ` ${styles.reviewStage}` : ''}`} role="dialog" aria-label="Posted">
+  if (publishing || posted) {
+    const status = (
+      <div className={styles.uploadStage} role="dialog" aria-modal="true" aria-label={posted ? 'Posted' : 'Uploading your pop'} aria-busy={publishing}>
         <UploadStatusView
-          complete
+          complete={posted}
           flow={target?.resume ? 'camera' : target ? 'map' : 'camera'}
           radius={radiusKm}
+          phaseLabel={uploadPhaseLabel}
+          progress={uploadProgress}
           note={uploadNote}
-          onReset={onClose}
+          onReset={posted ? onClose : undefined}
         />
       </div>
     )
+    return reviewMode ? status : <ShellOverlayPortal>{status}</ShellOverlayPortal>
   }
 
   return (
@@ -843,15 +855,6 @@ export default function PostComposer({
           <img src="logo_icon.png" alt="" />
           <span>{composerStepLabel}</span>
         </div>
-      )}
-
-      {publishing && (
-        <UploadStatusView
-          flow={target?.resume ? 'camera' : target ? 'map' : 'camera'}
-          radius={radiusKm}
-          phaseLabel={uploadPhaseLabel}
-          progress={uploadProgress}
-        />
       )}
 
       {/* ── 1. edit: full-bleed capture, Snapchat-style. The clay channel

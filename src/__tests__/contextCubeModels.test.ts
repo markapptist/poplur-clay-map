@@ -86,10 +86,10 @@ describe('context cube models', () => {
     expect(mapDaypart('dusk')).toBe('twilight')
   })
 
-  it('wears the sun by day, the phase-matched moon by night, the globe between', () => {
-    expect(mapDaypartCubeModel('day', 'full')).toBe('poplur_sun_lite.glb')
-    expect(mapDaypartCubeModel('night', 'full')).toBe('poplur_moon_full_lite.glb')
-    expect(mapDaypartCubeModel('night', 'crescent')).toBe('poplur_moon_crescent_lite.glb')
+  it('keeps Earth as the map navigator in every daypart', () => {
+    expect(mapDaypartCubeModel('day', 'full')).toBe('poplur-globe-lite.glb')
+    expect(mapDaypartCubeModel('night', 'full')).toBe('poplur-globe-lite.glb')
+    expect(mapDaypartCubeModel('night', 'crescent')).toBe('poplur-globe-lite.glb')
     expect(mapDaypartCubeModel('twilight', 'full')).toBe('poplur-globe-lite.glb')
   })
 

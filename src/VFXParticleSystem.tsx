@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import * as THREE from 'three'
 import styles from './VFXStudio.module.css'
 import { onFrame } from './frameGovernor'
 import {
@@ -23,14 +22,6 @@ const PARTICLE_CAP: Record<VFXParticleEffect, number> = {
   fire: 130,
 }
 
-function geometryFor(effect: VFXParticleEffect): THREE.BufferGeometry {
-  if (effect === 'confetti') return new THREE.BoxGeometry(.04, .075, .014, 1, 1, 1)
-  if (effect === 'rain') return new THREE.PlaneGeometry(.035, .3)
-  if (effect === 'fireworks') return new THREE.PlaneGeometry(.024, .15)
-  if (effect === 'fire') return new THREE.PlaneGeometry(.13, .24)
-  return new THREE.PlaneGeometry(.15, .15)
-}
-
 function textureCanvas(width: number, height: number): {
   canvas: HTMLCanvasElement
   context: CanvasRenderingContext2D
@@ -44,7 +35,7 @@ function textureCanvas(width: number, height: number): {
   return { canvas, context }
 }
 
-function textureFor(effect: VFXParticleEffect): THREE.CanvasTexture {
+function textureFor(effect: VFXParticleEffect): HTMLCanvasElement {
   const isStreak = effect === 'rain' || effect === 'fireworks'
   const width = isStreak ? 64 : 128
   const height = isStreak || effect === 'fire' ? 192 : 128
@@ -119,33 +110,7 @@ function textureFor(effect: VFXParticleEffect): THREE.CanvasTexture {
     context.strokeRect(5, 5, 118, 118)
   }
 
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.colorSpace = THREE.SRGBColorSpace
-  texture.wrapS = THREE.ClampToEdgeWrapping
-  texture.wrapT = THREE.ClampToEdgeWrapping
-  texture.minFilter = THREE.LinearMipmapLinearFilter
-  texture.magFilter = THREE.LinearFilter
-  texture.generateMipmaps = true
-  texture.premultiplyAlpha = false
-  texture.needsUpdate = true
-  return texture
-}
-
-function materialFor(effect: VFXParticleEffect, texture: THREE.Texture): THREE.MeshBasicMaterial {
-  const additive = effect === 'explosion' || effect === 'fireworks' || effect === 'rain' || effect === 'fire'
-  return new THREE.MeshBasicMaterial({
-    color: 0xffffff,
-    map: texture,
-    transparent: true,
-    opacity: effect === 'rain' ? .92 : .9,
-    alphaTest: effect === 'confetti' ? 0 : .015,
-    vertexColors: false,
-    depthTest: false,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
-    toneMapped: false,
-  })
+  return canvas
 }
 
 function randomBetween(min: number, max: number): number {
@@ -176,10 +141,10 @@ export default function VFXParticleSystem({
     let alive = true
     const handle = PoplurPerformanceManager.registerRenderer({
       id: rendererID,
-      heavy: true,
+      heavy: false,
       priority: 98,
       visible: true,
-      demanded: active,
+      demanded: active && intensity > 0,
       onActiveChange: (granted, policy) => {
         if (alive) setGrant({ active: granted, policy })
       },
@@ -192,9 +157,9 @@ export default function VFXParticleSystem({
     }
   }, [rendererID])
 
-  useEffect(() => rendererHandle.current?.setDemand(active), [active])
+  useEffect(() => rendererHandle.current?.setDemand(active && intensity > 0), [active, intensity])
 
-  if (!active
+  if (!active || intensity <= 0
     || !grant.active
     || !grant.policy.particlesAllowed
     || !grant.policy.decorativeRenderingAllowed) return null
@@ -245,40 +210,20 @@ function ParticleSurface({
     const host = hostRef.current
     if (!host) return
 
-    let renderer: THREE.WebGLRenderer
-    try {
-      renderer = new THREE.WebGLRenderer({
-        alpha: true,
-        antialias: false,
-        depth: false,
-        powerPreference: 'low-power',
-        premultipliedAlpha: false,
-      })
-    } catch {
-      return
-    }
-
-    renderer.setClearColor(0x000000, 0)
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5, policy.maximumPixelRatio))
-    renderer.outputColorSpace = THREE.SRGBColorSpace
-    renderer.domElement.className = styles.particleCanvas
-    renderer.domElement.setAttribute('aria-hidden', 'true')
-    host.replaceChildren(renderer.domElement)
-
-    const scene = new THREE.Scene()
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, .1, 10)
-    camera.position.z = 3
-
+    // The original effects are orthographic textured particles. Paint those
+    // same textures and trajectories into one 2D surface; no scene, shader,
+    // depth buffer or additional WebGL context is needed.
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d', { alpha: true })
+    if (!context) return
+    canvas.className = styles.particleCanvas
+    canvas.setAttribute('aria-hidden', 'true')
+    host.replaceChildren(canvas)
     const capacity = PARTICLE_CAP[effect]
-    const geometry = geometryFor(effect)
     const texture = textureFor(effect)
-    texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy())
-    const material = materialFor(effect, texture)
-    const particles = new THREE.InstancedMesh(geometry, material, capacity)
-    particles.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
-    particles.frustumCulled = false
-    particles.renderOrder = 10
-    scene.add(particles)
+    let width = 1
+    let height = 1
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5, policy.maximumPixelRatio)
 
     const position = new Float32Array(capacity * 3)
     const velocity = new Float32Array(capacity * 3)
@@ -287,7 +232,6 @@ function ParticleSurface({
     const size = new Float32Array(capacity)
     const rotation = new Float32Array(capacity * 3)
     const spin = new Float32Array(capacity * 3)
-    const dummy = new THREE.Object3D()
     let halfWidth = 1
     let stopFrames: (() => void) | null = null
     let burstClock = 0
@@ -377,15 +321,11 @@ function ParticleSurface({
 
     const resize = () => {
       const rect = host.getBoundingClientRect()
-      const width = Math.max(1, Math.round(rect.width))
-      const height = Math.max(1, Math.round(rect.height))
+      width = Math.max(1, Math.round(rect.width))
+      height = Math.max(1, Math.round(rect.height))
       halfWidth = width / height
-      camera.left = -halfWidth
-      camera.right = halfWidth
-      camera.top = 1
-      camera.bottom = -1
-      camera.updateProjectionMatrix()
-      renderer.setSize(width, height, false)
+      canvas.width = Math.round(width * pixelRatio)
+      canvas.height = Math.round(height * pixelRatio)
     }
     resize()
     const observer = new ResizeObserver(resize)
@@ -439,8 +379,7 @@ function ParticleSurface({
       const visibleCount = policy.particlesAllowed
         ? Math.max(0, Math.min(capacity, policy.maxParticleObjects, requestedCount))
         : 0
-      particles.count = visibleCount
-      material.opacity = effect === 'rain'
+      const opacity = effect === 'rain'
         ? .68 + intensityRef.current / 260
         : .58 + intensityRef.current / 250
 
@@ -449,28 +388,39 @@ function ParticleSurface({
         if (burstClock <= 0) seedPool()
       }
 
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)
+      context.clearRect(0, 0, width, height)
+      context.globalCompositeOperation = effect === 'confetti' ? 'source-over' : 'lighter'
+      context.globalAlpha = Math.min(1, opacity)
+      const unit = height / 2
       for (let index = 0; index < visibleCount; index += 1) {
         const particleScale = updateParticle(index, dt)
+        if (particleScale <= 0) continue
         const offset = index * 3
-        dummy.position.set(position[offset], position[offset + 1], position[offset + 2])
+        const x = width / 2 + position[offset] * unit
+        const y = height / 2 - position[offset + 1] * unit
+        let angle = rotation[offset + 2]
+        let w = .15 * particleScale * size[index] * unit
+        let h = w
         if (effect === 'confetti') {
-          dummy.rotation.set(rotation[offset], rotation[offset + 1], rotation[offset + 2])
+          // Project the tumbling card's two tilt axes into the same
+          // orthographic view, including its thin edge as it turns over.
+          w = .04 * size[index] * unit * Math.max(.14, Math.abs(Math.cos(rotation[offset + 1])))
+          h = .075 * size[index] * unit * Math.max(.14, Math.abs(Math.cos(rotation[offset])))
         } else if (effect === 'rain' || effect === 'fireworks') {
-          dummy.rotation.set(0, 0, Math.atan2(velocity[offset + 1], velocity[offset]) - Math.PI / 2)
+          angle = Math.atan2(velocity[offset + 1], velocity[offset]) - Math.PI / 2
+          w = (effect === 'rain' ? .035 : .024 * Math.max(.42, particleScale)) * unit
+          h = (effect === 'rain' ? .3 * size[index] : .15 * particleScale) * unit
         } else if (effect === 'fire') {
-          dummy.rotation.set(0, 0, Math.sin(age[index] * 6 + index) * .14)
-        } else {
-          dummy.rotation.set(0, 0, rotation[offset + 2])
+          angle = Math.sin(age[index] * 6 + index) * .14
+          w = .13 * particleScale * size[index] * unit
+          h = .24 * particleScale * size[index] * unit
         }
-        if (effect === 'rain') dummy.scale.set(1, size[index], 1)
-        else if (effect === 'confetti') dummy.scale.setScalar(size[index])
-        else if (effect === 'fireworks') dummy.scale.set(Math.max(.42, particleScale), particleScale, 1)
-        else dummy.scale.setScalar(particleScale * size[index])
-        dummy.updateMatrix()
-        particles.setMatrixAt(index, dummy.matrix)
+        const cos = Math.cos(angle) * pixelRatio
+        const sin = Math.sin(angle) * pixelRatio
+        context.setTransform(cos, -sin, sin, cos, x * pixelRatio, y * pixelRatio)
+        context.drawImage(texture, -w / 2, -h / 2, w, h)
       }
-      particles.instanceMatrix.needsUpdate = true
-      renderer.render(scene, camera)
     }
 
     const start = () => {
@@ -487,7 +437,8 @@ function ParticleSurface({
       enabled = false
       stopFrames?.()
       stopFrames = null
-      renderer.clear()
+      context.setTransform(1, 0, 0, 1, 0, 0)
+      context.clearRect(0, 0, canvas.width, canvas.height)
     }
 
     const onVisibility = () => {
@@ -510,14 +461,9 @@ function ParticleSurface({
         stop()
         observer.disconnect()
         document.removeEventListener('visibilitychange', onVisibility)
-        scene.remove(particles)
-        particles.dispose()
-        geometry.dispose()
-        material.dispose()
-        texture.dispose()
-        renderer.dispose()
-        renderer.forceContextLoss()
-        renderer.domElement.remove()
+        canvas.remove()
+        canvas.width = canvas.height = 1
+        texture.width = texture.height = 1
       },
     }
     runtimeRef.current = runtime

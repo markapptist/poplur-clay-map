@@ -1,4 +1,9 @@
+import { useAuthoredPosts } from './useAuthoredPosts'
+import { useLiveRadiusEstimate } from './useLiveRadiusEstimate'
+import { useFeedPostComments } from './feedPostComments'
+import { useImmersiveControls } from './useImmersiveControls'
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import ProfilePostPreview from './ProfilePostPreview'
 import { askForMotion } from './motionPermission'
 import { createPortal } from 'react-dom'
 import styles from './ProfileTwin.module.css'
@@ -98,6 +103,7 @@ import { VERIFIED_CHECK_LABEL, VERIFIED_CHECK_SRC, verifiedCheckKind, type Verif
 import { businessDirectorySnapshot, subscribeBusinessDirectory } from './businessDirectory'
 import { shouldUseMiles } from './units'
 import PoplurDialog from './PoplurDialog'
+import PostDeleteDialog from './PostDeleteDialog'
 import { blockUser, reportUser } from './blockedUsers'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
@@ -581,7 +587,11 @@ export default function ProfileTwin({
   onPostCountChange,
   onPostReach,
   onVisitedTotals,
+  openPostRequest,
+  onPostRequestHandled,
 }: {
+  onPostRequestHandled?: () => void
+  openPostRequest?: { postId: string; comments: boolean; nonce: number } | null
   bindArrows?: (fn: ((dir: 1 | -1) => boolean) | null) => void
   /** a handle when you opened someone else's profile from the feed */
   viewUser?: string | null
@@ -620,12 +630,15 @@ export default function ProfileTwin({
     nativeFeedPostsSnapshot,
     nativeFeedPostsSnapshot,
   )
+  const authoredUid = viewUserId?.trim() || (viewUser ? profileRecipientUid(realtimePosts, viewUser) : accountUid)
+  const authored = useAuthoredPosts(authoredUid)
+  const liveRadius = useLiveRadiusEstimate(authored.snapshot, !authored.error)
   const [uploadedPosts, setUploadedPosts] = useState<Post[]>([])
   const [uploadedPostsLoaded, setUploadedPostsLoaded] = useState(false)
   const profilePosts = uploadedPostsLoaded ? uploadedPosts : POSTS
   const profilePostsRef = useRef(profilePosts)
   profilePostsRef.current = profilePosts
-  useEffect(() => { onPostCountChange?.(profilePosts.length) }, [onPostCountChange, profilePosts.length])
+  useEffect(() => { onPostCountChange?.(authored.snapshot?.postCount ?? profilePosts.length) }, [onPostCountChange, profilePosts.length, authored.snapshot?.postCount])
 
   useEffect(() => onProfileThemeChange(setSelectedProfileTheme), [])
 
@@ -702,14 +715,6 @@ export default function ProfileTwin({
     const timer = window.setTimeout(() => setLitTiles(null), 4_200)
     return () => window.clearTimeout(timer)
   }, [highlightPops, viewUser])
-  const [readyTiles, setReadyTiles] = useState<Set<string>>(() => new Set())
-  // Tiles whose static overlay has finished fading — it is then unmounted so the
-  // grid doesn't keep 15 animating layers alive forever (the feed does the same:
-  // static covers the buffer, then it's gone). The static is a cheap CSS noise
-  // sweep, NOT a <video>: a decoder per tile (a 4.7MB clip ×15) froze the main
-  // thread for ~6s on open, which also stalled the poster onLoads so the tiles
-  // stayed black. Grid previews are stills; video belongs to the viewer only.
-  const [staticGone, setStaticGone] = useState<Set<string>>(() => new Set())
   const [capturing, setCapturing] = useState(false)
   // The profile picture, PERSISTED. This tab unmounts every time the cube
   // turns (HomeTwin gates it on committedTab), so plain state meant a photo
@@ -889,6 +894,7 @@ export default function ProfileTwin({
   const [notifsClosing, setNotifsClosing] = useState(false)
   const [faceAsk, setFaceAsk] = useState(false)
   const [viewerIdx, setViewerIdx] = useState<number | null>(null)
+  useImmersiveControls(viewerIdx != null, 'profile-post')
   /** The open pop's id, so a snapshot can re-find it rather than close it. */
   const viewerPostIdRef = useRef<string | null>(null)
   // Your overall radius, for the meter on the free rail: the authoritative
@@ -1169,7 +1175,7 @@ export default function ProfileTwin({
   // stable account uid supplied by the opening post/pin; their handle is only
   // a legacy fallback when no uid exists.
   useEffect(() => {
-    const next = profilePostsFromRealtime(realtimePosts, accountUid, viewUser, viewUserId)
+    const next = profilePostsFromRealtime(authored.snapshot?.posts ?? realtimePosts, accountUid, viewUser, viewUserId)
       .filter(post => !(post.id && deletedPostIds.current.has(post.id)))
     setUploadedPosts(next)
     setUploadedPostsLoaded(true)
@@ -1186,21 +1192,7 @@ export default function ProfileTwin({
       const index = openId == null ? -1 : next.findIndex(post => (post.id ?? post.video) === openId)
       return index >= 0 ? index : null
     })
-  }, [accountUid, realtimePosts, viewUser, viewUserId])
-
-  const markTileReady = useCallback((key: string) => {
-    setReadyTiles(current => (current.has(key) ? current : new Set(current).add(key)))
-  }, [])
-
-  // Retire each tile's static shortly after its preview arrives.
-  useEffect(() => {
-    const timers = [...readyTiles]
-      .filter(key => !staticGone.has(key))
-      .map(key => window.setTimeout(() => {
-        setStaticGone(current => new Set(current).add(key))
-      }, 620))
-    return () => timers.forEach(window.clearTimeout)
-  }, [readyTiles, staticGone])
+  }, [accountUid, realtimePosts, viewUser, viewUserId, authored.snapshot])
 
   const contentRef = useRef<HTMLDivElement>(null)
   const pullRef = useRef<HTMLDivElement>(null)
@@ -1401,6 +1393,26 @@ export default function ProfileTwin({
   // A row tapped on the NOTIFICATIONS subscreen: the screen hands it back
   // rather than navigating, because the highlight it leads to (a lit grid
   // tile, a lit message row) is this component's state.
+  const openedPostRequestRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!openPostRequest || openedPostRequestRef.current === openPostRequest.nonce) return
+    const index = profilePosts.findIndex(post => post.id?.replace(/^firestore:/, '') === openPostRequest.postId.replace(/^firestore:/, ''))
+    if (index < 0) {
+      if (authored.snapshot) {
+        openedPostRequestRef.current = openPostRequest.nonce
+        onPostRequestHandled?.()
+        flashNote('That post is no longer available.')
+      }
+      return
+    }
+    openedPostRequestRef.current = openPostRequest.nonce
+    viewerPostIdRef.current = profilePosts[index].id ?? profilePosts[index].video
+    setMode('media')
+    setViewerIdx(index)
+    setViewerCommentOpen(openPostRequest.comments)
+    onPostRequestHandled?.()
+  }, [openPostRequest, profilePosts, onPostRequestHandled, authored.snapshot, flashNote])
+
   const openNotificationRef = useRef(openNotification)
   openNotificationRef.current = openNotification
   useEffect(() => {
@@ -2298,7 +2310,11 @@ export default function ProfileTwin({
       ...current,
       [postId]: [...(current[postId] ?? []), body],
     }))
-    void recordPostEngagement(postId, 'comment').catch(() => recordPostComment(postId, 2))
+    void recordPostEngagement(postId, 'comment', undefined, body).catch(() => {
+      setViewerComments(current => ({ ...current, [postId]: (current[postId] ?? []).filter(text => text !== body) }))
+      setViewerCommentText(body)
+      flashNote('Your comment could not be posted. Please try again.')
+    })
     setViewerCommentText('')
     setViewerCommentOpen(false)
     playPop()
@@ -2380,6 +2396,7 @@ export default function ProfileTwin({
   postsCountRef.current = posts.length
   const viewerPostIsVideo = viewerPost ? postIsVideo(viewerPost) : false
   const viewerPostId = viewerPost ? (viewerPost.id ?? viewerPost.video) : null
+  const publishedViewerComments = useFeedPostComments(viewerPost?.id, viewerCommentOpen)
   viewerPostIdRef.current = viewerPostId
   const viewerPostComments = viewerPostId ? (viewerComments[viewerPostId] ?? []) : []
   // Report the OPEN pop's reach upward, the way the feed already does. Without
@@ -2422,10 +2439,10 @@ export default function ProfileTwin({
   // total; somebody else's profile has no account figure to read, so their
   // pops' reach combined stands in for it. The subject key is what the
   // striker climbs for — a new key is a fresh climb from the foot.
-  const visitedRadiusKm = profilePosts.reduce((sum, post) => sum + (post.reachKm ?? 0), 0)
+  const visitedRadiusKm = liveRadius.radiusKm ?? profilePosts.reduce((sum, post) => sum + (post.reachKm ?? 0), 0)
   const meterRadiusKm = viewerPost
     ? (viewerPost.reachKm ?? 0)
-    : visiting ? visitedRadiusKm : accountRadiusKm
+    : uploadedPostsLoaded || visiting ? visitedRadiusKm : accountRadiusKm
   const meterSubjectKey = viewerPost
     ? `pop:${viewerPostId}`
     : visiting ? `profile:${viewUserId ?? viewUser}` : 'account'
@@ -2437,10 +2454,10 @@ export default function ProfileTwin({
   // Declared here, below `visiting` and `visitedRadiusKm`: a dependency array
   // is evaluated during render, so reading either above its own declaration
   // would throw before the effect ever ran.
-  const visitedPostCount = profilePosts.length
+  const visitedPostCount = authored.snapshot?.postCount ?? profilePosts.length
   useEffect(() => {
-    onVisitedTotals?.(visiting ? { radiusKm: visitedRadiusKm, posts: visitedPostCount } : null)
-  }, [visiting, visitedRadiusKm, visitedPostCount, onVisitedTotals])
+    onVisitedTotals?.(visiting || uploadedPostsLoaded ? { radiusKm: visitedRadiusKm, posts: visitedPostCount } : null)
+  }, [visiting, uploadedPostsLoaded, visitedRadiusKm, visitedPostCount, onVisitedTotals])
   // Leaving the profile hands the card back to your own totals.
   useEffect(() => () => { onVisitedTotals?.(null) }, [onVisitedTotals])
   // Profile controls span the 200px avatar, with space-between gaps.
@@ -2611,7 +2628,7 @@ export default function ProfileTwin({
             onClick={() => showPostOnMap(locatedPost)}
             aria-label={visiting ? `See where ${shownName} posted on the map` : 'See where you posted on the map'}
           >
-            <SideControlIconImage icon="profile.map" displaySize={44} />
+            <img src="profile-controls/map-pin.png" alt="" draggable="false" />
           </button>
         )}
         {/* Somebody else's profile: Block (or report) above Message, the way
@@ -2646,6 +2663,11 @@ export default function ProfileTwin({
             onClick={() => { playPop(); window.dispatchEvent(new CustomEvent('poplur-open-store')) }}
             aria-label="Store"
           >
+            {/* The clay Poplur bag the hold menu's own STORE tile wears. The
+                supplied profile-controls cart is an app-icon plate on an opaque
+                black ground — no alpha anywhere in the file — so on the
+                profile's light paper it read as a black tile rather than a clay
+                object like the bell, gear and pin beside it. */}
             <img src="holdmenu/ShoppingBag.png" alt="" draggable="false" />
           </button>
         )}
@@ -2785,6 +2807,10 @@ export default function ProfileTwin({
             {visitedBusiness.handle && <span>{visitedBusiness.handle}</span>}
           </div>
         )}
+        {(authored.loading || authored.error) && <p role="status" className={styles.radiusSyncStatus}>
+          {authored.error ? 'Radius could not refresh. ' : 'Refreshing radius…'}
+          {authored.error && <button type="button" onClick={authored.retry}>Try again</button>}
+        </p>}
         <div className={styles.modeSwitch}>
           {(['media', 'messages', 'liked'] as Mode[]).map(m => (
             <button
@@ -2862,31 +2888,7 @@ export default function ProfileTwin({
                   data-synthetic-post-id={post.syntheticPostId}
                   onClick={() => { playPop(); setViewerIdx(i) }}
                 >
-                  {/* the post's own first frame… */}
-                  <img
-                    // A cached poster can finish decoding before React attaches
-                    // onLoad, so also check `complete` when the node mounts —
-                    // otherwise the tile sits empty behind its static forever.
-                    ref={el => { if (el?.complete) markTileReady(postTileKey(post, i)) }}
-                    className={readyTiles.has(postTileKey(post, i)) ? `${styles.tilePreview} ${styles.tilePreviewReady}` : styles.tilePreview}
-                    src={postPoster(post)}
-                    alt=""
-                    decoding="async"
-                    draggable="false"
-                    onLoad={() => markTileReady(postTileKey(post, i))}
-                    // A missing/failed poster must still clear its static, or the
-                    // tile stays a black box forever.
-                    onError={() => markTileReady(postTileKey(post, i))}
-                  />
-                  {/* …under live TV static, like the feed between signals: a cheap
-                      composited CSS noise sweep covers the buffer, fades when the
-                      post arrives, then unmounts (no per-tile video decoder). */}
-                  {!staticGone.has(postTileKey(post, i)) && (
-                    <span
-                      className={readyTiles.has(postTileKey(post, i)) ? `${styles.tileStatic} ${styles.tileStaticOut}` : styles.tileStatic}
-                      aria-hidden="true"
-                    />
-                  )}
+                  <ProfilePostPreview src={postPoster(post)} />
                   <span className={styles.tileScan} aria-hidden="true" />
                   <span className={styles.tileCh}>{post.ch}</span>
                 </button>
@@ -3112,11 +3114,11 @@ export default function ProfileTwin({
               >
                 <h2>Comments</h2>
                 <div className={styles.viewerCommentList}>
-                  {viewerPostComments.length ? viewerPostComments.map((comment, index) => (
+                  {publishedViewerComments.map((comment, index) => <p key={`published-${index}`}><strong>{comment.who}</strong> {comment.body}</p>)}
+                  {viewerPostComments.filter(text => !publishedViewerComments.some(row => row.body === text && row.uid === accountUid)).map((comment, index) => (
                     <p key={`${viewerPostId}-${index}`}><strong>@you</strong> {comment}</p>
-                  )) : (
-                    <p className={styles.viewerDialogEmpty}>No comments yet.</p>
-                  )}
+                  ))}
+                  {!viewerPostComments.length && !publishedViewerComments.length && <p className={styles.viewerDialogEmpty}>No comments yet.</p>}
                 </div>
                 <div className={styles.viewerCommentComposer}>
                   <input
@@ -3134,20 +3136,11 @@ export default function ProfileTwin({
             </div>
           )}
 
-          {/* The house dialog, the one the map's post picker and the Block
-              prompt already wear. This asked the same question in a plain
-              dark box with two flat buttons — the only surface in the app
-              still doing that (user-ordered 6 Sep). Delete leads, because it
-              is the answer being asked for; keeping the post is the way out
-              and is also what the scrim and the cube already do. */}
+          {/* Viewport-centered confirmation stays above the viewer rails. */}
           {deletePromptPost && !deletePending && (
-            <PoplurDialog
-              eyebrow="Poplur"
-              title="Delete this post?"
-              subtitle="It will be removed from your profile. This cannot be undone."
-              primaryAction={{ label: 'Delete', onActivate: () => { playPop(); confirmViewerDelete() } }}
-              secondaryAction={{ label: 'Keep it', onActivate: () => { playPop(); setDeletePromptPost(null) } }}
-              onClose={() => { playPop(); setDeletePromptPost(null) }}
+            <PostDeleteDialog
+              onDelete={() => { playPop(); confirmViewerDelete() }}
+              onCancel={() => { playPop(); setDeletePromptPost(null) }}
               dataId={`delete:${deletePromptPost.id ?? 'post'}`}
             />
           )}

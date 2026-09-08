@@ -7,7 +7,7 @@ describe('Radio and News control wiring', () => {
   it('routes the Radio share control through the real share pipeline', () => {
     const radio = source('RadioScreen.tsx')
     expect(radio).toMatch(/const shareTunedStation[\s\S]*?shareRadioStation\(station\)\.then\(showControlNote\)/)
-    expect(radio).toMatch(/kind="share"[\s\S]*?requireTuned\('share'\)[\s\S]*?shareTunedStation\(station\)/)
+    expect(radio).toMatch(/icon="feed\.share"[\s\S]*?requireTuned\('share'\)[\s\S]*?shareTunedStation\(station\)/)
     expect(radio).toMatch(/Pick a station before you \$\{action\}/)
   })
 
