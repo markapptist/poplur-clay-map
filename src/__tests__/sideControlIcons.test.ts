@@ -1003,7 +1003,7 @@ describe('screen side-button action smoke contract', () => {
           /onDislike=\{dislikeCurrentPost\}/,
         ],
         effects: [
-          /const toggleMute[\s\S]*?setUserMuted\(next\)[\s\S]*?setMuted\(next\)/,
+          /const toggleMute[\s\S]*?writeFeedMuted\(next\)[\s\S]*?setMuted\(next\)/,
           /const sharePost[\s\S]*?postNativeEvent[\s\S]*?navigator\.clipboard\.writeText/,
           /const toggleCaptions[\s\S]*?setCaptionsOn\(on => !on\)/,
           /const toggleCommentsAtEnd[\s\S]*?setCommentsAtEnd\(next\)/,
