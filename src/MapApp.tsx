@@ -4207,7 +4207,10 @@ export default function MapApp() {
 
   const idleSeenPins = useRef(new Set<string>())
   const idleBroadcast = useIdleMapBroadcast({
-    enabled: Boolean(mapLive) && !focusedPostPicker && !BUILDING_STYLE_PREVIEW,
+    // Discovery snapshots wake this hook when content arrives. An empty map
+    // must park completely instead of polling for a destination every 30s.
+    enabled: Boolean(mapLive) && mapPins.some(pin => pin.radiusKm > 0 && !pin.ghost)
+      && !focusedPostPicker && !BUILDING_STYLE_PREVIEW,
     visible: () => mapFrontRef.current,
     available: () => {
       const map = mapRef.current

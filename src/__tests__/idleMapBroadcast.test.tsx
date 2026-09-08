@@ -9,6 +9,31 @@ vi.mock('../frameGovernor', () => ({ currentQuality: () => quality.value,
   onQualityChange: (listener: () => void) => { quality.listener = listener; return () => { quality.listener = () => {} } } }))
 afterEach(() => { vi.useRealTimers(); quality.value = 3 })
 
+it('parks with no candidates, starts when discovery delivers pins, and stops when they expire', async () => {
+  vi.useFakeTimers()
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const host = document.createElement('div'), root = createRoot(host)
+  const diagnostics = { policy: 'idle-pins', autonomousCameraStarts: 0, explicitTourStarts: 0, idleTimerArmed: false, flightActive: false }
+  const cancel = vi.fn(), explore = vi.fn(() => cancel)
+  const Screen = ({ candidates }: { candidates: number }) => {
+    useIdleMapBroadcast({ enabled: candidates > 0, visible: () => true, available: () => true, explore, diagnostics })
+    return null
+  }
+  await act(async () => root.render(<Screen candidates={0} />))
+  await act(async () => vi.advanceTimersByTime(120_000))
+  expect(vi.getTimerCount()).toBe(0)
+  expect(diagnostics.idleTimerArmed).toBe(false)
+  expect(explore).not.toHaveBeenCalled()
+  await act(async () => root.render(<Screen candidates={2} />))
+  await act(async () => vi.advanceTimersByTime(20_000))
+  expect(explore).toHaveBeenCalledTimes(1)
+  await act(async () => root.render(<Screen candidates={0} />))
+  expect(cancel).toHaveBeenCalledOnce()
+  expect(vi.getTimerCount()).toBe(0)
+  expect(diagnostics.idleTimerArmed).toBe(false)
+  await act(async () => root.unmount())
+})
+
 it('uses spaced finite visits, yields to touch, and parks completely in background or thermal pressure', async () => {
   vi.useFakeTimers()
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
