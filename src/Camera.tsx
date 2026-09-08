@@ -1251,6 +1251,21 @@ export default function Camera({
     const points = [...gesturePointsRef.current.values()]
     return points.length < 2 ? 0 : Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y)
   }
+  // Where the last tap landed, in coordinates local to the preview section.
+  // `id` exists only to remount the node so the CSS pulse restarts on a second
+  // tap in the same spot — without it React reuses the element and the
+  // animation, already finished, never plays again.
+  const [focusTap, setFocusTap] = useState<{ x: number; y: number; id: number } | null>(null)
+  const focusTapIdRef = useRef(0)
+  useEffect(() => {
+    if (!focusTap) return
+    // Matches the 1400ms pulse. The node leaves the DOM rather than lingering
+    // invisible: it is inside the viewfinder, and an element with
+    // pointer-events none is still one more thing to composite every frame.
+    const timer = window.setTimeout(() => setFocusTap(null), 1400)
+    return () => window.clearTimeout(timer)
+  }, [focusTap])
+
   const onCameraPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
     const target = event.target as Element
     if (target.closest('button, [role="button"], [data-poplur-gesture-navigation], input, textarea, select, a')) return
@@ -1327,6 +1342,17 @@ export default function Camera({
     gesture.lastTapAt = now
     gesture.lastTapX = event.clientX
     gesture.lastTapY = event.clientY
+    // A single tap used to be recorded and otherwise swallowed, so tapping the
+    // viewfinder produced no feedback at all. Answer it where it landed. The
+    // rect is read here, synchronously, because currentTarget is gone by the
+    // time the state update flushes.
+    const bounds = event.currentTarget.getBoundingClientRect()
+    focusTapIdRef.current += 1
+    setFocusTap({
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
+      id: focusTapIdRef.current,
+    })
   }, [flipCamera, nativeCameraBudget, resumeNativePreview, setFlashEnabled, stepArFilter, stepZoomPreset])
   const onCameraPointerCancel = useCallback((event: React.PointerEvent<HTMLElement>) => {
     gesturePointsRef.current.delete(event.pointerId)
@@ -1905,14 +1931,21 @@ export default function Camera({
           under the controls. Neither is part of the capture. */}
       {real && gridOn && <div className={styles.camGrid} aria-hidden="true" />}
       {/* The focus square: the bracket every camera wears in the middle of the
-          frame, so there is a centre to aim with. It is a SIGHT, not a readout
-          — nothing on the bridge reports where the lens actually focused — so
-          it never moves and never claims a lock, and the green the detector
-          locks with stays the detector's. It comes and goes with the picture
-          rather than with the grid toggle: standard furniture, not an opt-in
-          composition aid. */}
-      {real && effectiveLiveSurfaceVisible && !nativePreviewParked && (
-        <div className={styles.camFocus} aria-hidden="true" />
+          frame. It is a SIGHT, not a readout — nothing on the bridge reports
+          where the lens actually focused, and no shell exposes a focus API to
+          ask — so it never claims a lock, and the green the detector locks with
+          stays the detector's. It now answers a tap where the tap landed and
+          fades, instead of sitting permanently in the middle of the frame at
+          44vw: a sight that large covers the subject you are aiming at, and one
+          that is always on reads as the app aiming for you. Tap feedback only —
+          the lens is NOT being refocused. */}
+      {real && effectiveLiveSurfaceVisible && !nativePreviewParked && focusTap && (
+        <div
+          key={focusTap.id}
+          className={styles.camFocus}
+          style={{ left: `${focusTap.x}px`, top: `${focusTap.y}px` }}
+          aria-hidden="true"
+        />
       )}
       {real && timerLeft != null && (
         <div

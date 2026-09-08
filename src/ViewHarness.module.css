@@ -1275,20 +1275,24 @@
   mix-blend-mode: screen;
 }
 
-/* The focus square. Four corner brackets, open in the middle so the subject is
-   never under a line, drawn from this element's own background layers rather
-   than four children. White with a dark drop shadow instead of the grid's
-   screen blend: the grid vanishes against a bright sky, and a sight that is
-   only there half the time is worse than none. Green belongs to the detector
-   (DetectionOverlay.module.css) — this is furniture, not a lock. */
+/* The focus reticle, Camera.app-shaped: a small square of four corner ticks
+   that lands where you tapped, snaps in from 1.35x, holds, then fades out.
+   It is still a SIGHT, not a readout — no shell exposes a focus API, so
+   nothing here asks the lens to refocus and it must never be drawn as a lock.
+   What changed is that it stopped being furniture: a permanent 184px sight
+   parked in the middle of every frame sat on the subject, and a viewfinder
+   that is 44vw of brackets reads as an app that is aiming for you. It now
+   answers a tap and gets out of the way.
+   Centring is done with negative margins, not translate(-50%,-50%), because
+   `transform` has to stay free for the pulse. Green belongs to the detector
+   (DetectionOverlay.module.css) — this is a sight, not a lock. */
 .camFocus {
   position: absolute;
-  left: 50%;
-  top: 50%;
   z-index: 30;
-  width: min(44vw, 184px);
+  width: 76px;
   aspect-ratio: 1;
-  transform: translate(-50%, -50%);
+  /* left/top carry the tap point; these pull the box back onto it. */
+  margin: -38px 0 0 -38px;
   pointer-events: none;
   background-image:
     linear-gradient(#fff, #fff), linear-gradient(#fff, #fff),
@@ -1299,11 +1303,29 @@
     left top, left top, right top, right top,
     left bottom, left bottom, right bottom, right bottom;
   background-size:
-    28px 3px, 3px 28px, 28px 3px, 3px 28px,
-    28px 3px, 3px 28px, 28px 3px, 3px 28px;
+    13px 2px, 2px 13px, 13px 2px, 2px 13px,
+    13px 2px, 2px 13px, 13px 2px, 2px 13px;
   background-repeat: no-repeat;
-  opacity: 0.85;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
+  animation: camFocusPulse 1400ms cubic-bezier(.2, .8, .2, 1) forwards;
+}
+
+@keyframes camFocusPulse {
+  0%   { opacity: 0;    transform: scale(1.35); }
+  18%  { opacity: 0.95; transform: scale(1); }
+  70%  { opacity: 0.95; transform: scale(1); }
+  100% { opacity: 0;    transform: scale(1); }
+}
+
+/* Reduced motion still needs the reticle to appear and leave — it is the only
+   feedback a tap gets — so the scale snap goes and the fade stays. */
+@media (prefers-reduced-motion: reduce) {
+  .camFocus { animation: camFocusFade 1400ms linear forwards; }
+}
+
+@keyframes camFocusFade {
+  0%, 70% { opacity: 0.95; }
+  100%    { opacity: 0; }
 }
 
 .camCountdown {
