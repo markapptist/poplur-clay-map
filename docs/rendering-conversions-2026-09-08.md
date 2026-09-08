@@ -35,7 +35,13 @@ Rollback baseline: `b1a577c` (the coordinated audio/Map-radio release, including
   with no idle rendering clock. Each dice outcome keeps its own viewing angles.
   The baker can fill missing poses incrementally with `--missing-motion`.
 
-No Map, Feed or audio behavior is changed by this batch.
+- Installed Android QA also exposed a native Feed-ad flag that stayed open
+  after navigating away. Feed-ad visibility now belongs only to the uncovered
+  Feed surface, clears when leaving, and ignores late callbacks on other
+  screens. Actual Feed ads still hide the chrome; they cannot disable Settings,
+  Wallet or Mail cube motion afterward.
+
+Map and audio behavior are unchanged by this batch.
 Canonical Good Copy/Rough Copy artifacts are unchanged. Expo is excluded.
 
 ## Remaining 3D surfaces
@@ -71,3 +77,12 @@ left zero active rendering leases or canvases. Browser motion checks covered
 seven representative subscreens and all six dice outcomes without a canvas.
 Per-effect checks and native release results are recorded in the workspace's
 `.codex/profiling/additional-conversions-20260908` and install report.
+
+## Installed-device follow-up
+
+On Android, clearing the stale Feed-ad flag immediately restored three distinct
+Settings gear views (neutral/right/left) with zero canvas. The new lifecycle
+regression tests reproduce that missing-close callback and a late open callback.
+All 111 navigator/ad-visibility checks passed after the fix, including the
+existing persistent-cube visibility rules. Physical hand-tilt and extended
+heat observations remain separate from injected motion-event verification.

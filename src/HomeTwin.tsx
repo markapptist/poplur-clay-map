@@ -12,6 +12,7 @@ import { radiusTrophyColor } from './radiusTrophies'
 import surfaceStyles from './TransientPopupSurface.module.css'
 import CubeTab3D, { DEFAULT_CUBE_MODEL, TAB_ORDER, type CubeTab } from './CubeTab3D'
 import { shouldHidePersistentCube } from './persistentCubeVisibility'
+import { useNativeFeedAdVisibility } from './useNativeFeedAdVisibility'
 import { onAvatarCubeChange, wornCubeModelUrl } from './avatarCube'
 import ScreenCoach from './ScreenCoach'
 import CubeMotionLab from './CubeMotionLab'
@@ -3790,15 +3791,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // cannot be drawn in here. The chrome has to take itself away while it is up,
   // or the cube and HUD would sit on top of an ad, which is exactly the
   // interruption this placement exists to avoid.
-  const [feedAdSlotOpen, setFeedAdSlotOpen] = useState(false)
-  useEffect(() => {
-    const onFeedAd = (event: Event) => {
-      const detail = (event as CustomEvent).detail as { open?: unknown } | undefined
-      setFeedAdSlotOpen(Boolean(detail?.open))
-    }
-    window.addEventListener('poplur-native-feed-ad', onFeedAd)
-    return () => window.removeEventListener('poplur-native-feed-ad', onFeedAd)
-  }, [])
+  const feedAdSlotOpen = useNativeFeedAdVisibility(committedTab === 'feed' && !overlayOpen)
   /** Chrome fully away — the feed's player mode, a subscreen, an ad slot,
    *  or the post composer (trapped inside contentLayer z-index 4, so the
    *  chrome at 260 must stand down for the composer to be tappable). */
