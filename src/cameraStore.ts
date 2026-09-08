@@ -70,12 +70,54 @@ export function setLibraryNewest(item: { kind: 'photo' | 'video'; src: string } 
   emit()
 }
 
+// Monotonic, never reused. The id used to be derived from captures.length,
+// which was safe only while the array could not shrink: the moment deletion
+// exists, removing one capture drops the length and the NEXT capture is handed
+// an id a previous one already had. If that id was still in `selected`, the
+// new capture arrives pre-ticked — and a delete-selected would then remove a
+// photo the user never chose.
+let captureSeq = 0
+
 export function addCapture(capture: Omit<Capture, 'id' | 'at'>): Capture {
   // Newest first — the roll reads top-left as most recent, like Photos.
-  const full: Capture = { ...capture, id: `cap-${captures.length}-${captures.length ? captures[0].at + 1 : 0}`, at: captures.length }
+  // `at` stays an insert counter, not a timestamp; nothing reads it as time.
+  const full: Capture = { ...capture, id: `cap-${++captureSeq}`, at: captures.length }
   captures.unshift(full)
   emit()
   return full
+}
+
+/**
+ * Remove captures by id and drop them from the selection in the same beat.
+ * Returns what it actually removed, so a caller can undo or report.
+ *
+ * Object URLs are revoked here and nowhere else, and only once nothing else
+ * can still be pointing at them: a parked map draft or a parked AI compose
+ * draft holds a `src` directly, and revoking underneath one silently blanks
+ * the composer when the user comes back to it. A data: URL needs no revoking.
+ */
+export function removeCaptures(ids: readonly string[]): Capture[] {
+  const doomed = new Set(ids)
+  if (!doomed.size) return []
+  const removed: Capture[] = []
+  for (let i = captures.length - 1; i >= 0; i--) {
+    if (!doomed.has(captures[i].id)) continue
+    removed.push(...captures.splice(i, 1))
+  }
+  if (!removed.length) return []
+  ids.forEach(id => selected.delete(id))
+  const stillHeld = (src: string) =>
+    captures.some(c => c.src === src)
+    || pendingMapPost?.media.src === src
+    || pendingMapPost?.originalMedia?.src === src
+    || pendingAICompose?.media.src === src
+  for (const capture of removed) {
+    if (capture.src.startsWith('blob:') && !stillHeld(capture.src)) {
+      try { URL.revokeObjectURL(capture.src) } catch { /* already gone */ }
+    }
+  }
+  emit()
+  return removed
 }
 
 export function isSelected(id: string): boolean { return selected.has(id) }
@@ -87,6 +129,19 @@ export function toggleSelected(id: string): void {
 }
 
 export function selectedCount(): number { return selected.size }
+
+export function listSelected(): string[] { return [...selected] }
+
+/** Replace the whole selection. `selectAll` is this with every id on screen —
+ *  the roll decides what "all" means, since it filters by photoOnly/videoOnly
+ *  and the device library's items are not selectable at all. */
+export function setSelection(ids: readonly string[]): void {
+  selected.clear()
+  ids.forEach(id => selected.add(id))
+  emit()
+}
+
+export function selectAll(ids: readonly string[]): void { setSelection(ids) }
 
 export function clearSelection(): void {
   if (!selected.size) return
