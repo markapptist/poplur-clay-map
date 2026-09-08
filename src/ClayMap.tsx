@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExtern
 import mapboxgl, { type PointLike } from 'mapbox-gl'
 import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
 import { onFrame, ambientAllowed, boostFrames, managedRenderingOperationActive, onAmbientSleepChange, onRendererParkChange, setSurfaceFront } from './frameGovernor'
-import { createMapSelfiePlayback } from './mapSelfieVideo'
+import { captureMapSelfiePoster, createMapSelfiePlayback } from './mapSelfieVideo'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { SideControlIconImage } from './SideControlIcon'
 import type { WeatherIconId } from './sideControlIcons'
@@ -6439,7 +6439,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             selfieVideo.preload = 'none'
             selfieVideo.setAttribute('aria-hidden', 'true')
             markerRoot.appendChild(selfieVideo)
-            selfiePlayback = createMapSelfiePlayback(selfieVideo, usableVideo)
+            const media = selfieVideo
+            selfiePlayback = createMapSelfiePlayback(media, usableVideo, () => captureMapSelfiePoster(media))
             syncSelfiePlayback()
           } else if (usablePhoto) {
             const face = document.createElement('img')

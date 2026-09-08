@@ -27,11 +27,12 @@ export function useMapSelfieVideo(source: string | null, revision: number): stri
 export type DecorativeVideo = Pick<HTMLVideoElement, 'src' | 'play' | 'pause' | 'load' | 'removeAttribute'>
 
 /** Removing src releases decoded frames; pause alone keeps the decoder allocated. */
-export function createMapSelfiePlayback(video: DecorativeVideo, source: string) {
+export function createMapSelfiePlayback(video: DecorativeVideo, source: string, capturePoster?: () => void) {
   let active = false
   let disposed = false
   let generation = 0
   const release = () => {
+    capturePoster?.()
     video.pause()
     video.removeAttribute('src')
     video.load()
@@ -58,4 +59,20 @@ export function createMapSelfiePlayback(video: DecorativeVideo, source: string) 
       release()
     },
   }
+}
+
+/** Video-only profiles still show their face when the decoder is released. */
+export function captureMapSelfiePoster(video: HTMLVideoElement): void {
+  if (video.poster || !video.videoWidth || !video.videoHeight || video.readyState < 2) return
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = 192
+  const context = canvas.getContext('2d')
+  if (!context) return
+  try {
+    const side = Math.min(video.videoWidth, video.videoHeight)
+    context.drawImage(video, (video.videoWidth - side) / 2, (video.videoHeight - side) / 2,
+      side, side, 0, 0, 192, 192)
+    video.poster = canvas.toDataURL('image/jpeg', 0.85)
+  } catch { /* External browser preview media may disallow a canvas read. */ }
+  finally { canvas.width = canvas.height = 0 }
 }

@@ -41,6 +41,23 @@ describe('map selfie resources', () => {
     expect(play).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps a poster from video-only profiles before releasing the decoder', () => {
+    const video = document.createElement('video')
+    vi.spyOn(video, 'play').mockResolvedValue()
+    vi.spyOn(video, 'pause').mockImplementation(() => {})
+    vi.spyOn(video, 'load').mockImplementation(() => {})
+    const snapshot = vi.fn(() => {
+      expect(video.src).toContain('compact.mp4')
+      video.poster = 'selfie-frame.jpg'
+    })
+    const player = createMapSelfiePlayback(video, 'https://example.com/compact.mp4', snapshot)
+    player.setActive(true)
+    player.setActive(false)
+    expect(snapshot).toHaveBeenCalledOnce()
+    expect(video.hasAttribute('src')).toBe(false)
+    expect(video.poster).toContain('selfie-frame.jpg')
+  })
+
   it('never forwards an original or a stale native conversion to Map', () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     const host = document.createElement('div')
