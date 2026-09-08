@@ -7183,7 +7183,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     const landmarkFrame = point?.kind === 'landmark' ? landmarkTourCameraFrame(point.id) : null
     const zoom = Math.min(live.getMaxZoom(), Math.max(live.getZoom() + 1.5, landmarkFrame?.zoom ?? ZOOM_TRAVEL_BUILDING_LEVEL))
     const pad = framePaddingFor(live.getContainer())
-    const travelMs = landmarkFrame ? 1800 : 900
+    // The gesture pad can reframe a newly selected point. Use the same direct
+    // cut as point traversal so an old location never becomes a cross-map pan.
+    const travelMs = 0
     wakeManagedRendering(travelMs + MANAGED_CAMERA_SETTLE_MS)
     live.setMinPitch(0)
     live.setMaxPitch(Math.max(MAP_BROWSE_3D_MAX_PITCH, landmarkFrame?.pitch ?? MAP_BROWSE_3D_PITCH))
