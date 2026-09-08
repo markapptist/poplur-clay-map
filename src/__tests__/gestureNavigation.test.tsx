@@ -25,3 +25,19 @@ it('replaces buttons with a keyboard-accessible gesture surface', () => {
   act(() => dock.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
   expect(onAction).toHaveBeenCalledWith('right')
 })
+it('delivers touch swipes once without bubbling into Camera focus or pinch handlers', () => {
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host), onAction = vi.fn(), cameraPointer = vi.fn()
+  cleanup = () => { act(() => root.unmount()); host.remove() }
+  act(() => root.render(<div onPointerDown={cameraPointer} onPointerUp={cameraPointer}>
+    <GestureNavigationDock onAction={onAction} label="1 · 1×" hints={{up:'Next filter',down:'Previous filter',left:'Zoom out',right:'Zoom in'}} />
+  </div>))
+  const dock = host.querySelector('[role=group]')!
+  const swipe = (x: number, y: number) => act(() => {
+    dock.dispatchEvent(new PointerEvent('pointerdown', { pointerId:1,isPrimary:true,bubbles:true,clientX:150,clientY:200 }))
+    dock.dispatchEvent(new PointerEvent('pointerup', { pointerId:1,isPrimary:true,bubbles:true,clientX:x,clientY:y }))
+  })
+  swipe(150,120); swipe(70,200)
+  expect(onAction.mock.calls).toEqual([['up'],['right']])
+  expect(cameraPointer).not.toHaveBeenCalled()
+})
