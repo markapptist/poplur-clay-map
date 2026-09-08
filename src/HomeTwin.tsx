@@ -1592,6 +1592,19 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     window.addEventListener('poplur-open-settings', onOpenSettings)
     return () => window.removeEventListener('poplur-open-settings', onOpenSettings)
   }, [])
+  // The profile's store shortcut opens STORE — the same subscreen the hold
+  // menu's tile does, reached without the wheel. App Review could not find the
+  // In-App Purchases (2.1(b), 8 Sep 2026) because the only route was a swipe to
+  // the profile tab followed by a hold on the cube; this is that route, visible.
+  useEffect(() => {
+    const onOpenStore = () => {
+      setActiveTab('profile')
+      setResume(current => ({ screen: 'profile-store', n: current.n + 1 }))
+      setHoldOpen(true)
+    }
+    window.addEventListener('poplur-open-store', onOpenStore)
+    return () => window.removeEventListener('poplur-open-store', onOpenStore)
+  }, [])
   useEffect(() => {
     if (notifOpenNonce === 0) return
     setResume(current => ({ screen: 'profile-notifications', n: current.n + 1, origin: 'bell' }))

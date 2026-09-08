@@ -274,6 +274,25 @@
 
 .camBtn:active { transform: scale(0.9); }
 
+/* Your own profile picture is the capture trigger. A transparent button over
+   the whole 200px square rather than a click handler on the media, so it is
+   reachable by keyboard and announces itself; z-index 4 clears .photo (2) and
+   the gradient frame (3). Radius matches .photo so the press target does not
+   overhang the squircle's corners. */
+.avatarTap {
+  position: absolute;
+  inset: 6px;
+  z-index: 4;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  border-radius: 40px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s ease;
+}
+.avatarTap:active { transform: scale(0.98); }
+
 /* The Settings shortcut — a clay gear the same 44px as the bell and camera,
    sitting between them on the control rail. */
 .gearBtn {

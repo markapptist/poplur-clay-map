@@ -2640,8 +2640,13 @@ export default function ProfileTwin({
             <SideControlIconImage icon="feed.dm" displaySize={44} />
           </button>
         ) : (
-          <button ref={camBtnRef} className={styles.camBtn} onClick={openCapture} aria-label="Record profile selfie video">
-            <SideControlIconImage icon="profile.camera" displaySize={44} />
+          <button
+            ref={camBtnRef}
+            className={styles.camBtn}
+            onClick={() => { playPop(); window.dispatchEvent(new CustomEvent('poplur-open-store')) }}
+            aria-label="Store"
+          >
+            <img src="holdmenu/ShoppingBag.png" alt="" draggable="false" />
           </button>
         )}
       </TabControlRail>
@@ -2649,6 +2654,17 @@ export default function ProfileTwin({
       <div className={styles.header}>
         <div className={styles.avatarWrap}>
           <div className={styles.avatarFrame} />
+          {/* Your own picture IS the camera. The rail's camera button became
+              STORE, so the capture it used to open moved onto the thing people
+              already try to tap. Visiting somebody else's profile stays inert. */}
+          {!visiting && (
+            <button
+              type="button"
+              className={styles.avatarTap}
+              onClick={openCapture}
+              aria-label="Record profile selfie video"
+            />
+          )}
 
           {visiting ? (
             visitingAvatar ? (
