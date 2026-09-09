@@ -2034,11 +2034,6 @@
   ],
   "poplur_cube_cameraroll.glb": [
     {
-      "yaw": 0,
-      "pitch": 0,
-      "src": "navigator-sprites/poplur_cube_cameraroll_y0_p0.webp"
-    },
-    {
       "yaw": -24,
       "pitch": -16,
       "src": "navigator-sprites/poplur_cube_cameraroll_y-24_p-16.webp"
@@ -2087,6 +2082,11 @@
       "yaw": -8,
       "pitch": 0,
       "src": "navigator-sprites/poplur_cube_cameraroll_y-8_p0.webp"
+    },
+    {
+      "yaw": 0,
+      "pitch": 0,
+      "src": "navigator-sprites/poplur_cube_cameraroll_y0_p0.webp"
     },
     {
       "yaw": 8,
