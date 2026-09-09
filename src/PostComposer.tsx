@@ -69,6 +69,9 @@ export interface ComposerMedia {
   length?: string
 }
 
+import { carouselSlides } from './carouselSlides'
+export { MAX_CAROUSEL_ITEMS, carouselSlides } from './carouselSlides'
+
 export interface ComposerTarget {
   lat: number
   lng: number
@@ -131,6 +134,7 @@ function stillFromVideo(video: HTMLVideoElement): string | null {
 }
 
 export default function PostComposer({
+  items,
   media: incomingMedia,
   target,
   draft,
@@ -143,6 +147,10 @@ export default function PostComposer({
   onStepChange,
   onRequestLocation,
 }: {
+  /** Every slide of a carousel, cover first. Omit for a single-media post —
+   *  omitted and a one-item array mean the same thing, and both keep the wire
+   *  format byte-identical to what it was before carousels existed. */
+  items?: readonly ComposerMedia[]
   media: ComposerMedia
   /** set when the post is bound to a map coordinate */
   target?: ComposerTarget
@@ -521,21 +529,21 @@ export default function PostComposer({
    *  Photos are re-drawn through the CSS filter here; video keeps its filter id
    *  so the shell can apply it during export (the browser cannot re-encode a
    *  clip cheaply, and native already has PostCaptureMediaProcessor for it). */
-  const bakeCapture = (): Promise<string> => new Promise(resolve => {
-    if (media.kind !== 'photo' || filterCss === 'none') return resolve(media.src)
+  const bakeCapture = (source: ComposerMedia = media): Promise<string> => new Promise(resolve => {
+    if (source.kind !== 'photo' || filterCss === 'none') return resolve(source.src)
     const img = new Image()
     img.onload = () => {
       const canvas = document.createElement('canvas')
       canvas.width = img.naturalWidth
       canvas.height = img.naturalHeight
       const ctx = canvas.getContext('2d')
-      if (!ctx) return resolve(media.src)
+      if (!ctx) return resolve(source.src)
       ctx.filter = filterCss
       ctx.drawImage(img, 0, 0)
       resolve(canvas.toDataURL('image/jpeg', 0.92))
     }
-    img.onerror = () => resolve(media.src)
-    img.src = media.src
+    img.onerror = () => resolve(source.src)
+    img.src = source.src
   })
 
   /** What actually gets uploaded: the capture, with its filter baked in.
@@ -546,7 +554,7 @@ export default function PostComposer({
    *  "the post is different from what I posted". What you post is what you
    *  posted, whatever switch is on; test content comes from the synthetic
    *  cohort, never from rewriting a real person's upload. */
-  const renderForUpload = (): Promise<string> => bakeCapture()
+  const renderForUpload = (source?: ComposerMedia): Promise<string> => bakeCapture(source)
 
   /** Blob URLs (recordings) cannot cross the native bridge — read the bytes. */
   const asTransferable = async (src: string): Promise<string> => {
@@ -644,8 +652,21 @@ export default function PostComposer({
       // (UploadPostToCoordinate / UploadImageToCurrentCoordinate). Hand it the
       // finished post rather than re-implementing auth inside this bundle.
       if (isNativeShell()) {
-        const baked = await renderForUpload()
+        const slides = carouselSlides(media, items)
+        // The cover is baked and transferred exactly as it always was, so the
+        // legacy `data` field is unchanged for every post that has ever worked.
+        const baked = await renderForUpload(slides[0])
         const data = await asTransferable(baked)
+        // Extras only exist for a real carousel. One publishPost carries all of
+        // them: never loop this call — two messages once produced two Storage
+        // objects and two documents for 24 days.
+        const mediaItems = slides.length < 2 ? undefined : await Promise.all(
+          slides.map(async (slide, index) => ({
+            index,
+            kind: slide.kind,
+            data: index === 0 ? data : await asTransferable(await renderForUpload(slide)),
+          })),
+        )
         const requestId = `${postIdRef.current}-try-${Date.now().toString(36)}`
         // Install both listeners before native receives the message. Decode
         // failures can answer immediately, and the first byte-progress event
@@ -666,6 +687,11 @@ export default function PostComposer({
           kind: media.kind,
           photoViewSeconds: media.kind === 'photo' ? photoSeconds : null,
           data,
+          // Absent, not empty, for a single-media post. mediaItems[0].data is
+          // `data` above, character for character — that identity is what lets
+          // an old shell ignore this array and still upload a valid post.
+          mediaItems,
+          mediaCount: mediaItems?.length,
           caption,
           channelId,
           filterId,
