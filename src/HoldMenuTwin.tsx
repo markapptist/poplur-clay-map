@@ -322,6 +322,7 @@ export default function HoldMenuTwin({
   wheelOverNonce = 0,
   bindGoBack,
   bindArrows,
+  bindPageArrows,
   incomingCall,
   onAcceptCall,
   onDeclineCall,
@@ -389,6 +390,10 @@ export default function HoldMenuTwin({
   /** Registers the channel arrows while a subscreen is up, so up/down walks
       the tab's subscreens instead of the screen buried underneath them. */
   bindArrows?: (fn: ((dir: 1 | -1) => boolean) | null) => void
+  /** An open page's own claim on the channel arrows, forwarded straight to
+   *  Home. Separate from `bindArrows` above, which is this menu's walk of
+   *  its sibling pages: Home has to ask the PAGE before its tab's ring. */
+  bindPageArrows?: (fn: ((dir: 1 | -1) => boolean) | null) => void
   incomingCall?: import('./PhoneScreen').IncomingCall | null
   onAcceptCall?: (call: import('./PhoneScreen').IncomingCall) => void
   onDeclineCall?: (call: import('./PhoneScreen').IncomingCall) => void
@@ -787,6 +792,18 @@ export default function HoldMenuTwin({
     // effects, so it would wipe the binding the new screen had just made.
     nativeBackRef.current = fn
   }).current
+  // The arrow twin of the back binding above, with the same single-writer rule:
+  // a page registers during its own render/effect and clears in its cleanup, so
+  // a page swap never erases the incoming binding.
+  const nativeArrowsRef = useRef<((dir: 1 | -1) => boolean) | null>(null)
+  const bindNativeArrows = useRef((fn: ((dir: 1 | -1) => boolean) | null) => {
+    nativeArrowsRef.current = fn
+  }).current
+  useEffect(() => {
+    if (!bindPageArrows) return
+    bindPageArrows((dir: 1 | -1) => nativeArrowsRef.current?.(dir) ?? false)
+    return () => bindPageArrows(null)
+  }, [bindPageArrows])
   useEffect(() => {
     subscreenDepthRef.current = 0
     const onSubscreenMessage = (event: MessageEvent) => {
@@ -1300,6 +1317,7 @@ export default function HoldMenuTwin({
               Camera's composer state directly. */}
           <CameraRollScreen
             bindBack={bindNativeBack}
+            bindArrows={bindNativeArrows}
             onClosePage={() => { playSubscreenNavigationPop(); onClose() }}
           />
         </div>

@@ -127,3 +127,51 @@ it('deletes just the previewed capture, behind the prompt', () => {
   // Deleting what you were looking at has to close the preview too.
   expect(host.querySelector('[aria-label="Capture preview"]')).toBeNull()
 })
+
+// "im not able to get to the camera roll screen from the arrows in camera tab".
+// The page's own claim on the arrows has to be inert until a capture is open,
+// or it would swallow the presses that walk the camera's ring onto and off the
+// roll — which is the navigation that was missing in the first place.
+it('leaves the channel arrows alone until a capture is open', () => {
+  addCapture({ kind: 'photo', src: 'data:,a' })
+  let arrows: ((dir: 1 | -1) => boolean) | null = null
+  act(() => root.render(<CameraRollScreen bindArrows={fn => { arrows = fn }} />))
+  expect(arrows).toBeTypeOf('function')
+  expect(arrows!(1)).toBe(false)
+  expect(arrows!(-1)).toBe(false)
+})
+
+// Opening a capture is opening a post in the profile, so the arrows browse the
+// library the same way: one per press, and wrapping rather than stopping dead
+// at the ends (the preview holds the seeded roll as well as this session's
+// captures, so the walk is over everything the page is showing).
+it('walks the open preview with the arrows, wrapping at both ends', () => {
+  addCapture({ kind: 'photo', src: 'data:,a' })
+  addCapture({ kind: 'photo', src: 'data:,b' })
+  let arrows: ((dir: 1 | -1) => boolean) | null = null
+  act(() => root.render(<CameraRollScreen bindArrows={fn => { arrows = fn }} />))
+  act(() => { tiles()[0]!.click() })
+  const preview = () => host.querySelector('[aria-label="Capture preview"]')
+  const shown = () => preview()?.querySelector('img, video')?.getAttribute('src') ?? null
+  const first = shown()
+  expect(first).toBeTruthy()
+  act(() => { expect(arrows!(1)).toBe(true) })
+  const second = shown()
+  expect(second).not.toBe(first)
+  act(() => { expect(arrows!(-1)).toBe(true) })
+  expect(shown()).toBe(first)
+  // Off the front of the list: the walk wraps to the end, it does not close.
+  act(() => { expect(arrows!(-1)).toBe(true) })
+  expect(preview()).not.toBeNull()
+  expect(shown()).not.toBe(first)
+})
+
+// Unmounting has to release the claim, or Home keeps calling into a page that
+// is no longer on screen and the camera's ring stops answering its arrows.
+it('releases the arrows when the page goes away', () => {
+  let arrows: ((dir: 1 | -1) => boolean) | null | undefined
+  act(() => root.render(<CameraRollScreen bindArrows={fn => { arrows = fn }} />))
+  expect(arrows).toBeTypeOf('function')
+  act(() => root.render(<></>))
+  expect(arrows).toBeNull()
+})

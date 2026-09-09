@@ -43,6 +43,7 @@ interface RollViewerItem {
 export default function CameraRollScreen({
   onPick,
   bindBack,
+  bindArrows,
   onClosePage,
 }: {
   /** Hand a chosen item to the composer, exactly as the pager's roll does. */
@@ -50,6 +51,11 @@ export default function CameraRollScreen({
   /** The page's back ladder, for the persistent cube. Returns true when this
    *  screen consumed the press. */
   bindBack?: (handler: (() => boolean) | null) => void
+  /** The channel arrows, while the preview is open. Opening a capture here is
+   *  opening a post in the profile, so the arrows have to walk the library the
+   *  same way — without this they stepped the camera's ring instead and the
+   *  preview vanished on the first press. */
+  bindArrows?: (handler: ((dir: 1 | -1) => boolean) | null) => void
   /** Leave the roll page — used after POST hands media to the camera. */
   onClosePage?: () => void
 } = {}) {
@@ -152,6 +158,30 @@ export default function CameraRollScreen({
     return false
   }, [confirming, viewerIdx, closeViewer, manage, leaveManage])
   if (bindBack) bindBack(back)
+
+  // The channel arrows inside the preview, exactly as the profile viewer walks
+  // its posts: one capture per press, wrapping at both ends. The grid-aware
+  // stepper the swipe uses stops dead at the edges, which is right for a swipe
+  // and wrong for a channel. Closed, this answers false so the press falls
+  // through to the camera's ring and the arrows still walk you off the page.
+  const arrowStateRef = useRef({ viewerIdx, viewerItems, confirming })
+  arrowStateRef.current = { viewerIdx, viewerItems, confirming }
+  useEffect(() => {
+    if (!bindArrows) return
+    bindArrows((dir: 1 | -1) => {
+      const { viewerIdx: idx, viewerItems: items, confirming: asking } = arrowStateRef.current
+      if (idx == null) return false
+      // A delete prompt owns the arrows while it is up: never change the
+      // capture underneath a decision about which capture to destroy.
+      if (asking || items.length < 2) return true
+      const next = ((idx + dir) % items.length + items.length) % items.length
+      viewerKeyRef.current = keyOf(items[next])
+      setViewerIdx(next)
+      playPop()
+      return true
+    })
+    return () => bindArrows(null)
+  }, [bindArrows])
 
   const deleteSelected = () => {
     // From the preview it is this one capture; from manage mode, the selection.

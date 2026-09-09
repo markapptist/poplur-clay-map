@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { CAMERA_CYCLE, CAMERA_HOLD_MENU_ITEMS } from '../cameraNavigation'
+import { CAMERA_CYCLE, CAMERA_CYCLE_SCREEN, CAMERA_HOLD_MENU_ITEMS, CAMERA_STOP_BY_SCREEN } from '../cameraNavigation'
 
 const cameraSource = readFileSync(new URL('../Camera.tsx', import.meta.url), 'utf8')
 const iosCameraSource = readFileSync(
@@ -60,8 +60,19 @@ it('offers the camera roll as a page, never as an action tile', () => {
   expect(roll).not.toHaveProperty('event')
 })
 
-// The roll is not a stop on the camera's channel-arrow ring; the arrows on the
-// page fall through to the wheel walker instead.
-it('keeps the roll out of the camera cycle', () => {
-  expect([...CAMERA_CYCLE]).not.toContain('roll')
+// The roll HAS to be a stop on the channel-arrow ring. Left off it, the only
+// route to the screen was holding the cube and picking the tile — reported as
+// "I'm not able to get to the camera roll screen from the arrows". Its ring
+// stop must also carry a screen, or the arrows walk onto it and do nothing.
+it('puts the roll on the camera cycle, as a screen stop', () => {
+  expect([...CAMERA_CYCLE]).toContain('roll')
+  expect(CAMERA_CYCLE_SCREEN.roll).toBe('camera-roll')
+  expect(CAMERA_STOP_BY_SCREEN['camera-roll']).toBe('roll')
+})
+
+// The ring and the wheel are two ways round the same inventory, so a stop that
+// exists in one and not the other is a navigation people cannot predict.
+it("walks the ring in the hold wheel's own tile order", () => {
+  const tiles = CAMERA_HOLD_MENU_ITEMS.map(item => item.title.toLowerCase().replace('camera ', ''))
+  expect([...CAMERA_CYCLE]).toEqual(tiles)
 })

@@ -1750,6 +1750,14 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const bindSubscreenArrows = useCallback((fn: ((dir: 1 | -1) => boolean) | null) => {
     subscreenArrowsRef.current = fn
   }, [])
+  /** Set by an open hold-menu PAGE that wants the arrows for itself — today the
+   *  camera roll's fullscreen preview, which browses captures with them the way
+   *  the profile viewer browses posts. Asked before the ring below, because the
+   *  ring would otherwise navigate off the page and drop the open preview. */
+  const holdPageArrowsRef = useRef<((dir: 1 | -1) => boolean) | null>(null)
+  const bindHoldPageArrows = useCallback((fn: ((dir: 1 | -1) => boolean) | null) => {
+    holdPageArrowsRef.current = fn
+  }, [])
 
   const [cubeScreen, setCubeScreen] = useState<string | null>(null)
   const [storeCardCube, setStoreCardCube] = useState<string | null>(null)
@@ -4467,7 +4475,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       setHoldOpen(false)
     }
     if (onRoll) setCameraStep(step => step + 1)
-    setCameraCaptureMode(next)
+    // Every stop that is not a capture mode carried a screen above and has
+    // already returned, so this is photo or video — written as a test rather
+    // than a cast so a stop added without a screen fails to compile here.
+    if (next === 'photo' || next === 'video') setCameraCaptureMode(next)
   }
   // Elapsed ms while recording — the radius label BECOMES this counter.
   const [recordMs, setRecordMs] = useState<number | null>(null)
@@ -4863,6 +4874,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // keeps the press only when the bare wheel (or a non-ring page) is up.
     if (activeTab === 'post'
       && (!holdOpen || (cubeScreen != null && CAMERA_STOP_BY_SCREEN[cubeScreen] != null))) {
+      // A page on the ring may still want the press: the roll's preview walks
+      // its captures. It answers false the moment it is not looking at one.
+      if (holdPageArrowsRef.current?.(dir)) { claimCubeNavigationSound(); return }
       claimCubeNavigationSound()
       stepCameraMode(dir)
       return
@@ -6584,6 +6598,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           onSubscreenChange={handleSubscreenChange}
           onWheelFocusChange={handleWheelFocusChange}
           bindArrows={bindSubscreenArrows}
+          bindPageArrows={bindHoldPageArrows}
           bindGoBack={fn => { goBackRef.current = fn }}
           incomingCall={incomingCall}
           onAcceptCall={acceptIncomingCall}
