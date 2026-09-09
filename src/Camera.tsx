@@ -10,7 +10,9 @@ import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
-import { addCapture, isDetectOn, setDetectOn, onCameraStore, listCaptures, getLibraryNewest, setLastSceneTerms, takePendingMapPost, type PendingMapPost } from './cameraStore'
+import { addCapture, isDetectOn, setDetectOn, onCameraStore, listCaptures, getLibraryNewest, setLastSceneTerms, takePendingMapPost, type PendingMapPost,
+  takePendingRollPost,
+} from './cameraStore'
 import RecognitionAura from './RecognitionAura'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
 import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
@@ -462,6 +464,15 @@ export default function Camera({
   // Camera→map, the return leg: a target arriving while a parked draft exists
   // means the user just picked their spot — resume the SAME draft at the
   // channel step instead of demanding a fresh capture.
+  // The roll page's POST. Unlike the map draft below this is unconditional:
+  // there is no target to gate on — the user pressed POST on a capture and the
+  // camera is where the composer lives. One-shot, so an abandoned trip cannot
+  // resurface a picture on the next visit.
+  useEffect(() => {
+    const parked = takePendingRollPost()
+    if (!parked) return
+    setComposing(parked)
+  }, [])
   useEffect(() => {
     if (!postTarget) return
     // Drain the parked draft on EVERY target: a stale draft from an abandoned

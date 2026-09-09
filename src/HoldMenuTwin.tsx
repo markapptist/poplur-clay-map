@@ -1292,13 +1292,16 @@ export default function HoldMenuTwin({
     if (activeScreen.native && activeScreen.screen === 'camera-roll') {
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Camera roll">
-          {/* No onPick yet: Step 4 gives a tap its preview, and wiring a
-              throwaway hand-off to the composer here would be replaced by it.
-              Without onPick the roll's own pickItem only toggles selection,
-              and only for this session's captures — inert on a phone, where
-              every device item is id-less — which is the parity this step
-              wants. */}
-          <CameraRollScreen />
+          {/* bindNativeBack is how the page's own ladder (preview -> manage ->
+              page) gets consumed before the cube closes the page: it runs at
+              :637, ahead of the whitelist below it. onClosePage is POST — the
+              page parks the media and leaves, and Camera drains it on arrival,
+              because this screen lives in the hold menu and cannot reach
+              Camera's composer state directly. */}
+          <CameraRollScreen
+            bindBack={bindNativeBack}
+            onClosePage={() => { playSubscreenNavigationPop(); onClose() }}
+          />
         </div>
       )
     }

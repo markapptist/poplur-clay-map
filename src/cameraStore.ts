@@ -111,6 +111,7 @@ export function removeCaptures(ids: readonly string[]): Capture[] {
     || pendingMapPost?.media.src === src
     || pendingMapPost?.originalMedia?.src === src
     || pendingAICompose?.media.src === src
+    || pendingRollPost?.src === src
   for (const capture of removed) {
     if (capture.src.startsWith('blob:') && !stillHeld(capture.src)) {
       try { URL.revokeObjectURL(capture.src) } catch { /* already gone */ }
@@ -118,6 +119,27 @@ export function removeCaptures(ids: readonly string[]): Capture[] {
   }
   emit()
   return removed
+}
+
+/**
+ * The roll page's POST hand-off. CameraRollScreen is mounted inside the hold
+ * menu, not inside Camera, so it cannot reach Camera's `composing` state
+ * directly — the same reason the map draft above is module-level. The roll
+ * parks the chosen media here, closes itself, and Camera drains it on mount.
+ *
+ * One-shot on purpose: a draft left behind by an abandoned trip must never
+ * resurface on the next visit to the camera.
+ */
+let pendingRollPost: { kind: 'photo' | 'video'; src: string; length?: string } | null = null
+
+export function setPendingRollPost(media: { kind: 'photo' | 'video'; src: string; length?: string }): void {
+  pendingRollPost = media
+}
+
+export function takePendingRollPost(): { kind: 'photo' | 'video'; src: string; length?: string } | null {
+  const media = pendingRollPost
+  pendingRollPost = null
+  return media
 }
 
 export function isSelected(id: string): boolean { return selected.has(id) }

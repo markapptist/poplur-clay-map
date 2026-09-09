@@ -3,7 +3,7 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import CameraRollScreen from '../CameraRollScreen'
-import { addCapture, isSelected, listCaptures, removeCaptures, selectedCount } from '../cameraStore'
+import { addCapture, isSelected, listCaptures, removeCaptures, selectedCount, takePendingRollPost } from '../cameraStore'
 
 vi.mock('../pop', () => ({ playPop: vi.fn(), primePopAudio: vi.fn() }))
 
@@ -89,4 +89,41 @@ it('says why the device library is not part of the selection', () => {
   render()
   act(() => { btn('Select captures')!.click() })
   expect(host.textContent).toContain('Your Poplur captures only')
+})
+
+// ── Preview (ask C): opening a capture, mirroring the profile post viewer ──
+
+it('opens a capture into a preview when tapped', () => {
+  addCapture({ kind: 'photo', src: 'data:,a' })
+  render()
+  const tile = tiles()[0]
+  act(() => { tile.click() })
+  expect(host.querySelector('[aria-label="Capture preview"]')).not.toBeNull()
+})
+
+it('parks the capture for the camera when POST is pressed, and leaves', () => {
+  addCapture({ kind: 'photo', src: 'data:,post-me' })
+  const closed = vi.fn()
+  act(() => root.render(<CameraRollScreen onClosePage={closed} />))
+  act(() => { tiles()[0].click() })
+  const post = Array.from(host.querySelectorAll('button')).find(b => b.textContent === 'Post this')
+  expect(post).toBeDefined()
+  act(() => { post!.click() })
+  expect(closed).toHaveBeenCalled()
+  // The page cannot reach Camera's composer state, so it parks the media.
+  expect(takePendingRollPost()).toEqual({ kind: 'photo', src: 'data:,post-me', length: undefined })
+})
+
+it('deletes just the previewed capture, behind the prompt', () => {
+  const a = addCapture({ kind: 'photo', src: 'data:,keep' })
+  addCapture({ kind: 'photo', src: 'data:,drop' })
+  render()
+  act(() => { tiles()[0].click() })     // newest-first, so 'drop'
+  const del = host.querySelector<HTMLButtonElement>('button[aria-label="Delete this capture"]')
+  act(() => { del!.click() })
+  const confirm = Array.from(document.querySelectorAll('button')).find(x => x.textContent?.startsWith('Delete'))
+  act(() => { confirm!.click() })
+  expect(listCaptures().map(c => c.id)).toEqual([a.id])
+  // Deleting what you were looking at has to close the preview too.
+  expect(host.querySelector('[aria-label="Capture preview"]')).toBeNull()
 })

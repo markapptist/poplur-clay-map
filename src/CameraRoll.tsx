@@ -96,6 +96,7 @@ export default function CameraRoll({
   hideHeader = false,
   nativeRequestType = 'requestCameraRoll',
   manage = false,
+  onOpenItem,
 }: {
   onDeny?: () => void
   lite?: boolean
@@ -125,6 +126,9 @@ export default function CameraRoll({
    * reachable, opt-in, so those three keep their picker behaviour untouched.
    */
   manage?: boolean
+  /** Open the tile at this flat index in the host's preview. Takes precedence
+   *  over composing, and is ignored in manage mode where a tap selects. */
+  onOpenItem?: (index: number, items: readonly { kind: 'photo' | 'video'; src: string; length?: string; poster?: string; id?: string }[]) => void
 } = {}) {
   // Native shell: the REAL device photo library replaces the mock grid. The
   // list remains thumbnail-only so opening it does not marshal 24 full-size
@@ -270,6 +274,13 @@ export default function CameraRoll({
       if (item.id) toggleSelected(item.id)
       return
     }
+    // A host that previews takes the tap before the composer does: opening is
+    // what a tile means on the roll PAGE, and posting is a control inside the
+    // preview rather than the consequence of a tap.
+    if (onOpenItem) {
+      onOpenItem(items.indexOf(item), items)
+      return
+    }
     if (!onPick) {
       if (item.id) toggleSelected(item.id)
       return
@@ -328,7 +339,7 @@ export default function CameraRoll({
         {items.map((item, index) => {
           const poster = item.poster ?? posterFor(item.src)
           // Manage mode narrows what answers a tap to the selectable subset.
-          const interactive = manage ? Boolean(item.id) : Boolean(onPick || item.id)
+          const interactive = manage ? Boolean(item.id) : Boolean(onOpenItem || onPick || item.id)
           return (
             <figure
               key={item.id ?? index}
