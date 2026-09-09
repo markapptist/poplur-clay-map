@@ -32,6 +32,7 @@ import { CAMERA_HOLD_MENU_ITEMS } from './cameraNavigation'
 import { isRetiredNavigationScreen } from './retiredNavigationRoutes'
 import { announceIpodSection } from './ipodNavigation'
 import ConquerScreen from './ConquerScreen'
+import CameraRollScreen from './CameraRollScreen'
 import type { MapConquerSnapshot } from './mapConquer'
 import { HOLD_MENU_ICON_ASSETS } from './holdMenuIconAssignments'
 import {
@@ -654,7 +655,7 @@ export default function HoldMenuTwin({
       }
       // These pages use the persistent cube as Back. Consume that press
       // before Home can run the underlying Map, Feed or Profile action.
-      if (activeScreen && ['feed-tvguide', 'map-conquer', 'profile-stats'].includes(activeScreen.screen)) {
+      if (activeScreen && ['feed-tvguide', 'map-conquer', 'profile-stats', 'camera-roll'].includes(activeScreen.screen)) {
         subscreenNavigationPopRef.current = true
         activeScreenRef.current = null
         setActiveScreen(null)
@@ -1285,6 +1286,19 @@ export default function HoldMenuTwin({
       return (
         <div className={styles.subscreenStage} role="dialog" aria-label="Poplur iPod">
           <MapIpod onClose={() => { playSubscreenNavigationPop(); onClose() }} />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'camera-roll') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Camera roll">
+          {/* No onPick yet: Step 4 gives a tap its preview, and wiring a
+              throwaway hand-off to the composer here would be replaced by it.
+              Without onPick the roll's own pickItem only toggles selection,
+              and only for this session's captures — inert on a phone, where
+              every device item is id-less — which is the parity this step
+              wants. */}
+          <CameraRollScreen />
         </div>
       )
     }

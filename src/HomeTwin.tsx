@@ -481,9 +481,10 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // the subscreen the cube is answering to, and a hold-menu tile carrying an
   // `action`, `mapAction` or `event` never sets one — it fires, calls
   // onClose() and returns before setActiveScreen (HoldMenuTwin). So
-  // DIRECTIONS, TOUR, CAMERA ROLL, COMMENT and HEY POPLUR have
-  // no entry no matter how good their cube is: those tiles act on the live
-  // surface behind the menu, which is the whole point of them.
+  // DIRECTIONS, TOUR, COMMENT and HEY POPLUR have no entry no matter how good
+  // their cube is: those tiles act on the live surface behind the menu, which
+  // is the whole point of them. CAMERA ROLL used to be in that list and is not
+  // any more — it stopped being an `action` tile and became a page.
   // The news screen gets an actual newspaper rather than a cube with a news
   // face. 39MB supplied, decimated to 385KB — heavier than the radio's 147KB
   // because a folded paper is more geometry than a faceplate, but in line with
@@ -511,6 +512,9 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   'profile-stats': 'poplur_cube_bargraph.glb',
   'profile-house': HOME_CUBE_MODEL,
   'profile-store': 'poplur_cube_shopping_bag.glb',
+  // The roll is a page you can stand on now, so the model that was made for it
+  // and shipped unwired finally has a screen to answer to.
+  'camera-roll': 'poplur_cube_cameraroll.glb',
   // A dial/gear face rather than the old plain cube. Named _gear, not
   // _settings2, to keep it unmistakably apart from the orphaned
   // poplur_cube_settings.glb this replaces.
@@ -556,8 +560,8 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // machine at navigator size.
   'feed-casino': 'poplur_cube_slot_machine.glb',
   // In the bundle and deliberately unwired, for want of a screen to stand on:
-  // ar, video, search, directions, map, tour, comment, live, cameraroll,
-  // heypoplur. 'camera-capture' in particular is NOT a destination — PHOTO,
+  // ar, video, search, directions, map, tour, comment, live, heypoplur.
+  // (cameraroll left this list when the roll became a page.) 'camera-capture' in particular is NOT a destination — PHOTO,
   // VIDEO, AR and DETECT all carry that id for inspectability while acting on
   // the live camera, so nothing can wear a cube there.
   // Still awaiting a model: camera-studio, feed-games.

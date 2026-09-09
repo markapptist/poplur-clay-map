@@ -1414,3 +1414,13 @@
 @media (prefers-reduced-motion: reduce) {
   .cameraLiveOn .cameraLiveDot { animation: none; }
 }
+
+/* The roll standing as its own hold-menu page. The pager slot sizes itself
+   from the pager; on the subscreen stage the roll needs to fill the stage. */
+.cameraRollPage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}

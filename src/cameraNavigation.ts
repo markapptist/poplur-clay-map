@@ -12,6 +12,11 @@ export const CAMERA_HOLD_MENU_ITEMS = [
   { icon: 'Create', title: 'CREATE', screen: 'camera-ai-chat', nativeAction: 'create', native: true },
   { icon: 'Games', title: 'GAMES', screen: 'feed-games', native: true },
   { icon: 'Studio', title: 'STUDIO', screen: 'camera-studio', native: true },
+  // A PAGE, not an `action`. The old ROLL tile carried action: 'roll', and an
+  // action tile is handled before the page path in HoldMenuTwin — it fires,
+  // closes the menu and returns, so it could only page the camera's pager. The
+  // roll now owns a screen so it can carry selection, deletion and preview.
+  { icon: 'CameraRoll', title: 'CAMERA ROLL', screen: 'camera-roll', native: true },
 ] as const
 
 export const CAMERA_CYCLE = ['photo', 'video', 'create', 'games', 'studio'] as const

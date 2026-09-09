@@ -45,3 +45,23 @@ describe('Camera navigation inventory', () => {
     )
   })
 })
+
+// The roll was a hold-menu tile carrying `action: 'roll'`. An action tile is
+// handled BEFORE the page path in HoldMenuTwin — it fires, closes the menu and
+// returns — so it could only page the camera's own pager: no stage screen, no
+// cube of its own, no back ladder. Selection, deletion and preview all need
+// those, so it has to stay a page.
+it('offers the camera roll as a page, never as an action tile', () => {
+  const roll = CAMERA_HOLD_MENU_ITEMS.find(item => item.screen === 'camera-roll')
+  expect(roll).toBeDefined()
+  expect(roll).toMatchObject({ title: 'CAMERA ROLL', icon: 'CameraRoll', native: true })
+  expect(roll).not.toHaveProperty('action')
+  expect(roll).not.toHaveProperty('mapAction')
+  expect(roll).not.toHaveProperty('event')
+})
+
+// The roll is not a stop on the camera's channel-arrow ring; the arrows on the
+// page fall through to the wheel walker instead.
+it('keeps the roll out of the camera cycle', () => {
+  expect([...CAMERA_CYCLE]).not.toContain('roll')
+})
