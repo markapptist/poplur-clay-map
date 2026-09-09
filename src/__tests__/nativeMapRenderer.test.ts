@@ -26,6 +26,40 @@ async function queryKey() {
 afterEach(() => { maps.splice(0).forEach(map => map.remove()); document.body.replaceChildren(); vi.restoreAllMocks(); vi.clearAllMocks() })
 
 describe('native map bridge lifecycle', () => {
+  it('drops a style write the layer already carries so extrusions are not re-uploaded for nothing', async () => {
+    const map = makeMap()
+    map.addLayer({id:'clay-buildings-3d',type:'fill-extrusion',source:'x'} as never)
+    const clay = ['match',['%',['to-number',['id']],3],0,'#eee',1,'#ddd','#ccc']
+    map.setPaintProperty('clay-buildings-3d','fill-extrusion-ambient-occlusion-intensity',0)
+    map.setPaintProperty('clay-buildings-3d','fill-extrusion-color',clay)
+    await Promise.resolve()
+    // The blink on the iPhone: every performance-policy broadcast re-stated the
+    // same ambient occlusion and the same claim colour around one real change.
+    map.setPaintProperty('clay-buildings-3d','fill-extrusion-ambient-occlusion-intensity',0)
+    map.setPaintProperty('clay-buildings-3d','fill-extrusion-color',[...clay])
+    map.setLayoutProperty('clay-buildings-3d','visibility','visible')
+    map.setLayoutProperty('clay-buildings-3d','visibility','visible')
+    map.setFilter('clay-buildings-3d',['in','id',1,2])
+    map.setFilter('clay-buildings-3d',['in','id',1,2])
+    await Promise.resolve()
+    const ops = vi.mocked(postNativeEvent).mock.calls
+      .flatMap(([message]) => (message as any).commands ?? [])
+      .filter(command => ['paint','layout','filter'].includes(command.op))
+      .map(command => command.op + ':' + command.args[1])
+    expect(ops).toEqual([
+      'paint:fill-extrusion-ambient-occlusion-intensity',
+      'paint:fill-extrusion-color',
+      'layout:visibility',
+      'filter:in,id,1,2',
+    ])
+    // A genuine change still travels.
+    map.setPaintProperty('clay-buildings-3d','fill-extrusion-ambient-occlusion-intensity',0.6)
+    map.setLayoutProperty('clay-buildings-3d','visibility','none')
+    await Promise.resolve()
+    expect(map.getPaintProperty('clay-buildings-3d','fill-extrusion-ambient-occlusion-intensity')).toBe(0.6)
+    expect(map.getLayoutProperty('clay-buildings-3d','visibility')).toBe('none')
+  })
+
   it('keeps the canvas wrapper transparent when markers give it a header-sized height', () => {
     expect(makeMap().getCanvasContainer().hasAttribute('data-poplur-native-map-ground')).toBe(true)
   })

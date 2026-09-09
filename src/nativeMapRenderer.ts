@@ -295,11 +295,56 @@ export class NativeMapRenderer {
   }
   addSource(id: string, spec: any) { this.rememberSource(id, spec); this.send('addSource', id, spec); return this }
   removeSource(id: string) { this.sources.delete(id); delete this.style.sources[id]; this.send('removeSource', id); return this }
-  setPaintProperty(id: string, key: string, value: any) { const layer = this.getLayer(id) as any; if (layer) (layer.paint ??= {})[key] = value; this.send('paint', id, key, value); return this }
+  /**
+   * A style write the layer ALREADY carries is not free here: it is a bridge
+   * message, and the native SDK answers it by re-evaluating that layer and
+   * re-uploading its buffers — which blanks a fill-extrusion layer for a frame
+   * or two before it repopulates. Measured on the iPhone during a landmark
+   * tour, the buildings blinked because each settle carried four byte-identical
+   * paint writes (an ambient-occlusion re-apply on every performance-policy
+   * broadcast) around one genuine recolour. The mirror below is exactly what
+   * native was last told, so an equal value has nothing to say and is dropped
+   * before it costs a frame. A style reload re-sends every layer's full spec
+   * through `addLayer`, so nothing is lost by not repeating it here.
+   *
+   * Only writes to a layer the mirror KNOWS are eligible: an unmirrored id
+   * cannot be compared, and must still reach native untouched.
+   */
+  private unchanged(layer: any, bag: 'paint' | 'layout', key: string, value: any): boolean {
+    if (!layer) return false
+    const current = layer[bag]?.[key]
+    if (current === value) return true
+    if (current === undefined || value === undefined) return false
+    if (typeof current !== 'object' && typeof value !== 'object') return false
+    try { return JSON.stringify(current) === JSON.stringify(value) } catch { return false }
+  }
+  setPaintProperty(id: string, key: string, value: any) {
+    const layer = this.getLayer(id) as any
+    if (this.unchanged(layer, 'paint', key, value)) return this
+    if (layer) (layer.paint ??= {})[key] = value
+    this.send('paint', id, key, value)
+    return this
+  }
   getPaintProperty(id: string, key: string) { return (this.getLayer(id) as any)?.paint?.[key] }
-  setLayoutProperty(id: string, key: string, value: any) { const layer = this.getLayer(id) as any; if (layer) (layer.layout ??= {})[key] = value; this.send('layout', id, key, value); return this }
+  setLayoutProperty(id: string, key: string, value: any) {
+    const layer = this.getLayer(id) as any
+    if (this.unchanged(layer, 'layout', key, value)) return this
+    if (layer) (layer.layout ??= {})[key] = value
+    this.send('layout', id, key, value)
+    return this
+  }
   getLayoutProperty(id: string, key: string) { return (this.getLayer(id) as any)?.layout?.[key] }
-  setFilter(id: string, filter: any) { const layer = this.getLayer(id) as any; if (layer) layer.filter = filter; this.send('filter', id, filter); return this }
+  setFilter(id: string, filter: any) {
+    const layer = this.getLayer(id) as any
+    // Same reasoning as the paint/layout writers: re-sending an identical
+    // filter makes native rebuild the layer's buckets for no visual change.
+    if (layer && layer.filter !== undefined) {
+      try { if (JSON.stringify(layer.filter) === JSON.stringify(filter)) return this } catch { /* cyclic; send it */ }
+    }
+    if (layer) layer.filter = filter
+    this.send('filter', id, filter)
+    return this
+  }
   setFeatureState(target: any, state: any) { this.send('featureState', target, state); return this }
   removeFeatureState(target: any, key?: string) { this.send('removeFeatureState', target, key ?? null); return this }
   setFog(fog: any) { this.send('fog', fog); return this }
