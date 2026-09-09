@@ -3878,7 +3878,14 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const lastAdChannelRef = useRef<number | null>(null)
   const feedAdSequenceRef = useRef(0)
   useEffect(() => {
-    if (activeTab !== 'feed' || !isNativeShell()) return
+    // COMMITTED, not active. `tabChanged` is posted from committedTab, which
+    // lags activeTab by the map's settle beat, so gating this on activeTab put
+    // the channel change on the bridge ~180ms BEFORE native was told the feed
+    // was up. Native reads its surface gate at that moment, still sees the
+    // outgoing tab, and drops the break - losing the feed-entry placement on
+    // every entry after the first, on both platforms. Waiting for the commit
+    // costs the ad nothing and lands it on a surface native agrees with.
+    if (committedTab !== 'feed' || activeTab !== 'feed' || !isNativeShell()) return
     // First sight of the feed only records where we started.
     if (lastAdChannelRef.current === null) {
       lastAdChannelRef.current = chanIndex
@@ -3888,7 +3895,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     if (lastAdChannelRef.current === chanIndex) return
     lastAdChannelRef.current = chanIndex
     postNativeEvent({ type: 'feedChannelChanged', channelId: CHANNELS[chanIndex].id, index: chanIndex })
-  }, [activeTab, chanIndex])
+  }, [activeTab, committedTab, chanIndex])
   const reportFeedContentAdvance = useCallback((channelId: string, index: number) => {
     if (!isNativeShell()) return
     feedAdSequenceRef.current += 1
@@ -4413,16 +4420,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // a separate screen you land on. The channel arrows keep those destinations
   // reachable without adding a broadcast action to the camera surface.
   //
-  // ROLL is the odd one: it is a page, not an arming state, and the shell
-  // toggles it by stepping cameraStep (Camera reads page from step % 2). So the
-  // ring reads the roll's open/closed state as its "current" when it is up.
-  //
-  // CREATE / GAMES / STUDIO used to be reachable only through the long-press
-  // wheel — the arrows skipped them, so three of the tab's tiles were
-  // invisible to anyone who did not know to hold. They join the ring the same
-  // way ROLL does: landing on one opens it outright rather than merely arming
-  // it (opening reuses setResume + setHoldOpen, the same handoff every other
-  // tab's page-list branch performs).
+  // CREATE / GAMES / STUDIO / CAMERA ROLL used to be reachable only through the
+  // long-press wheel — the arrows skipped them, so four of the tab's tiles were
+  // invisible to anyone who did not know to hold. They are ring stops now:
+  // landing on one opens it outright rather than merely arming it (opening
+  // reuses setResume + setHoldOpen, the same handoff every other tab's
+  // page-list branch performs).
   //
   // This function owns the WHOLE ring, the three subscreen stops included.
   // The first version handed arrow presses to the wheel's own walker once a
@@ -4433,23 +4436,27 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // closes the menu and lands on the neighbouring mode, so every stop cycles
   // in both directions, always.
   //
-  // photo -> video -> the camera's subscreens -> repeat. ROLL stays outside
-  // the ring because it is the camera's own second page (the cube walks up to
-  // it), rather than a capture mode or a destination in this cycle.
+  // photo -> video -> the camera's subscreens -> CAMERA ROLL -> repeat, in the
+  // hold wheel's own tile order so the two navigations agree stop for stop.
   const stepCameraMode = (dir: 1 | -1) => {
     const onRoll = ((cameraStep % 2) + 2) % 2 === 1
     const openRing = holdOpen && cubeScreen ? CAMERA_STOP_BY_SCREEN[cubeScreen] ?? null : null
-    // The roll is the camera's second PAGE, not a stop on the ring. Stepping
-    // while it is up leaves it and resumes the ring from the capture mode you
-    // were in — so the arrows always walk photo / video / subscreens, whatever
-    // page you happened to be looking at.
+    // `onRoll` is the in-viewfinder strip (the camera's own pager page), which
+    // is NOT the CAMERA ROLL stop below — that one is the full screen. The
+    // strip is not on the ring: stepping while it is up leaves it and resumes
+    // from the capture mode you were in.
     const current: CameraCycleStop = openRing ?? cameraCaptureMode
     const i = CAMERA_CYCLE.indexOf(current)
     const n = CAMERA_CYCLE.length
     const next = CAMERA_CYCLE[((i + dir) % n + n) % n]
-    if (next === 'create' || next === 'games' || next === 'studio') {
+    // Every stop that is a screen rather than a capture mode opens the same
+    // way. Asking the table instead of naming the three subscreens is what
+    // lets CAMERA ROLL join the ring by appearing in it — the old spelled-out
+    // condition would have walked onto the roll and then done nothing.
+    const nextScreen = CAMERA_CYCLE_SCREEN[next as keyof typeof CAMERA_CYCLE_SCREEN] as string | undefined
+    if (nextScreen) {
       if (onRoll) setCameraStep(step => step + 1)
-      setResume(current => ({ screen: CAMERA_CYCLE_SCREEN[next], n: current.n + 1 }))
+      setResume(current => ({ screen: nextScreen, n: current.n + 1 }))
       setHoldOpen(true)
       return
     }
