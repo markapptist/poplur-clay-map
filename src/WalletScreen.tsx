@@ -91,12 +91,28 @@ export default function WalletScreen({ bindBack }: {
   // immediately; when the wallet is closed the same handler in the next open
   // reads the persisted list.
   useEffect(() => {
+    // Read the shape the shell ACTUALLY sends. This listened for `ok` and a
+    // top-level `cardId`, and the checkout result carries neither: native builds
+    // it as { status, message, creditsAdded, completedItems: [{ productId,
+    // quantity, cardId }] } (PoplurCardPurchaseService.webPayload), and the
+    // web's own failure branches send { status: 'failure', message }. `ok` was
+    // therefore always undefined, the guard never passed, and YOUR CARDS stayed
+    // empty after a real, paid purchase — the card you had just bought did not
+    // appear anywhere in the app.
     const onCheckout = (event: Event) => {
-      const detail = (event as CustomEvent<{ ok?: boolean; cardId?: string }>).detail
-      if (detail?.ok && detail.cardId) {
-        rememberOwnedCard(detail.cardId)
-        setOwnedCards(readOwnedCards())
-      }
+      const detail = (event as CustomEvent<{
+        status?: string
+        completedItems?: Array<{ cardId?: string }>
+      }>).detail
+      if (detail?.status !== 'success') return
+      // One purchase can complete several cards; take every one that names a
+      // card and ignore the credit-only rows.
+      const bought = (detail.completedItems ?? [])
+        .map(item => item?.cardId)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      if (!bought.length) return
+      bought.forEach(rememberOwnedCard)
+      setOwnedCards(readOwnedCards())
     }
     window.addEventListener('poplur-store-checkout-result', onCheckout)
     return () => window.removeEventListener('poplur-store-checkout-result', onCheckout)
