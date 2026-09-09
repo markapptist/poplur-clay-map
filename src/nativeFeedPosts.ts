@@ -25,6 +25,8 @@ export interface NativeFeedPost {
   /** Stable account identity. Older native bridge payloads may omit it. */
   ownerId?: string
   mediaURL: string
+  /** Carousel slides, cover first. Absent on a single-media post. */
+  mediaURLs?: string[]
   mediaType: 'photo' | 'video'
   photoViewSeconds?: number | null
   posterURL?: string
@@ -151,6 +153,14 @@ function normalizeFeedPost(
     Boolean(syntheticJourney),
   )
   if (!mediaURL) return null
+  // Carousel slides. Every one is validated the same way the cover is, and a
+  // slide that fails validation drops the carousel to the cover rather than the
+  // post — an unreadable slide three must never cost the whole post.
+  const rawSlides = Array.isArray(row.mediaURLs) ? row.mediaURLs.slice(0, 10) : []
+  const slides = rawSlides
+    .map(value => safeRemoteURL(boundedText(value, 2_048), Boolean(syntheticJourney)))
+    .filter((value): value is string => Boolean(value))
+  const mediaURLs = slides.length === rawSlides.length && slides.length > 1 ? slides : undefined
   const posterURL = safeRemoteURL(row.posterURL, Boolean(syntheticJourney)) ?? undefined
   const ownerId = boundedText(row.ownerId ?? row.userID ?? row.userId, 128)
   const usernameValue = boundedText(row.username ?? row.handle ?? row.displayName, 40)
@@ -200,6 +210,7 @@ function normalizeFeedPost(
     id,
     ownerId,
     mediaURL,
+    mediaURLs,
     mediaType,
     photoViewSeconds: mediaType === 'photo' ? photoViewSeconds(row.photoViewSeconds) : null,
     posterURL,

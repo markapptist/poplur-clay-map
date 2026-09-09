@@ -61,3 +61,28 @@ describe('the wire format', () => {
     expect(composer).toContain('index === 0 ? data :')
   })
 })
+
+// The read side. A carousel post must degrade to its cover rather than
+// vanishing: a post that drops entirely is the failure mode that produced the
+// "shows in the browser, never on my phone" divergence.
+describe('reading a carousel back', () => {
+  it('validates every slide the same way the cover is validated', () => {
+    const src = readFileSync(new URL('../nativeFeedPosts.ts', import.meta.url), 'utf8')
+    expect(src).toContain('Array.isArray(row.mediaURLs)')
+    expect(src).toContain('safeRemoteURL(boundedText(value, 2_048)')
+  })
+
+  it('falls back to the cover when a slide fails validation, keeping the post', () => {
+    // slides.length === rawSlides.length — all or nothing for the CAROUSEL,
+    // never for the post.
+    const src = readFileSync(new URL('../nativeFeedPosts.ts', import.meta.url), 'utf8')
+    expect(src).toContain('slides.length === rawSlides.length && slides.length > 1 ? slides : undefined')
+    // The only `return null` on the media path is the cover's.
+    expect(src).toContain('if (!mediaURL) return null')
+  })
+
+  it('caps how many slides a document can force a client to load', () => {
+    const src = readFileSync(new URL('../nativeFeedPosts.ts', import.meta.url), 'utf8')
+    expect(src).toContain('row.mediaURLs.slice(0, 10)')
+  })
+})
