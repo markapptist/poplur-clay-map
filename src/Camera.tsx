@@ -1279,17 +1279,40 @@ export default function Camera({
   // it, in the same place the lens actually focuses: AVFoundation's default AF
   // region is centre-weighted, and no focusPointOfInterest is ever set, so the
   // centre is the truth here rather than a guess at a subject.
+  // Where the ISP says the subject is, in 0..1 of the preview. Held in a ref,
+  // not state: it arrives at up to 8Hz and only matters at the moment the lens
+  // says it refocused, so re-rendering the whole camera for it would be pure
+  // waste.
+  const faceSubjectRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null)
   useEffect(() => {
+    const onSubject = (event: Event) => {
+      const detail = (event as CustomEvent).detail
+      faceSubjectRef.current = detail && typeof detail === 'object'
+        && ['x', 'y', 'w', 'h'].every(k => Number.isFinite((detail as Record<string, number>)[k]))
+        ? detail as { x: number; y: number; w: number; h: number }
+        : null
+    }
     const onNativeFocus = () => {
       const element = cameraSurfaceRef.current
       if (!element) return
       const bounds = element.getBoundingClientRect()
       if (!bounds.width || !bounds.height) return
+      // On a face, sit on the face. Otherwise the centre, which is where
+      // AVFoundation's default centre-weighted AF region actually is — the
+      // rect is already preview-space, mirrored and cropped by the preview
+      // layer, so it needs no correction here.
+      const subject = faceSubjectRef.current
+      const x = subject ? (subject.x + subject.w / 2) * bounds.width : bounds.width / 2
+      const y = subject ? (subject.y + subject.h / 2) * bounds.height : bounds.height / 2
       focusTapIdRef.current += 1
-      setFocusTap({ x: bounds.width / 2, y: bounds.height / 2, id: focusTapIdRef.current })
+      setFocusTap({ x, y, id: focusTapIdRef.current })
     }
+    window.addEventListener('poplur-native-camera-subject', onSubject)
     window.addEventListener('poplur-native-camera-focus', onNativeFocus)
-    return () => window.removeEventListener('poplur-native-camera-focus', onNativeFocus)
+    return () => {
+      window.removeEventListener('poplur-native-camera-subject', onSubject)
+      window.removeEventListener('poplur-native-camera-focus', onNativeFocus)
+    }
   }, [])
   useEffect(() => {
     if (!focusTap) return
