@@ -877,6 +877,27 @@ describe('screen side-button action smoke contract', () => {
       ],
     },
     {
+      // Opening a capture on the roll page: POST and DELETE moved off a
+      // centred pill onto the rail every other screen uses.
+      file: 'CameraRollScreen.tsx',
+      label: 'Capture controls',
+      actions: [
+        ['post', /icon="profile\.camera"[\s\S]*?setPendingRollPost\(/],
+        ['delete', /icon="profile\.delete"[\s\S]*?setConfirming\(true\)/],
+      ],
+    },
+    {
+      // The review's three exits. Retake DISCARDS, save keeps it in the roll,
+      // use takes it on to the composer.
+      file: 'CaptureReview.tsx',
+      label: 'Review controls',
+      actions: [
+        ['retake', /icon="camera\.kodak"[\s\S]*?onRetake\(\)/],
+        ['keep in roll', /icon="camera\.camera_roll"[\s\S]*?onKeep\(\)/],
+        ['use this', /icon="profile\.select"[\s\S]*?onAccept\(\)/],
+      ],
+    },
+    {
       file: 'NewsPaper.tsx',
       label: 'News controls',
       actions: [

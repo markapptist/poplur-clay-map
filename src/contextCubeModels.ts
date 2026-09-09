@@ -107,11 +107,27 @@ export function mapDaypart(lightPreset: MapSkyLightPreset): MapDaypart {
   return 'twilight'
 }
 
-/** The map keeps its Earth navigator regardless of the sky's time of day.
- * Temporary radio/weather/activity takeovers still return to this model. */
+/** The sun by day, the phase-matched moon by night, the globe in between.
+ *
+ * Restored: f1c9eec ("Cut directly between map points and remove native map
+ * fog and occlusion") stubbed this to always return the globe and rewrote the
+ * comment to say that was deliberate. Nothing else in that commit is about the
+ * cube, and the sun/moon assets, the phase decision in celestial.ts and both
+ * call-site arguments all survived it untouched — so it read as collateral from
+ * the map work rather than a decision, and the owner confirmed on 8 Sep that
+ * the cube is meant to keep the time.
+ *
+ * Twilight keeps the globe on purpose: at dawn and dusk neither the sun nor the
+ * moon owns the sky (see mapDaypart above), so neither should own the cube.
+ * Temporary radio/weather/activity takeovers still return to whichever model
+ * this picks. */
 export function mapDaypartCubeModel(
-  _daypart: MapDaypart,
-  _moon: 'full' | 'crescent',
+  daypart: MapDaypart,
+  moon: 'full' | 'crescent',
 ): string {
+  if (daypart === 'day') return MAP_SUN_CUBE_MODEL
+  if (daypart === 'night') {
+    return moon === 'full' ? MAP_MOON_FULL_CUBE_MODEL : MAP_MOON_CRESCENT_CUBE_MODEL
+  }
   return MAP_GLOBE_CUBE_MODEL
 }

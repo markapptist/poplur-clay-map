@@ -1275,20 +1275,24 @@
   mix-blend-mode: screen;
 }
 
-/* The focus square. Four corner brackets, open in the middle so the subject is
-   never under a line, drawn from this element's own background layers rather
-   than four children. White with a dark drop shadow instead of the grid's
-   screen blend: the grid vanishes against a bright sky, and a sight that is
-   only there half the time is worse than none. Green belongs to the detector
-   (DetectionOverlay.module.css) — this is furniture, not a lock. */
+/* The focus reticle, Camera.app-shaped: a small square of four corner ticks
+   that lands where you tapped, snaps in from 1.35x, holds, then fades out.
+   It is still a SIGHT, not a readout — no shell exposes a focus API, so
+   nothing here asks the lens to refocus and it must never be drawn as a lock.
+   What changed is that it stopped being furniture: a permanent 184px sight
+   parked in the middle of every frame sat on the subject, and a viewfinder
+   that is 44vw of brackets reads as an app that is aiming for you. It now
+   answers a tap and gets out of the way.
+   Centring is done with negative margins, not translate(-50%,-50%), because
+   `transform` has to stay free for the pulse. Green belongs to the detector
+   (DetectionOverlay.module.css) — this is a sight, not a lock. */
 .camFocus {
   position: absolute;
-  left: 50%;
-  top: 50%;
   z-index: 30;
-  width: min(44vw, 184px);
+  width: 76px;
   aspect-ratio: 1;
-  transform: translate(-50%, -50%);
+  /* left/top carry the tap point; these pull the box back onto it. */
+  margin: -38px 0 0 -38px;
   pointer-events: none;
   background-image:
     linear-gradient(#fff, #fff), linear-gradient(#fff, #fff),
@@ -1299,11 +1303,29 @@
     left top, left top, right top, right top,
     left bottom, left bottom, right bottom, right bottom;
   background-size:
-    28px 3px, 3px 28px, 28px 3px, 3px 28px,
-    28px 3px, 3px 28px, 28px 3px, 3px 28px;
+    13px 2px, 2px 13px, 13px 2px, 2px 13px,
+    13px 2px, 2px 13px, 13px 2px, 2px 13px;
   background-repeat: no-repeat;
-  opacity: 0.85;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
+  animation: camFocusPulse 1400ms cubic-bezier(.2, .8, .2, 1) forwards;
+}
+
+@keyframes camFocusPulse {
+  0%   { opacity: 0;    transform: scale(1.35); }
+  18%  { opacity: 0.95; transform: scale(1); }
+  70%  { opacity: 0.95; transform: scale(1); }
+  100% { opacity: 0;    transform: scale(1); }
+}
+
+/* Reduced motion still needs the reticle to appear and leave — it is the only
+   feedback a tap gets — so the scale snap goes and the fade stays. */
+@media (prefers-reduced-motion: reduce) {
+  .camFocus { animation: camFocusFade 1400ms linear forwards; }
+}
+
+@keyframes camFocusFade {
+  0%, 70% { opacity: 0.95; }
+  100%    { opacity: 0; }
 }
 
 .camCountdown {
@@ -1392,3 +1414,111 @@
 @media (prefers-reduced-motion: reduce) {
   .cameraLiveOn .cameraLiveDot { animation: none; }
 }
+
+/* The roll standing as its own hold-menu page. The pager slot sizes itself
+   from the pager; on the subscreen stage the roll needs to fill the stage. */
+.cameraRollPage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Manage-mode controls in the roll's header. They sit at the end of the header
+   row beside the count, so the count can keep reading as "N selected" while
+   they are live. */
+.rollActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.rollAction {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.rollAction[aria-pressed='true'] { background: rgba(246, 59, 154, 0.18); }
+.rollAction:disabled { opacity: 0.35; cursor: default; }
+.rollAction:focus-visible { outline: 3px solid #7fe3ff; outline-offset: 2px; }
+
+/* Why half the grid does not answer a tap in manage mode. Said once here
+   rather than left for the user to infer from dead tiles. */
+.rollManageNote {
+  margin: 0;
+  padding: 0 12px 8px;
+  color: rgba(255, 255, 255, 0.72);
+  font: 600 11px/1.35 system-ui, sans-serif;
+}
+
+/* A device tile in manage mode: visibly not part of the selection. */
+.rollTile[aria-disabled='true'] { opacity: 0.45; }
+
+/* The opened capture, mirroring the profile post viewer (ProfileTwin.module
+   .css .viewer): the media owns the screen, the cube is how you leave. */
+.rollViewer {
+  position: absolute;
+  inset: 0;
+  z-index: 46;
+  background: #050407;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.rollViewerMedia {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.rollViewerActions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 96px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  z-index: 2;
+}
+
+.rollViewerPost {
+  padding: 12px 26px;
+  border: 2px solid rgba(255, 255, 255, .88);
+  border-radius: 999px;
+  color: #fff;
+  background: radial-gradient(circle at 34% 22%, #ff9dd1, #f63b9a 56%, #8f174f);
+  box-shadow: 0 5px 0 #72103f, 0 10px 22px rgba(0, 0, 0, .42);
+  font: 950 15px/1 system-ui, sans-serif;
+  letter-spacing: .04em;
+  cursor: pointer;
+}
+
+.rollViewerPost:active { transform: translateY(2px); box-shadow: 0 3px 0 #72103f; }
+
+.rollViewerDelete {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, .5);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, .45);
+  cursor: pointer;
+}
+
+.rollViewerPost:focus-visible,
+.rollViewerDelete:focus-visible { outline: 3px solid #7fe3ff; outline-offset: 3px; }

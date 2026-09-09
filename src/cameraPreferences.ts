@@ -37,18 +37,26 @@ export function writeCameraAiVoice(on: boolean): boolean {
 /**
  * Is ML detection already running when the camera opens?
  *
- * Defaults OFF: the model is the single most expensive thing the camera can
- * do, and a viewfinder that starts scanning without being asked spends battery
- * on every launch — including the ones where you only wanted a photo. The hold
- * menu's DETECT tile still turns it on per-session; this makes that choice the
- * one the camera opens with.
+ * Defaults ON (owner decision, 9 Sep 2026). Scanning is what this camera is
+ * FOR — the readout, the boxes and the commerce cards are the product, and a
+ * viewfinder that opens inert makes the whole feature something you have to
+ * know to go and switch on.
+ *
+ * It was the other way round, and the reason is still true: the model is the
+ * single most expensive thing the camera does, and the camera has burned this
+ * phone before. So this stays a real preference rather than a hard-coded
+ * `true` — Settings can turn it off, and once turned off it STAYS off across
+ * launches, which is the half that was previously broken (cameraStore never
+ * read this at all).
  */
 export function readCameraDetectDefault(): boolean {
-  if (typeof window === 'undefined') return false
+  if (typeof window === 'undefined') return true
   try {
-    return window.localStorage.getItem(DETECT_KEY) === '1'
+    // Absent means "never chosen", which is now ON. Only an explicit '0' — a
+    // deliberate visit to Settings — opens the camera quiet.
+    return window.localStorage.getItem(DETECT_KEY) !== '0'
   } catch {
-    return false
+    return true
   }
 }
 

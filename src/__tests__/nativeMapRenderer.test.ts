@@ -26,6 +26,40 @@ async function queryKey() {
 afterEach(() => { maps.splice(0).forEach(map => map.remove()); document.body.replaceChildren(); vi.restoreAllMocks(); vi.clearAllMocks() })
 
 describe('native map bridge lifecycle', () => {
+  it('drops a style write the layer already carries so extrusions are not re-uploaded for nothing', async () => {
+    const map = makeMap()
+    map.addLayer({id:'clay-buildings-3d',type:'fill-extrusion',source:'x'} as never)
+    const clay = ['match',['%',['to-number',['id']],3],0,'#eee',1,'#ddd','#ccc']
+    map.setPaintProperty('clay-buildings-3d','fill-extrusion-ambient-occlusion-intensity',0)
+    map.setPaintProperty('clay-buildings-3d','fill-extrusion-color',clay)
+    await Promise.resolve()
+    // The blink on the iPhone: every performance-policy broadcast re-stated the
+    // same ambient occlusion and the same claim colour around one real change.
+    map.setPaintProperty('clay-buildings-3d','fill-extrusion-ambient-occlusion-intensity',0)
+    map.setPaintProperty('clay-buildings-3d','fill-extrusion-color',[...clay])
+    map.setLayoutProperty('clay-buildings-3d','visibility','visible')
+    map.setLayoutProperty('clay-buildings-3d','visibility','visible')
+    map.setFilter('clay-buildings-3d',['in','id',1,2])
+    map.setFilter('clay-buildings-3d',['in','id',1,2])
+    await Promise.resolve()
+    const ops = vi.mocked(postNativeEvent).mock.calls
+      .flatMap(([message]) => (message as any).commands ?? [])
+      .filter(command => ['paint','layout','filter'].includes(command.op))
+      .map(command => command.op + ':' + command.args[1])
+    expect(ops).toEqual([
+      'paint:fill-extrusion-ambient-occlusion-intensity',
+      'paint:fill-extrusion-color',
+      'layout:visibility',
+      'filter:in,id,1,2',
+    ])
+    // A genuine change still travels.
+    map.setPaintProperty('clay-buildings-3d','fill-extrusion-ambient-occlusion-intensity',0.6)
+    map.setLayoutProperty('clay-buildings-3d','visibility','none')
+    await Promise.resolve()
+    expect(map.getPaintProperty('clay-buildings-3d','fill-extrusion-ambient-occlusion-intensity')).toBe(0.6)
+    expect(map.getLayoutProperty('clay-buildings-3d','visibility')).toBe('none')
+  })
+
   it('keeps the canvas wrapper transparent when markers give it a header-sized height', () => {
     expect(makeMap().getCanvasContainer().hasAttribute('data-poplur-native-map-ground')).toBe(true)
   })
@@ -97,5 +131,59 @@ describe('native map bridge lifecycle', () => {
     expect(element.style.transform).toContain('translate(100px,200px)')
     expect(move).not.toHaveBeenCalled()
     marker.remove()
+  })
+})
+
+describe('style images', () => {
+  // happy-dom has no 2D context, so the canvas is stubbed with one that behaves
+  // the way a browser's does about what it will draw: `drawImage` rejects
+  // anything that is not a real drawable, which is the whole point here.
+  function stubContext() {
+    const calls: string[] = []
+    const context = {
+      putImageData: (image: unknown) => {
+        if (!(image instanceof ImageData)) throw new TypeError('putImageData needs ImageData')
+        calls.push('putImageData')
+      },
+      drawImage: (image: unknown) => {
+        const drawable = image instanceof HTMLCanvasElement || image instanceof HTMLImageElement
+        if (!drawable) throw new TypeError("Failed to execute 'drawImage' on 'CanvasRenderingContext2D'")
+        calls.push('drawImage')
+      },
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as never)
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,x')
+    return calls
+  }
+
+  // Mapbox takes a bare { width, height, data } — the StyleImageInterface form
+  // — and that is exactly what the claims hatch is. The bridge fed it to
+  // drawImage, which rejects it, and the TypeError unwound out of
+  // installClaimsLayer through ClayMap's clay-world guard, which read it as the
+  // style going away and retried forever. The phone's map therefore kept the
+  // bare base style: no clay land, no clay roads, no clay water.
+  it('accepts a raw pixel image, not only canvases and ImageData', async () => {
+    const calls = stubContext()
+    const map = makeMap()
+    const size = 2
+    const data = new Uint8Array(size * size * 4).fill(255)
+    expect(() => map.addImage('poplur-claims-hatch', { width: size, height: size, data }, { pixelRatio: 2 }))
+      .not.toThrow()
+    expect(calls).toEqual(['putImageData'])
+    await Promise.resolve()
+    const messages = vi.mocked(postNativeEvent).mock.calls.map(([message]) => message as any)
+    const images = messages.flatMap(message => message.commands ?? []).filter((c: any) => c.op === 'image')
+    expect(images.length).toBe(1)
+    expect(images[0].args[0]).toBe('poplur-claims-hatch')
+    expect(map.hasImage('poplur-claims-hatch')).toBe(true)
+  })
+
+  it('still puts an ImageData and draws a canvas', () => {
+    const calls = stubContext()
+    const map = makeMap()
+    const canvas = document.createElement('canvas'); canvas.width = 2; canvas.height = 2
+    expect(() => map.addImage('from-imagedata', new ImageData(2, 2))).not.toThrow()
+    expect(() => map.addImage('from-canvas', canvas)).not.toThrow()
+    expect(calls).toEqual(['putImageData', 'drawImage'])
   })
 })

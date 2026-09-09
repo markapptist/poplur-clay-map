@@ -211,19 +211,33 @@
 
 .topBar {
   position: absolute;
-  z-index: 4;
+  /* Above .userStep's edge-tap lanes (z 22), not below them. The header now
+     reaches the frame edges, so at 375px the handle text itself falls inside
+     the "Previous post" lane; at z-index 4 the lane would swallow the tap.
+     The band stays transparent to pointers and only the byline opts back in,
+     so the rest of those 60px still passes edge-taps through. */
+  z-index: 24;
+  pointer-events: none;
   top: calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 10px);
   min-height: 60px;
 }
 
-.topBarRailLeft {
-  left: max(72px, calc(env(safe-area-inset-left, 0px) + 72px));
-  right: max(72px, calc(env(safe-area-inset-right, 0px) + 72px));
+/* The header used to clear BOTH rails by 72px — the dial's width — which left
+   it floating in the middle with the handle and the countdown bunched together.
+   It now spans rail to rail: each side takes the gutter of whichever rail is
+   actually under it, so the byline sits over the action rail and the countdown
+   over the dial. --feed-timer-column is the width of the rail beneath the
+   countdown, so the readout can centre on it. */
+.topBarRailLeft {                /* actions left, dial right — the default */
+  left: max(12px, env(safe-area-inset-left, 0px));               /* TabControlRail .left */
+  right: max(0px, calc(env(safe-area-inset-right, 0px) - 8px));  /* SideDial .right */
+  --feed-timer-column: 72px;
 }
 
-.topBarRailRight {
-  left: max(72px, calc(env(safe-area-inset-left, 0px) + 72px));
-  right: max(72px, calc(env(safe-area-inset-right, 0px) + 72px));
+.topBarRailRight {               /* mirrored: dial left, actions right */
+  left: max(0px, calc(env(safe-area-inset-left, 0px) - 8px));    /* SideDial .left */
+  right: max(12px, env(safe-area-inset-right, 0px));             /* TabControlRail .right */
+  --feed-timer-column: 44px;
 }
 
 .infoRow {
@@ -239,6 +253,9 @@
   min-width: 0;
   display: flex;
   align-items: center;
+  /* Byline at one end, countdown at the other. A no-op while the byline is
+     flex: 1 1 auto, but it states the layout rather than leaving it implied. */
+  justify-content: space-between;
   gap: 10px;
 }
 
@@ -247,6 +264,9 @@
 .feedHeaderCopy > :first-child {
   flex: 1 1 auto;
   min-width: 0;
+  /* The band is pointer-events: none so edge-taps pass through; the byline is
+     the one thing in it that is meant to be tappable. */
+  pointer-events: auto;
 }
 
 
@@ -1095,16 +1115,19 @@
    this repaints every second, and filtered text re-rasterises on the A03. */
 .mediaTimer {
   display: block;
-  flex: 0 0 auto;
-  /* LIVE and 0:11 must not shuffle the row's width between them. */
-  min-width: 46px;
+  /* A fixed column the width of the rail below, so the readout centres on the
+     dial instead of stopping hard-right of it. This also keeps the reason
+     min-width existed: LIVE and 0:11 cannot shuffle the row's width. */
+  flex: 0 0 var(--feed-timer-column, 72px);
+  width: var(--feed-timer-column, 72px);
+  min-width: 0;
   color: #7fe3ff;
   -webkit-text-fill-color: #7fe3ff;
   font: 950 13px/1 ui-monospace, 'SF Mono', Menlo, monospace;
   letter-spacing: .06em;
   /* Tabular figures keep the countdown from changing width. */
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: center;
   text-shadow:
     0 1px 0 rgba(0, 0, 0, 0.95),
     0 2px 5px rgba(0, 0, 0, 0.85),

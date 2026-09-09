@@ -1,3 +1,4 @@
+import { readCameraDetectDefault } from './cameraPreferences'
 // What the camera has actually captured this session, and what the roll has
 // selected. The viewfinder writes it, the roll reads and selects from it, and
 // the home's channel buttons show the selection count — so it lives here
@@ -22,14 +23,13 @@ export interface Capture {
 // because the hold-menu tile has to name its state too — with the flag in
 // component state, leaving the camera tab and coming back reset the model
 // while the menu went on claiming the opposite.
-// The camera opens in whatever state SETTINGS says. It used to hard-start
-// true, so the model ran on every launch whether or not you wanted it —
-// the most expensive thing the camera does, spent by default. Read once at
-// module load: the value is a preference, not live state.
-// Every app session starts with the viewfinder smooth and private. Scan is an
-// explicit foreground action, not a standing preference that can silently
-// re-arm image analysis after an update/relaunch.
-let detectOn = false
+// The camera opens in whatever state SETTINGS says — and now it actually asks.
+// This comment claimed the value was "read once at module load" from the
+// preference while the line under it hard-coded `false`, so the Settings
+// toggle wrote a key nothing ever read and the camera opened inert no matter
+// what you chose. It reads the preference now, which defaults ON (scanning is
+// what the camera is for) and stays OFF across launches once you say so.
+let detectOn = readCameraDetectDefault()
 
 const captures: Capture[] = []
 const selected = new Set<string>()
@@ -70,12 +70,76 @@ export function setLibraryNewest(item: { kind: 'photo' | 'video'; src: string } 
   emit()
 }
 
+// Monotonic, never reused. The id used to be derived from captures.length,
+// which was safe only while the array could not shrink: the moment deletion
+// exists, removing one capture drops the length and the NEXT capture is handed
+// an id a previous one already had. If that id was still in `selected`, the
+// new capture arrives pre-ticked — and a delete-selected would then remove a
+// photo the user never chose.
+let captureSeq = 0
+
 export function addCapture(capture: Omit<Capture, 'id' | 'at'>): Capture {
   // Newest first — the roll reads top-left as most recent, like Photos.
-  const full: Capture = { ...capture, id: `cap-${captures.length}-${captures.length ? captures[0].at + 1 : 0}`, at: captures.length }
+  // `at` stays an insert counter, not a timestamp; nothing reads it as time.
+  const full: Capture = { ...capture, id: `cap-${++captureSeq}`, at: captures.length }
   captures.unshift(full)
   emit()
   return full
+}
+
+/**
+ * Remove captures by id and drop them from the selection in the same beat.
+ * Returns what it actually removed, so a caller can undo or report.
+ *
+ * Object URLs are revoked here and nowhere else, and only once nothing else
+ * can still be pointing at them: a parked map draft or a parked AI compose
+ * draft holds a `src` directly, and revoking underneath one silently blanks
+ * the composer when the user comes back to it. A data: URL needs no revoking.
+ */
+export function removeCaptures(ids: readonly string[]): Capture[] {
+  const doomed = new Set(ids)
+  if (!doomed.size) return []
+  const removed: Capture[] = []
+  for (let i = captures.length - 1; i >= 0; i--) {
+    if (!doomed.has(captures[i].id)) continue
+    removed.push(...captures.splice(i, 1))
+  }
+  if (!removed.length) return []
+  ids.forEach(id => selected.delete(id))
+  const stillHeld = (src: string) =>
+    captures.some(c => c.src === src)
+    || pendingMapPost?.media.src === src
+    || pendingMapPost?.originalMedia?.src === src
+    || pendingAICompose?.media.src === src
+    || pendingRollPost?.src === src
+  for (const capture of removed) {
+    if (capture.src.startsWith('blob:') && !stillHeld(capture.src)) {
+      try { URL.revokeObjectURL(capture.src) } catch { /* already gone */ }
+    }
+  }
+  emit()
+  return removed
+}
+
+/**
+ * The roll page's POST hand-off. CameraRollScreen is mounted inside the hold
+ * menu, not inside Camera, so it cannot reach Camera's `composing` state
+ * directly — the same reason the map draft above is module-level. The roll
+ * parks the chosen media here, closes itself, and Camera drains it on mount.
+ *
+ * One-shot on purpose: a draft left behind by an abandoned trip must never
+ * resurface on the next visit to the camera.
+ */
+let pendingRollPost: { kind: 'photo' | 'video'; src: string; length?: string } | null = null
+
+export function setPendingRollPost(media: { kind: 'photo' | 'video'; src: string; length?: string }): void {
+  pendingRollPost = media
+}
+
+export function takePendingRollPost(): { kind: 'photo' | 'video'; src: string; length?: string } | null {
+  const media = pendingRollPost
+  pendingRollPost = null
+  return media
 }
 
 export function isSelected(id: string): boolean { return selected.has(id) }
@@ -87,6 +151,19 @@ export function toggleSelected(id: string): void {
 }
 
 export function selectedCount(): number { return selected.size }
+
+export function listSelected(): string[] { return [...selected] }
+
+/** Replace the whole selection. `selectAll` is this with every id on screen —
+ *  the roll decides what "all" means, since it filters by photoOnly/videoOnly
+ *  and the device library's items are not selectable at all. */
+export function setSelection(ids: readonly string[]): void {
+  selected.clear()
+  ids.forEach(id => selected.add(id))
+  emit()
+}
+
+export function selectAll(ids: readonly string[]): void { setSelection(ids) }
 
 export function clearSelection(): void {
   if (!selected.size) return

@@ -1,12 +1,19 @@
 import { useLayoutEffect } from 'react'
 import './immersiveControls.css'
 
-/** Camera wakes on tap; Feed's cube explicitly reveals its rails. */
+/** Camera wakes on tap; Feed's cube toggles its rails. */
 export function useImmersiveControls(enabled: boolean, context: string) {
   useLayoutEffect(() => {
     if (!enabled) return
     const root = document.documentElement
     root.dataset.immersiveControls = 'true'
+    // Which surface owns the sleep. The map and feed keep their cube and HUD
+    // lit while idle — they are how you leave. An opened profile post is a
+    // viewer: the pop should be the only thing on screen, so its rule below
+    // takes the bottom HUD and the cube too. Without this the sleep faded the
+    // rails and the radius tower and left the rest lit, which read as the
+    // sleep not working at all.
+    root.dataset.immersiveContext = context
     let timer = 0
     const startsHidden = context === 'feed' || context === 'post'
     const hide = () => { root.dataset.controlsIdle = 'true' }
@@ -29,7 +36,19 @@ export function useImmersiveControls(enabled: boolean, context: string) {
       if ((child && event.data?.type === 'poplur-controls-activity')
         || (event.source === window.parent && event.data?.type === 'poplur-controls-wake')) wake()
     }
-    const reveal = () => { if (context === 'feed') wake() }
+    // Feed TV's cube is the screen's UI switch, so it has to work both ways.
+    // It only ever woke: once the rails were up the cube could not put them
+    // away again, and the only route back to the bare picture was to stop
+    // touching the phone for ten seconds. Toggling also makes the gesture
+    // self-explanatory — the same tap that summoned the chrome dismisses it.
+    const reveal = () => {
+      if (context !== 'feed') return
+      if (root.dataset.controlsIdle === 'true') { wake(); return }
+      // Drop the pending auto-hide with it, so a timer armed by the reveal
+      // cannot fire against a screen the viewer has already cleared.
+      window.clearTimeout(timer)
+      hide()
+    }
     const events = ['pointerdown', 'pointerup', 'wheel', 'keydown'] as const
     events.forEach(type => window.addEventListener(type, input, { capture: true, passive: true }))
     window.addEventListener('message', message)
@@ -44,6 +63,7 @@ export function useImmersiveControls(enabled: boolean, context: string) {
       window.removeEventListener('poplur-feed-reveal-controls', reveal)
       delete root.dataset.immersiveControls
       delete root.dataset.controlsIdle
+      delete root.dataset.immersiveContext
     }
   }, [enabled, context])
 }

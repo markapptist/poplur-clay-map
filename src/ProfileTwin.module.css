@@ -345,10 +345,11 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
-  /* The hold-menu bag is drawn small on its 512 canvas (54% x 61%) against the
-     side-icon set's 78% x 81%, so at 44px it would sit a third smaller than the
-     bell and gear beside it. Scaled back to their weight. */
-  transform: scale(1.3);
+  /* No scale correction. This existed for the hold-menu tote, which is drawn
+     small on its 512 canvas (55% x 61%) against the side-icon set's 78% x 81%
+     and needed 1.3x to carry the same weight as the bell and gear. The keyed
+     cart fills 83% x 83%, so the same 1.3x would make it a third too BIG —
+     the mirror of the bug it was added to fix. */
   filter: drop-shadow(0 6px 8px rgba(60, 20, 44, 0.35));
   user-select: none;
 }

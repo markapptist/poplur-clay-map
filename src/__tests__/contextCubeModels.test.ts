@@ -86,11 +86,21 @@ describe('context cube models', () => {
     expect(mapDaypart('dusk')).toBe('twilight')
   })
 
-  it('keeps Earth as the map navigator in every daypart', () => {
-    expect(mapDaypartCubeModel('day', 'full')).toBe('poplur-globe-lite.glb')
-    expect(mapDaypartCubeModel('night', 'full')).toBe('poplur-globe-lite.glb')
-    expect(mapDaypartCubeModel('night', 'crescent')).toBe('poplur-globe-lite.glb')
+  // The map cube keeps the time. This test previously asserted the opposite —
+  // Earth in every daypart — which is what let f1c9eec stub the selector out
+  // inside a commit about map cuts and fog without anything going red.
+  it('wears the sun by day and the phase-matched moon by night', () => {
+    expect(mapDaypartCubeModel('day', 'full')).toBe('poplur_sun_lite.glb')
+    expect(mapDaypartCubeModel('day', 'crescent')).toBe('poplur_sun_lite.glb')
+    expect(mapDaypartCubeModel('night', 'full')).toBe('poplur_moon_full_lite.glb')
+    expect(mapDaypartCubeModel('night', 'crescent')).toBe('poplur_moon_crescent_lite.glb')
+  })
+
+  // Dawn and dusk are the one case Earth is still right: neither the sun nor
+  // the moon owns that sky, so neither owns the cube.
+  it('keeps Earth through twilight, whatever the moon is doing', () => {
     expect(mapDaypartCubeModel('twilight', 'full')).toBe('poplur-globe-lite.glb')
+    expect(mapDaypartCubeModel('twilight', 'crescent')).toBe('poplur-globe-lite.glb')
   })
 
   it('shows a weather cube as a brief announcement, not a mode', () => {

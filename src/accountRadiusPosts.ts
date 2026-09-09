@@ -8,7 +8,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import { webDb } from './webFirebase'
-import { clampRadiusMeters } from './worldRadius'
+import { clampRadiusMeters, clampRadiusKm } from './worldRadius'
 
 
 export interface AccountRadiusPostDocument {
@@ -60,8 +60,14 @@ export function accountRadiusSnapshotFromDocuments(
     return row.visibilityStatus !== 'expired' && (finite(row.radiusMeters ?? row.radius) ?? 0) > 0
   }).reduce<AccountRadiusSnapshot>((snapshot, document) => ({
     radiusKm: snapshot.radiusKm + radiusKmFromAccountPost(document.data()),
-    totalReachKm: snapshot.totalReachKm + clampRadiusMeters(
-      finite(document.data().radiusMeters ?? document.data().radius) ?? 0) / 1_000,
+    // The SUM takes the ceiling too, not just each post. Every post was already
+    // clamped into the scale on the way in, but adding clamped numbers together
+    // walks straight past the top of it: the card read "TOTAL RADIUS 22,573 km
+    // of 6,371 km", a total larger than its own maximum. The scale tops out at
+    // the Earth's radius and at the ceiling the number already means
+    // "everywhere" (worldRadius.ts), so there is nothing above it to express.
+    totalReachKm: clampRadiusKm(snapshot.totalReachKm + clampRadiusMeters(
+      finite(document.data().radiusMeters ?? document.data().radius) ?? 0) / 1_000),
     postCount: snapshot.postCount + 1,
   }), { radiusKm: 0, totalReachKm: 0, postCount: 0 })
 }

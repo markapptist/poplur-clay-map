@@ -1,4 +1,4 @@
-import type { KeyboardEvent, ReactNode } from 'react'
+import type { CSSProperties, KeyboardEvent, ReactNode } from 'react'
 import BoundedPopupVideo from './BoundedPopupVideo'
 import styles from './PoplurDialog.module.css'
 
@@ -41,6 +41,7 @@ export default function PoplurDialog({
   ariaLabel,
   variant = 'card',
   mediaBadge,
+  accent,
 }: {
   eyebrow?: string
   title: string
@@ -57,6 +58,10 @@ export default function PoplurDialog({
   onClose: () => void
   dataId?: string
   ariaLabel?: string
+  /** Wear something else's colour instead of the house pink. The camera's scan
+   *  cards pass the colour of the thing they actually recognised, so the window
+   *  arrives looking like that rather than like Poplur. */
+  accent?: string | null
   /**
    * 'card' is the Poplur dialog everything else uses: the clay tab, the big
    * title, the pills. 'media' is the map's pop window — the content itself and
@@ -124,6 +129,7 @@ export default function PoplurDialog({
         role="dialog"
         aria-modal="true"
         aria-label={ariaLabel ?? title}
+        style={accent ? ({ '--dialogAccent': accent } as CSSProperties) : undefined}
       >
         {!mediaFirst && (
           <span className={styles.tab} aria-hidden="true">

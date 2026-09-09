@@ -13,7 +13,7 @@ import { cameraRollDisplayItems } from './cameraRollPolicy'
 // clay stills stand in for photos, the channel ad creatives for videos (their
 // first frame + a duration badge, like iOS Photos).
 
-interface RollItem {
+export interface RollItem {
   kind: 'photo' | 'video'
   src: string
   /** mm:ss badge for videos */
@@ -95,6 +95,8 @@ export default function CameraRoll({
   videoOnly = false,
   hideHeader = false,
   nativeRequestType = 'requestCameraRoll',
+  manage = false,
+  onOpenItem,
 }: {
   onDeny?: () => void
   lite?: boolean
@@ -116,6 +118,26 @@ export default function CameraRoll({
   hideHeader?: boolean
   /** Explicit profile selection may ask iOS for Photos access from this gesture. */
   nativeRequestType?: 'requestCameraRoll' | 'requestProfileCameraRoll'
+  /**
+   * Manage mode: a tap SELECTS instead of composing, even where onPick exists.
+   * Selection was written long ago but has been unreachable in every roll a
+   * user can get to — pickItem only toggled in its `if (!onPick)` branch, and
+   * Camera, Profile and Mail all pass onPick. This is the switch that makes it
+   * reachable, opt-in, so those three keep their picker behaviour untouched.
+   */
+  manage?: boolean
+  /** Open the tile at this flat index in the host's preview. Takes precedence
+   *  over composing, and is ignored in manage mode where a tap selects. */
+  /** Hand the page the tapped tile, the whole library, and a resolver for
+   *  ORIGINAL-resolution pixels — the grid only ever holds thumbnails. */
+  onOpenItem?: (
+    index: number,
+    items: readonly RollItem[],
+    resolveFullAsset: (
+      item: RollItem,
+      resolve: (src: string, kind: 'photo' | 'video') => void,
+    ) => () => void,
+  ) => void
 } = {}) {
   // Native shell: the REAL device photo library replaces the mock grid. The
   // list remains thumbnail-only so opening it does not marshal 24 full-size
@@ -239,13 +261,87 @@ export default function CameraRoll({
   // this device's session.
   const captures = useSyncExternalStore(onCameraStore, listCaptures, listCaptures)
   const picked = useSyncExternalStore(onCameraStore, selectedCount, selectedCount)
-  const shot: RollItem[] = captures.map(c => ({ kind: c.kind, src: c.src, length: c.length, id: c.id }))
+  // poster travels with the capture. Dropping it here sent every session clip
+  // to the <video preload=metadata> branch below — a decoder per tile, which
+  // is the exact cost the poster field exists to avoid. The fallback comment
+  // there claimed these recordings have no still; they do, web recordings set
+  // one from the viewfinder at stop.
+  const shot: RollItem[] = captures.map(c => ({
+    kind: c.kind, src: c.src, length: c.length, id: c.id, poster: c.poster,
+  }))
   const rollItems = cameraRollDisplayItems(nativeRoll, ROLL, isNativeShell())
   const items = [...shot, ...rollItems]
     .filter(item => (!photoOnly || item.kind === 'photo') && (!videoOnly || item.kind === 'video'))
 
+  /**
+   * Ask the shell for this asset at original resolution.
+   *
+   * The grid is fed THUMBNAILS — that is the whole point of the roll bridge,
+   * and it is why the tiles are cheap. Anything that shows an asset large has
+   * to come back here for the real pixels first, or it paints a thumbnail
+   * blown up to full screen. This resolver is exported upward (onOpenItem's
+   * third argument) because the native callbacks may only ever have ONE owner
+   * — see the effect above — so the page cannot run its own copy.
+   */
+  const resolveFullAsset = (
+    item: RollItem,
+    resolve: (src: string, kind: 'photo' | 'video') => void,
+  ): (() => void) => {
+    const settleWithThumbnail = () => resolve(item.fullSrc || item.src, item.kind)
+    if (!isNativeShell() || !item.assetId) {
+      settleWithThumbnail()
+      return () => {}
+    }
+    const requestId = `roll-view-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+    const finishFallback = () => {
+      const pending = pendingAssetRequests.current.get(requestId)
+      if (!pending) return
+      pendingAssetRequests.current.delete(requestId)
+      settleWithThumbnail()
+    }
+    const timer = window.setTimeout(finishFallback, ROLL_ASSET_TIMEOUT_MS)
+    pendingAssetRequests.current.set(requestId, {
+      assetId: item.assetId,
+      timer,
+      fallback: settleWithThumbnail,
+      resolve,
+    })
+    if (!postNativeEvent({
+      type: 'requestCameraRollAsset',
+      requestId,
+      assetId: item.assetId,
+      maxPixelSize: MAX_ROLL_ASSET_EDGE,
+    })) {
+      window.clearTimeout(timer)
+      finishFallback()
+    }
+    // Stepping to the next capture must abandon this one, or a late iCloud
+    // result paints the picture you already walked past.
+    return () => {
+      const pending = pendingAssetRequests.current.get(requestId)
+      if (!pending) return
+      window.clearTimeout(pending.timer)
+      pendingAssetRequests.current.delete(requestId)
+    }
+  }
+
   const pickItem = (item: RollItem) => {
     playPop()
+    // In manage mode a tap is a selection, whether or not a picker is wired.
+    // Only Poplur's own captures carry an id, and only they can be selected:
+    // the device library arrives one-way from the shell with no delete message
+    // in the bridge, so a local removal would be undone by the next refill.
+    if (manage) {
+      if (item.id) toggleSelected(item.id)
+      return
+    }
+    // A host that previews takes the tap before the composer does: opening is
+    // what a tile means on the roll PAGE, and posting is a control inside the
+    // preview rather than the consequence of a tap.
+    if (onOpenItem) {
+      onOpenItem(items.indexOf(item), items, resolveFullAsset)
+      return
+    }
     if (!onPick) {
       if (item.id) toggleSelected(item.id)
       return
@@ -303,6 +399,8 @@ export default function CameraRoll({
       <div className={styles.rollGrid}>
         {items.map((item, index) => {
           const poster = item.poster ?? posterFor(item.src)
+          // Manage mode narrows what answers a tap to the selectable subset.
+          const interactive = manage ? Boolean(item.id) : Boolean(onOpenItem || onPick || item.id)
           return (
             <figure
               key={item.id ?? index}
@@ -313,7 +411,24 @@ export default function CameraRoll({
               // seeded roll has no ids, and a roll where most tiles do nothing when
               // tapped is the bug, not the design. Selection stays the no-composer
               // fallback, and it still needs an id.
-              onClick={(onPick || item.id) ? () => pickItem(item) : undefined}
+              //
+              // In manage mode only Poplur's own captures respond, so a device
+              // tile says so rather than silently ignoring the tap.
+              role={interactive ? 'button' : undefined}
+              tabIndex={interactive ? 0 : undefined}
+              aria-disabled={manage && !item.id ? true : undefined}
+              aria-pressed={manage && item.id ? isSelected(item.id) : undefined}
+              aria-label={manage && item.id
+                ? `${item.kind === 'video' ? 'Clip' : 'Photo'}, ${isSelected(item.id) ? 'selected' : 'not selected'}`
+                : undefined}
+              onClick={interactive ? () => pickItem(item) : undefined}
+              onKeyDown={interactive
+                ? event => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return
+                  event.preventDefault()
+                  pickItem(item)
+                }
+                : undefined}
             >
               {!active ? (
                 // Off the visible page: the tile keeps its shape and its badge

@@ -18,6 +18,18 @@ import { radiusTrophyColor } from './radiusTrophies'
 import surfaceStyles from './TransientPopupSurface.module.css'
 import CubeTab3D, { DEFAULT_CUBE_MODEL, TAB_ORDER, type CubeTab } from './CubeTab3D'
 import { shouldHidePersistentCube } from './persistentCubeVisibility'
+import {
+  CONTENT_CUBE_DISPLAY_MS,
+  contentCubeModel,
+  topicForFeedChannel,
+  topicForSpokenTour,
+  type ContentCubeTopic,
+} from './contentCubeTopics'
+import {
+  emptyContentCubeSession,
+  reconcileContentCubeSession,
+  type ContentCubeSession,
+} from './contentCubeSession'
 import { useNativeFeedAdVisibility } from './useNativeFeedAdVisibility'
 import { onAvatarCubeChange, wornCubeModelUrl } from './avatarCube'
 import ScreenCoach from './ScreenCoach'
@@ -481,9 +493,10 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // the subscreen the cube is answering to, and a hold-menu tile carrying an
   // `action`, `mapAction` or `event` never sets one — it fires, calls
   // onClose() and returns before setActiveScreen (HoldMenuTwin). So
-  // DIRECTIONS, TOUR, CAMERA ROLL, COMMENT and HEY POPLUR have
-  // no entry no matter how good their cube is: those tiles act on the live
-  // surface behind the menu, which is the whole point of them.
+  // DIRECTIONS, TOUR, COMMENT and HEY POPLUR have no entry no matter how good
+  // their cube is: those tiles act on the live surface behind the menu, which
+  // is the whole point of them. CAMERA ROLL used to be in that list and is not
+  // any more — it stopped being an `action` tile and became a page.
   // The news screen gets an actual newspaper rather than a cube with a news
   // face. 39MB supplied, decimated to 385KB — heavier than the radio's 147KB
   // because a folded paper is more geometry than a faceplate, but in line with
@@ -511,6 +524,9 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   'profile-stats': 'poplur_cube_bargraph.glb',
   'profile-house': HOME_CUBE_MODEL,
   'profile-store': 'poplur_cube_shopping_bag.glb',
+  // The roll is a page you can stand on now, so the model that was made for it
+  // and shipped unwired finally has a screen to answer to.
+  'camera-roll': 'poplur_cube_cameraroll.glb',
   // A dial/gear face rather than the old plain cube. Named _gear, not
   // _settings2, to keep it unmistakably apart from the orphaned
   // poplur_cube_settings.glb this replaces.
@@ -556,8 +572,8 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // machine at navigator size.
   'feed-casino': 'poplur_cube_slot_machine.glb',
   // In the bundle and deliberately unwired, for want of a screen to stand on:
-  // ar, video, search, directions, map, tour, comment, live, cameraroll,
-  // heypoplur. 'camera-capture' in particular is NOT a destination — PHOTO,
+  // ar, video, search, directions, map, tour, comment, live, heypoplur.
+  // (cameraroll left this list when the roll became a page.) 'camera-capture' in particular is NOT a destination — PHOTO,
   // VIDEO, AR and DETECT all carry that id for inspectability while acting on
   // the live camera, so nothing can wear a cube there.
   // Still awaiting a model: camera-studio, feed-games.
@@ -1733,6 +1749,14 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const subscreenArrowsRef = useRef<((dir: 1 | -1) => boolean) | null>(null)
   const bindSubscreenArrows = useCallback((fn: ((dir: 1 | -1) => boolean) | null) => {
     subscreenArrowsRef.current = fn
+  }, [])
+  /** Set by an open hold-menu PAGE that wants the arrows for itself — today the
+   *  camera roll's fullscreen preview, which browses captures with them the way
+   *  the profile viewer browses posts. Asked before the ring below, because the
+   *  ring would otherwise navigate off the page and drop the open preview. */
+  const holdPageArrowsRef = useRef<((dir: 1 | -1) => boolean) | null>(null)
+  const bindHoldPageArrows = useCallback((fn: ((dir: 1 | -1) => boolean) | null) => {
+    holdPageArrowsRef.current = fn
   }, [])
 
   const [cubeScreen, setCubeScreen] = useState<string | null>(null)
@@ -3202,6 +3226,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         }
       }
       if (event.data.type === 'poplur-map-speak' && typeof event.data.line === 'string') {
+        // The map authored this line and knows the stop's topic, so this is
+        // the exact reading of "the radio is talking about sports" — no guess
+        // at a station name, which is the signal this deliberately avoids.
+        const spoken = topicForSpokenTour(
+          typeof event.data.topic === 'string' ? event.data.topic : null,
+        )
+        if (spoken) setContentTopic(spoken)
         const line = event.data.line.trim().slice(0, 1000)
         if (line && !isGateMuted()) {
           if (isMapRadioActive()) announceMapTour(line)
@@ -3578,6 +3609,53 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // cube, HUD row and stat cards leave entirely (chromeHidden, not the idle
   // ghost) so the clip truly owns the screen. FeedTwin resets this on exit and
   // on unmount, so a tab change can never strand the home with no chrome.
+  // The content cube: a ten-second announcement about what you are watching or
+  // listening to. Two EXACT triggers only — the feed's channel id, and the map
+  // tour's own narration topic, both curated. A tuned internet station's name
+  // is deliberately not one: The Fan 590, TSN 1050 and talkSPORT carry no
+  // "sport" in them, and "fan"/"live"/"talk" false-positive everywhere.
+  const [contentTopic, setContentTopic] = useState<ContentCubeTopic | null>(null)
+  const contentCubeSessionRef = useRef<ContentCubeSession>(emptyContentCubeSession())
+  const [contentCubeActive, setContentCubeActive] = useState(false)
+  // TRIGGER B — the feed's own channel id. Hand-authored and stable (CH 104 is
+  // Sports), so this is a read rather than a guess at a caption. Only the
+  // channel is used: the visible post inside a channel lives in a ref, not
+  // state, so the shell cannot observe it without new plumbing in FeedTwin.
+  useEffect(() => {
+    if (committedTab !== 'feed') return
+    const channel = CHANNELS[chanIndex]
+    const topic = topicForFeedChannel(channel?.id)
+    if (topic) setContentTopic(topic)
+  }, [committedTab, chanIndex])
+
+  // Leaving the context is what re-arms the appearance: the reducer treats a
+  // false signal as the only way out of an exhausted session, so sitting on
+  // the sports channel shows the cube once rather than every ten seconds.
+  useEffect(() => {
+    if (committedTab === 'feed') return
+    setContentTopic(null)
+  }, [committedTab])
+
+  // One bounded appearance per run, through the reducer that was written for
+  // the food cube and orphaned with it.
+  useEffect(() => {
+    const decide = () => {
+      const decision = reconcileContentCubeSession(
+        contentCubeSessionRef.current,
+        contentTopic != null,
+        Date.now(),
+        CONTENT_CUBE_DISPLAY_MS,
+      )
+      contentCubeSessionRef.current = decision.session
+      setContentCubeActive(decision.active)
+      return decision.remainingMs
+    }
+    const remaining = decide()
+    if (remaining == null) return
+    const timer = window.setTimeout(decide, remaining)
+    return () => window.clearTimeout(timer)
+  }, [contentTopic])
+
   const [feedFullscreen, setFeedFullscreen] = useState(false)
   // Profile media is forwarded to the cross-origin map frame. The still is the
   // selfie video's poster; the pin itself is intentionally not a user photo.
@@ -3808,7 +3886,14 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const lastAdChannelRef = useRef<number | null>(null)
   const feedAdSequenceRef = useRef(0)
   useEffect(() => {
-    if (activeTab !== 'feed' || !isNativeShell()) return
+    // COMMITTED, not active. `tabChanged` is posted from committedTab, which
+    // lags activeTab by the map's settle beat, so gating this on activeTab put
+    // the channel change on the bridge ~180ms BEFORE native was told the feed
+    // was up. Native reads its surface gate at that moment, still sees the
+    // outgoing tab, and drops the break - losing the feed-entry placement on
+    // every entry after the first, on both platforms. Waiting for the commit
+    // costs the ad nothing and lands it on a surface native agrees with.
+    if (committedTab !== 'feed' || activeTab !== 'feed' || !isNativeShell()) return
     // First sight of the feed only records where we started.
     if (lastAdChannelRef.current === null) {
       lastAdChannelRef.current = chanIndex
@@ -3818,7 +3903,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     if (lastAdChannelRef.current === chanIndex) return
     lastAdChannelRef.current = chanIndex
     postNativeEvent({ type: 'feedChannelChanged', channelId: CHANNELS[chanIndex].id, index: chanIndex })
-  }, [activeTab, chanIndex])
+  }, [activeTab, committedTab, chanIndex])
   const reportFeedContentAdvance = useCallback((channelId: string, index: number) => {
     if (!isNativeShell()) return
     feedAdSequenceRef.current += 1
@@ -4343,16 +4428,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // a separate screen you land on. The channel arrows keep those destinations
   // reachable without adding a broadcast action to the camera surface.
   //
-  // ROLL is the odd one: it is a page, not an arming state, and the shell
-  // toggles it by stepping cameraStep (Camera reads page from step % 2). So the
-  // ring reads the roll's open/closed state as its "current" when it is up.
-  //
-  // CREATE / GAMES / STUDIO used to be reachable only through the long-press
-  // wheel — the arrows skipped them, so three of the tab's tiles were
-  // invisible to anyone who did not know to hold. They join the ring the same
-  // way ROLL does: landing on one opens it outright rather than merely arming
-  // it (opening reuses setResume + setHoldOpen, the same handoff every other
-  // tab's page-list branch performs).
+  // CREATE / GAMES / STUDIO / CAMERA ROLL used to be reachable only through the
+  // long-press wheel — the arrows skipped them, so four of the tab's tiles were
+  // invisible to anyone who did not know to hold. They are ring stops now:
+  // landing on one opens it outright rather than merely arming it (opening
+  // reuses setResume + setHoldOpen, the same handoff every other tab's
+  // page-list branch performs).
   //
   // This function owns the WHOLE ring, the three subscreen stops included.
   // The first version handed arrow presses to the wheel's own walker once a
@@ -4363,23 +4444,27 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // closes the menu and lands on the neighbouring mode, so every stop cycles
   // in both directions, always.
   //
-  // photo -> video -> the camera's subscreens -> repeat. ROLL stays outside
-  // the ring because it is the camera's own second page (the cube walks up to
-  // it), rather than a capture mode or a destination in this cycle.
+  // photo -> video -> the camera's subscreens -> CAMERA ROLL -> repeat, in the
+  // hold wheel's own tile order so the two navigations agree stop for stop.
   const stepCameraMode = (dir: 1 | -1) => {
     const onRoll = ((cameraStep % 2) + 2) % 2 === 1
     const openRing = holdOpen && cubeScreen ? CAMERA_STOP_BY_SCREEN[cubeScreen] ?? null : null
-    // The roll is the camera's second PAGE, not a stop on the ring. Stepping
-    // while it is up leaves it and resumes the ring from the capture mode you
-    // were in — so the arrows always walk photo / video / subscreens, whatever
-    // page you happened to be looking at.
+    // `onRoll` is the in-viewfinder strip (the camera's own pager page), which
+    // is NOT the CAMERA ROLL stop below — that one is the full screen. The
+    // strip is not on the ring: stepping while it is up leaves it and resumes
+    // from the capture mode you were in.
     const current: CameraCycleStop = openRing ?? cameraCaptureMode
     const i = CAMERA_CYCLE.indexOf(current)
     const n = CAMERA_CYCLE.length
     const next = CAMERA_CYCLE[((i + dir) % n + n) % n]
-    if (next === 'create' || next === 'games' || next === 'studio') {
+    // Every stop that is a screen rather than a capture mode opens the same
+    // way. Asking the table instead of naming the three subscreens is what
+    // lets CAMERA ROLL join the ring by appearing in it — the old spelled-out
+    // condition would have walked onto the roll and then done nothing.
+    const nextScreen = CAMERA_CYCLE_SCREEN[next as keyof typeof CAMERA_CYCLE_SCREEN] as string | undefined
+    if (nextScreen) {
       if (onRoll) setCameraStep(step => step + 1)
-      setResume(current => ({ screen: CAMERA_CYCLE_SCREEN[next], n: current.n + 1 }))
+      setResume(current => ({ screen: nextScreen, n: current.n + 1 }))
       setHoldOpen(true)
       return
     }
@@ -4390,7 +4475,10 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       setHoldOpen(false)
     }
     if (onRoll) setCameraStep(step => step + 1)
-    setCameraCaptureMode(next)
+    // Every stop that is not a capture mode carried a screen above and has
+    // already returned, so this is photo or video — written as a test rather
+    // than a cast so a stop added without a screen fails to compile here.
+    if (next === 'photo' || next === 'video') setCameraCaptureMode(next)
   }
   // Elapsed ms while recording — the radius label BECOMES this counter.
   const [recordMs, setRecordMs] = useState<number | null>(null)
@@ -4786,6 +4874,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // keeps the press only when the bare wheel (or a non-ring page) is up.
     if (activeTab === 'post'
       && (!holdOpen || (cubeScreen != null && CAMERA_STOP_BY_SCREEN[cubeScreen] != null))) {
+      // A page on the ring may still want the press: the roll's preview walks
+      // its captures. It answers false the moment it is not looking at one.
+      if (holdPageArrowsRef.current?.(dir)) { claimCubeNavigationSound(); return }
       claimCubeNavigationSound()
       stepCameraMode(dir)
       return
@@ -4990,9 +5081,19 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const discoCubeActiveHere = discoCubeActive
     && discoCubeVisible
     && musicSessionRef.current.contextKey === discoNavigationContext
-  const eventCubeModel = mapContextModel ?? (discoCubeActiveHere ? DISCO_BALL_CUBE_MODEL : null)
+  // The content cube sits BELOW weather and breaking news and ABOVE the disco
+  // ball. Weather and news are conditions you may need to act on; this is an
+  // announcement about what you chose to watch. It outranks the disco ball
+  // because that one is content-blind — a music cube over a sports broadcast
+  // would be answering the wrong thing.
+  const contentCubeModelUrl = contentCubeActive ? contentCubeModel(contentTopic) : null
+  const eventCubeModel = mapContextModel
+    ?? contentCubeModelUrl
+    ?? (discoCubeActiveHere ? DISCO_BALL_CUBE_MODEL : null)
   const cubeEventSignal = postVerifiedCubeActive
     ? 'posted'
+    : contentCubeModelUrl
+      ? `content:${contentTopic}`
     : radiusRewardNavigatorModel
       ? `map-reward:dice:${radiusRewardDiceSignal?.changedAt ?? 'unknown'}`
     : breakingNewsCubeActive
@@ -5912,6 +6013,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           underneath. The whole HUD is one piece of home chrome. */}
       <div
         className={`${styles.bottomRow} ${styles.overSubscreen}${bottomHudFaded ? ` ${styles.chromeIdle}` : ''}${chromeGone ? ` ${styles.chromeHidden}` : ''}`}
+        data-poplur-bottom-hud=""
       >
         {/* LEFT: clay channel up / down arrows (light up on press, feed-style) */}
         <div className={styles.chanSlot} data-poplur-channel-arrows>
@@ -6496,6 +6598,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           onSubscreenChange={handleSubscreenChange}
           onWheelFocusChange={handleWheelFocusChange}
           bindArrows={bindSubscreenArrows}
+          bindPageArrows={bindHoldPageArrows}
           bindGoBack={fn => { goBackRef.current = fn }}
           incomingCall={incomingCall}
           onAcceptCall={acceptIncomingCall}

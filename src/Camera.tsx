@@ -8,9 +8,11 @@ import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import { readCameraAiVoice, writeCameraAiVoice, onCameraPreferenceChange } from './cameraPreferences'
 import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
-import { playPop } from './pop'
+import { playPop, popHaptic } from './pop'
 import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
-import { addCapture, isDetectOn, setDetectOn, onCameraStore, listCaptures, getLibraryNewest, setLastSceneTerms, takePendingMapPost, type PendingMapPost } from './cameraStore'
+import { addCapture, removeCaptures, isDetectOn, setDetectOn, onCameraStore, listCaptures, getLibraryNewest, setLastSceneTerms, takePendingMapPost, type PendingMapPost,
+  takePendingRollPost,
+} from './cameraStore'
 import RecognitionAura from './RecognitionAura'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
 import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
@@ -206,6 +208,11 @@ function clampZoom(value: number, range: CameraZoomRange): number {
 // the capture, the recording and — next — the AR filters all have to act on an
 // actual frame. Where the camera is refused or absent, the viewfinder stays
 // plainly unavailable and offers a retry instead of pretending a still is live.
+/** How often the camera puts the focus square up and re-runs autofocus.
+ *  Long enough not to read as a flashing UI or to make the lens hunt
+ *  continuously; short enough that pointing at something new gets answered. */
+const AUTO_REFOCUS_MS = 4_000
+
 export default function Camera({
   step = 0,
   captureMode = 'photo',
@@ -295,6 +302,9 @@ export default function Camera({
   })
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  // Who the scanner last recognised, so the confirmation haptic fires on the
+  // EDGE of recognising someone rather than on every frame they are in.
+  const lastRecognizedKeyRef = useRef<string | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const deferredCameraActionRef = useRef<DeferredCameraAction | null>(null)
   const [deferredCameraActionToken, setDeferredCameraActionToken] = useState(0)
@@ -458,10 +468,25 @@ export default function Camera({
   // or recorder produced, then keep it (→ composer) or retake (→ live camera).
   // Roll picks bypass this — choosing a saved photo is already a decision.
   const [reviewMedia, setReviewMedia] = useState<ComposerMedia | null>(null)
+  // Which roll entry this review is showing. Every capture route adds to the
+  // roll BEFORE the review opens (so a crash between the two cannot lose the
+  // shot), which means Retake has to take it back out again — otherwise every
+  // rejected frame stayed in the roll forever and "retake" only meant "take
+  // another one as well".
+  const [reviewCaptureId, setReviewCaptureId] = useState<string | null>(null)
   const [composerDraft, setComposerDraft] = useState<Omit<PendingMapPost, 'media'> | null>(null)
   // Camera→map, the return leg: a target arriving while a parked draft exists
   // means the user just picked their spot — resume the SAME draft at the
   // channel step instead of demanding a fresh capture.
+  // The roll page's POST. Unlike the map draft below this is unconditional:
+  // there is no target to gate on — the user pressed POST on a capture and the
+  // camera is where the composer lives. One-shot, so an abandoned trip cannot
+  // resurface a picture on the next visit.
+  useEffect(() => {
+    const parked = takePendingRollPost()
+    if (!parked) return
+    setComposing(parked)
+  }, [])
   useEffect(() => {
     if (!postTarget) return
     // Drain the parked draft on EVERY target: a stale draft from an abandoned
@@ -929,6 +954,18 @@ export default function Camera({
             : detection)
           : detail
       setDetections(enriched)
+      // The phone confirms a RECOGNITION in the hand, not just on the screen.
+      // Edge-triggered on the identity: detections arrive many times a second
+      // and a buzz per frame would be a continuous rumble, so this fires once
+      // when a face becomes known and stays silent until it is a different
+      // person (or the same person re-enters frame after leaving).
+      const recognizedKey = resolvedUser
+        ? (resolvedUser.handle ?? resolvedUser.name ?? 'known')
+        : null
+      if (recognizedKey && recognizedKey !== lastRecognizedKeyRef.current) {
+        popHaptic()
+      }
+      lastRecognizedKeyRef.current = recognizedKey
       onDetectUser?.(resolvedUser)
       // The scanner: each DISTINCT object cashes in the radius it holds in
       // other people's posts. A new find pops, exactly like a claim landing.
@@ -1251,6 +1288,110 @@ export default function Camera({
     const points = [...gesturePointsRef.current.values()]
     return points.length < 2 ? 0 : Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y)
   }
+  // Where the last tap landed, in coordinates local to the preview section.
+  // `id` exists only to remount the node so the CSS pulse restarts on a second
+  // tap in the same spot — without it React reuses the element and the
+  // animation, already finished, never plays again.
+  const [focusTap, setFocusTap] = useState<{ x: number; y: number; id: number } | null>(null)
+  const focusTapIdRef = useRef(0)
+  const cameraSurfaceRef = useRef<HTMLElement | null>(null)
+  // The lens refocused on its own, so SAY so.
+  //
+  // The shell has always run AVFoundation's default `.continuousAutoFocus` - it
+  // never configures focus at all - so the camera was already refocusing on
+  // whatever came into frame. The bracket just never appeared unless a finger
+  // asked for it, which read as "the app only focuses when I tap". Native now
+  // forwards the device's own subject-area notification and the sight answers
+  // it, in the same place the lens actually focuses: AVFoundation's default AF
+  // region is centre-weighted, and no focusPointOfInterest is ever set, so the
+  // centre is the truth here rather than a guess at a subject.
+  // Where the ISP says the subject is, in 0..1 of the preview. Held in a ref,
+  // not state: it arrives at up to 8Hz and only matters at the moment the lens
+  // says it refocused, so re-rendering the whole camera for it would be pure
+  // waste.
+  const faceSubjectRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null)
+  useEffect(() => {
+    const onSubject = (event: Event) => {
+      const detail = (event as CustomEvent).detail
+      faceSubjectRef.current = detail && typeof detail === 'object'
+        && ['x', 'y', 'w', 'h'].every(k => Number.isFinite((detail as Record<string, number>)[k]))
+        ? detail as { x: number; y: number; w: number; h: number }
+        : null
+    }
+    const onNativeFocus = () => {
+      const element = cameraSurfaceRef.current
+      if (!element) return
+      const bounds = element.getBoundingClientRect()
+      if (!bounds.width || !bounds.height) return
+      // On a face, sit on the face. Otherwise the centre, which is where
+      // AVFoundation's default centre-weighted AF region actually is — the
+      // rect is already preview-space, mirrored and cropped by the preview
+      // layer, so it needs no correction here.
+      const subject = faceSubjectRef.current
+      const x = subject ? (subject.x + subject.w / 2) * bounds.width : bounds.width / 2
+      const y = subject ? (subject.y + subject.h / 2) * bounds.height : bounds.height / 2
+      focusTapIdRef.current += 1
+      setFocusTap({ x, y, id: focusTapIdRef.current })
+    }
+    window.addEventListener('poplur-native-camera-subject', onSubject)
+    window.addEventListener('poplur-native-camera-focus', onNativeFocus)
+    return () => {
+      window.removeEventListener('poplur-native-camera-subject', onSubject)
+      window.removeEventListener('poplur-native-camera-focus', onNativeFocus)
+    }
+  }, [])
+  /**
+   * The camera refocuses on a beat, and SHOWS it.
+   *
+   * The lens has always run continuous autofocus, but nothing drove it and the
+   * square only ever appeared when a finger asked — so the app looked like it
+   * focused only when tapped. This puts the sight in the middle of the frame on
+   * a fixed cadence, fires the haptic, and asks the shell for a REAL one-shot
+   * autofocus (CameraKitController.refocusCentre) rather than drawing over a
+   * lens nobody is driving.
+   *
+   * Only while the viewfinder is actually live and front: a timer that keeps
+   * refocusing a parked preview is battery spent on a camera nobody is looking
+   * at, and the governor parks this surface deliberately.
+   */
+  useEffect(() => {
+    if (!effectiveLiveSurfaceVisible || nativePreviewParked) return
+    if (reviewMedia || composing) return
+    const beat = window.setInterval(() => {
+      const element = cameraSurfaceRef.current
+      if (!element) return
+      const bounds = element.getBoundingClientRect()
+      if (!bounds.width || !bounds.height) return
+      focusTapIdRef.current += 1
+      setFocusTap({ x: bounds.width / 2, y: bounds.height / 2, id: focusTapIdRef.current })
+      // The square is the tell; the buzz is the confirmation. Haptic only —
+      // a camera that chirped every few seconds would be unusable.
+      popHaptic()
+      // iOS drives the real lens. Browsers/Android get the same request through
+      // the track constraint where the platform supports it; where it does not,
+      // continuous AF is already running and the square is still honest.
+      postNativeEvent({ type: 'cameraControl', control: 'refocus' })
+      const track = streamRef.current?.getVideoTracks?.()[0]
+      try {
+        // focusMode is a real constraint but is missing from lib.dom's
+        // MediaTrackConstraintSet, so it has to be asserted through.
+        void track?.applyConstraints({
+          advanced: [{ focusMode: 'single-shot' }],
+        } as unknown as MediaTrackConstraints)
+      } catch { /* focusMode is not universally supported; AF continues */ }
+    }, AUTO_REFOCUS_MS)
+    return () => window.clearInterval(beat)
+  }, [effectiveLiveSurfaceVisible, nativePreviewParked, reviewMedia, composing])
+
+  useEffect(() => {
+    if (!focusTap) return
+    // Matches the 1400ms pulse. The node leaves the DOM rather than lingering
+    // invisible: it is inside the viewfinder, and an element with
+    // pointer-events none is still one more thing to composite every frame.
+    const timer = window.setTimeout(() => setFocusTap(null), 1400)
+    return () => window.clearTimeout(timer)
+  }, [focusTap])
+
   const onCameraPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
     const target = event.target as Element
     if (target.closest('button, [role="button"], [data-poplur-gesture-navigation], input, textarea, select, a')) return
@@ -1327,6 +1468,17 @@ export default function Camera({
     gesture.lastTapAt = now
     gesture.lastTapX = event.clientX
     gesture.lastTapY = event.clientY
+    // A single tap used to be recorded and otherwise swallowed, so tapping the
+    // viewfinder produced no feedback at all. Answer it where it landed. The
+    // rect is read here, synchronously, because currentTarget is gone by the
+    // time the state update flushes.
+    const bounds = event.currentTarget.getBoundingClientRect()
+    focusTapIdRef.current += 1
+    setFocusTap({
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
+      id: focusTapIdRef.current,
+    })
   }, [flipCamera, nativeCameraBudget, resumeNativePreview, setFlashEnabled, stepArFilter, stepZoomPreset])
   const onCameraPointerCancel = useCallback((event: React.PointerEvent<HTMLElement>) => {
     gesturePointsRef.current.delete(event.pointerId)
@@ -1399,6 +1551,7 @@ export default function Camera({
       ctx.drawImage(faceAR, 0, 0, faceAR.width, faceAR.height, 0, 0, canvas.width, canvas.height)
     }
     const shot = addCapture({ kind: 'photo', src: canvas.toDataURL('image/jpeg', 0.9) })
+    setReviewCaptureId(shot.id)
     // A capture that only lands in the roll looks like nothing happened. Review
     // it first — accept moves on to the composer, retake returns to live.
     setReviewMedia({ kind: 'photo', src: shot.src })
@@ -1476,6 +1629,7 @@ export default function Camera({
         } catch { /* tainted or torn down — fall back to the video frame */ }
       }
       const clip = addCapture({ kind: 'video', src: URL.createObjectURL(blob), length: mmss(performance.now() - started), poster })
+      setReviewCaptureId(clip.id)
       recorderRef.current = null
       setRecStart(null)
       playPop()
@@ -1775,6 +1929,7 @@ export default function Camera({
   const live = (key: string, real: boolean) => (
     <section
       key={key}
+      ref={real ? cameraSurfaceRef : undefined}
       className={styles.cameraFull}
       aria-label="Camera preview twin"
       onPointerDown={real ? onCameraPointerDown : undefined}
@@ -1905,14 +2060,24 @@ export default function Camera({
           under the controls. Neither is part of the capture. */}
       {real && gridOn && <div className={styles.camGrid} aria-hidden="true" />}
       {/* The focus square: the bracket every camera wears in the middle of the
-          frame, so there is a centre to aim with. It is a SIGHT, not a readout
-          — nothing on the bridge reports where the lens actually focused — so
-          it never moves and never claims a lock, and the green the detector
-          locks with stays the detector's. It comes and goes with the picture
-          rather than with the grid toggle: standard furniture, not an opt-in
-          composition aid. */}
-      {real && effectiveLiveSurfaceVisible && !nativePreviewParked && (
-        <div className={styles.camFocus} aria-hidden="true" />
+          frame. It answers the LENS as well as a finger now. The iOS shell owns
+          the AVCaptureDevice and forwards its subject-area notification, so the
+          sight appears on its own whenever the camera refocuses — which it has
+          always been doing, since the shell never configures focus and so runs
+          AVFoundation's default continuous autofocus. It still never claims a
+          LOCK (nothing reports lens position), and the green the detector locks
+          with stays the detector's. It answers a tap where the tap landed and
+          fades, instead of sitting permanently in the middle of the frame at
+          44vw: a sight that large covers the subject you are aiming at, and one
+          that is always on reads as the app aiming for you. Tap feedback only —
+          the lens is NOT being refocused. */}
+      {real && effectiveLiveSurfaceVisible && !nativePreviewParked && focusTap && (
+        <div
+          key={focusTap.id}
+          className={styles.camFocus}
+          style={{ left: `${focusTap.x}px`, top: `${focusTap.y}px` }}
+          aria-hidden="true"
+        />
       )}
       {real && timerLeft != null && (
         <div
@@ -2231,8 +2396,19 @@ export default function Camera({
       {reviewMedia && !composing && (
         <CaptureReview
           media={reviewMedia}
-          onAccept={() => { setComposing(reviewMedia); setReviewMedia(null) }}
-          onRetake={() => setReviewMedia(null)}
+          onAccept={() => { setComposing(reviewMedia); setReviewMedia(null); setReviewCaptureId(null) }}
+          onRetake={() => {
+            // Throw the rejected shot away rather than leaving it in the roll.
+            if (reviewCaptureId) removeCaptures([reviewCaptureId])
+            setReviewMedia(null)
+            setReviewCaptureId(null)
+          }}
+          onKeep={reviewCaptureId ? () => {
+            // It is already in the roll — this is simply the exit that does not
+            // go on to the composer, so you can keep shooting.
+            setReviewMedia(null)
+            setReviewCaptureId(null)
+          } : undefined}
         />
       )}
       {/* Every capture route — shutter, recording, roll pick — ends here. */}

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { CAMERA_CYCLE, CAMERA_HOLD_MENU_ITEMS } from '../cameraNavigation'
+import { CAMERA_CYCLE, CAMERA_CYCLE_SCREEN, CAMERA_HOLD_MENU_ITEMS, CAMERA_STOP_BY_SCREEN } from '../cameraNavigation'
 
 const cameraSource = readFileSync(new URL('../Camera.tsx', import.meta.url), 'utf8')
 const iosCameraSource = readFileSync(
@@ -44,4 +44,35 @@ describe('Camera navigation inventory', () => {
       /func deactivateCamera\(\)[\s\S]*?resetARFilterIfLoaded\(\)[\s\S]*?suspendCapture/,
     )
   })
+})
+
+// The roll was a hold-menu tile carrying `action: 'roll'`. An action tile is
+// handled BEFORE the page path in HoldMenuTwin — it fires, closes the menu and
+// returns — so it could only page the camera's own pager: no stage screen, no
+// cube of its own, no back ladder. Selection, deletion and preview all need
+// those, so it has to stay a page.
+it('offers the camera roll as a page, never as an action tile', () => {
+  const roll = CAMERA_HOLD_MENU_ITEMS.find(item => item.screen === 'camera-roll')
+  expect(roll).toBeDefined()
+  expect(roll).toMatchObject({ title: 'CAMERA ROLL', icon: 'CameraRoll', native: true })
+  expect(roll).not.toHaveProperty('action')
+  expect(roll).not.toHaveProperty('mapAction')
+  expect(roll).not.toHaveProperty('event')
+})
+
+// The roll HAS to be a stop on the channel-arrow ring. Left off it, the only
+// route to the screen was holding the cube and picking the tile — reported as
+// "I'm not able to get to the camera roll screen from the arrows". Its ring
+// stop must also carry a screen, or the arrows walk onto it and do nothing.
+it('puts the roll on the camera cycle, as a screen stop', () => {
+  expect([...CAMERA_CYCLE]).toContain('roll')
+  expect(CAMERA_CYCLE_SCREEN.roll).toBe('camera-roll')
+  expect(CAMERA_STOP_BY_SCREEN['camera-roll']).toBe('roll')
+})
+
+// The ring and the wheel are two ways round the same inventory, so a stop that
+// exists in one and not the other is a navigation people cannot predict.
+it("walks the ring in the hold wheel's own tile order", () => {
+  const tiles = CAMERA_HOLD_MENU_ITEMS.map(item => item.title.toLowerCase().replace('camera ', ''))
+  expect([...CAMERA_CYCLE]).toEqual(tiles)
 })

@@ -5,6 +5,7 @@ import PoplurDialog, { type PoplurDialogPill } from './PoplurDialog'
 import { playPop } from './pop'
 import { productImage } from './productImage'
 import { placeCreative, type PlaceCreative } from './placeCreative'
+import { brandAccentFromImage } from './brandAccent'
 import styles from './CommerceSuggestionWindow.module.css'
 
 export interface SuggestionPrimaryAction {
@@ -44,6 +45,11 @@ export default function CommerceSuggestionWindow({
   const productURL = card.link?.url ?? ''
   const [shot, setShot] = useState<string | null>(null)
   const [livePlace, setLivePlace] = useState<PlaceCreative | null>(null)
+  // The colour of the thing that was actually found. Read off the resolved
+  // creative rather than a table of brands, so a shop nobody has heard of gets
+  // its own card too. Null until it resolves, and null forever if the image is
+  // cross-origin — the house pink is the fallback, never a wrong guess.
+  const [accent, setAccent] = useState<string | null>(null)
   useEffect(() => {
     let live = true
     setShot(null)
@@ -64,6 +70,18 @@ export default function CommerceSuggestionWindow({
       .catch(() => { /* the bundled poster is the fallback */ })
     return () => { live = false }
   }, [card.placeCreativeQuery, productURL])
+
+  // Follow whatever image the card settled on, including the bundled poster —
+  // that artwork is the advertiser's too.
+  const creativeSrc = shot ?? (typeof card.media?.src === 'string' ? card.media.src : '')
+  useEffect(() => {
+    let live = true
+    if (!creativeSrc) { setAccent(null); return }
+    brandAccentFromImage(creativeSrc)
+      .then(colour => { if (live) setAccent(colour) })
+      .catch(() => { /* the house colour stands */ })
+    return () => { live = false }
+  }, [creativeSrc])
 
   const safeLink = normalizeInAppBrowserURL(card.link?.url)
 
@@ -102,7 +120,8 @@ export default function CommerceSuggestionWindow({
   // sponsor, channel and offer rows become pills, the way the pop card carries
   // its radius and place.
   const pills: PoplurDialogPill[] = [
-    { icon: '🛍', text: card.sponsor ?? card.title },
+    // Disclosure, always, whatever colour the card is wearing.
+    { icon: '🛍', text: 'Sponsored' },
     ...(card.channelTag ? [{ icon: '📺', text: card.channelTag }] : []),
     ...(card.rows?.slice(0, 3).map(row => ({ icon: '◆', text: `${row.label}: ${row.value}` })) ?? []),
   ]
@@ -113,7 +132,17 @@ export default function CommerceSuggestionWindow({
       variant={variant === 'fullscreen' ? 'media' : 'card'}
       mediaBadge={variant === 'fullscreen' ? 'Sponsored · Poplur Ad' : undefined}
       dataId={`ad:${card.headline}`}
-      eyebrow="POPLUR AD"
+      accent={accent}
+      // The eyebrow names WHAT WAS FOUND, not who is showing it to you. A
+      // window that says POPLUR AD over a Best Buy shelf makes Poplur the
+      // subject of its own discovery; the point of pointing the camera at
+      // something is to be told about the something.
+      //
+      // The "Sponsored" disclosure does NOT go with it — it moves into the
+      // pills below, where it stays visible. Dressing an ad in a brand's own
+      // colours while dropping the word that says it is an ad would be a
+      // different change entirely, and not one worth making.
+      eyebrow={(card.sponsor ?? card.title ?? 'SPOTTED').toUpperCase()}
       title={card.headline}
       subtitle={(
         <>
