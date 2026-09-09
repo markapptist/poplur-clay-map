@@ -132,8 +132,23 @@ export function removeCaptures(ids: readonly string[]): Capture[] {
  */
 let pendingRollPost: { kind: 'photo' | 'video'; src: string; length?: string } | null = null
 
-export function setPendingRollPost(media: { kind: 'photo' | 'video'; src: string; length?: string }): void {
+/** Extra carousel slides parked alongside the cover, in display order. */
+let pendingRollExtras: Array<{ kind: 'photo' | 'video'; src: string; length?: string }> = []
+
+export function setPendingRollPost(
+  media: { kind: 'photo' | 'video'; src: string; length?: string },
+  extras: Array<{ kind: 'photo' | 'video'; src: string; length?: string }> = [],
+): void {
   pendingRollPost = media
+  pendingRollExtras = extras
+}
+
+/** Drained with the cover, never separately: a carousel that loses its extras
+ *  between the roll and the composer would silently post as one photo. */
+export function takePendingRollExtras(): Array<{ kind: 'photo' | 'video'; src: string; length?: string }> {
+  const extras = pendingRollExtras
+  pendingRollExtras = []
+  return extras
 }
 
 export function takePendingRollPost(): { kind: 'photo' | 'video'; src: string; length?: string } | null {

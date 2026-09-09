@@ -12,6 +12,7 @@ import { playPop, popHaptic } from './pop'
 import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
 import { addCapture, removeCaptures, isDetectOn, setDetectOn, onCameraStore, listCaptures, getLibraryNewest, setLastSceneTerms, takePendingMapPost, type PendingMapPost,
   takePendingRollPost,
+  takePendingRollExtras,
 } from './cameraStore'
 import RecognitionAura from './RecognitionAura'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
@@ -482,10 +483,16 @@ export default function Camera({
   // there is no target to gate on — the user pressed POST on a capture and the
   // camera is where the composer lives. One-shot, so an abandoned trip cannot
   // resurface a picture on the next visit.
+  // Extras drain WITH the cover, in the same effect: a carousel that lost its
+  // slides between the roll and the composer would post as one photo without
+  // saying so.
+  const [composingExtras, setComposingExtras] = useState<ComposerMedia[]>([])
   useEffect(() => {
     const parked = takePendingRollPost()
+    const extras = takePendingRollExtras()
     if (!parked) return
     setComposing(parked)
+    setComposingExtras(extras)
   }, [])
   useEffect(() => {
     if (!postTarget) return
@@ -2426,6 +2433,7 @@ export default function Camera({
       {composing && (
         <PostComposer
           media={composing}
+          items={composingExtras.length ? [composing, ...composingExtras] : undefined}
           target={postTarget ?? undefined}
           draft={composerDraft ?? undefined}
           onPosted={onPosted}

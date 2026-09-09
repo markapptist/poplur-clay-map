@@ -216,6 +216,37 @@ export default function CameraRollScreen({
     return () => bindArrows(null)
   }, [bindArrows])
 
+  /**
+   * Post the selection. Two or more photos become a carousel; one is the
+   * ordinary single-photo post it has always been.
+   *
+   * Order is the roll's own display order rather than the order the user
+   * tapped: `selected` is a Set, which has none, and the grid is what the user
+   * is actually looking at while choosing. The first selected capture is the
+   * cover, and the cover is what an old client renders.
+   */
+  const postSelected = () => {
+    const ids = new Set(listSelected())
+    if (!ids.size) return
+    const chosen = captures.filter(capture => ids.has(capture.id))
+    if (!chosen.length) return
+    playPop()
+    // Session captures already hold full-resolution bytes in `src`; only the
+    // device-library tiles need resolving, and those carry no id so they cannot
+    // be selected here in the first place.
+    const slides = chosen.map(capture => ({
+      kind: capture.kind,
+      src: capture.src,
+      length: capture.length,
+    }))
+    // A video is always one post, so a mixed selection posts the cover alone.
+    const carousel = slides.length > 1 && slides.every(slide => slide.kind === 'photo')
+    setPendingRollPost(slides[0], carousel ? slides.slice(1) : [])
+    clearSelection()
+    setManage(false)
+    onClosePage?.()
+  }
+
   const deleteSelected = () => {
     // From the preview it is this one capture; from manage mode, the selection.
     const doomed = viewerItem?.id ? [viewerItem.id] : listSelected()
@@ -258,6 +289,15 @@ export default function CameraRollScreen({
                 onClick={() => { playPop(); allSelected ? clearSelection() : selectAll(selectableIds) }}
               >
                 <SideControlIconImage icon="profile.select_all" displaySize={30} />
+              </button>
+              <button
+                type="button"
+                className={styles.rollAction}
+                aria-label={picked > 1 ? `Post ${picked} as a carousel` : 'Post 1 selected'}
+                disabled={!picked}
+                onClick={postSelected}
+              >
+                <SideControlIconImage icon="profile.camera" displaySize={30} />
               </button>
               <button
                 type="button"
