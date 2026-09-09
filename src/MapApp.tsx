@@ -1645,10 +1645,19 @@ export default function MapApp() {
     return audible
   }, [])
 
-  const speakMapLine = useCallback((line: string, stations: ReadonlyArray<RadioStationCue> = []): boolean => {
+  const speakMapLine = useCallback((
+    line: string,
+    stations: ReadonlyArray<RadioStationCue> = [],
+    topic: MapTourTopic | null = null,
+  ): boolean => {
     if (!applySoundState(true)) return false
     if (window.parent !== window) {
-      window.parent.postMessage({ type: 'poplur-map-speak', line }, '*')
+      // The topic rides with the line. The shell owns the navigator cube and
+      // could not otherwise tell a sports stop from a food one: it received
+      // only the sentence, and the stop's kind went to native alone. This is
+      // the exact signal for "the radio is talking about sports" — the app
+      // authored those words and already knew the topic when it did.
+      window.parent.postMessage({ type: 'poplur-map-speak', line, topic }, '*')
       return true
     }
     // Narration may duck/mix with a station the listener deliberately started,
@@ -2246,7 +2255,7 @@ export default function MapApp() {
       stations,
       dwellMs: TOUR_DWELL_MS,
     })
-    speakMapLine(line, stations)
+    speakMapLine(line, stations, TOUR_TOPIC_FOR_KIND[destination.kind] ?? null)
     const tourFrame = landmarkTourCameraFrame(destination.id)
     let arrivalFallback = 0
     let arrivalSettled = false
@@ -2259,7 +2268,7 @@ export default function MapApp() {
       if (tourPausedRef.current) return
       // Headless drives read these; the UI never does.
       ;(window as unknown as { __poplurSmartCard?: unknown }).__poplurSmartCard = smart
-      speakMapLine(smart.line, stations)
+      speakMapLine(smart.line, stations, TOUR_TOPIC_FOR_KIND[destination.kind] ?? null)
       if (tourPauseAfterStopRef.current) {
         pauseTourAtCurrentStop()
         return

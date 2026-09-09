@@ -18,6 +18,18 @@ import { radiusTrophyColor } from './radiusTrophies'
 import surfaceStyles from './TransientPopupSurface.module.css'
 import CubeTab3D, { DEFAULT_CUBE_MODEL, TAB_ORDER, type CubeTab } from './CubeTab3D'
 import { shouldHidePersistentCube } from './persistentCubeVisibility'
+import {
+  CONTENT_CUBE_DISPLAY_MS,
+  contentCubeModel,
+  topicForFeedChannel,
+  topicForSpokenTour,
+  type ContentCubeTopic,
+} from './contentCubeTopics'
+import {
+  emptyContentCubeSession,
+  reconcileContentCubeSession,
+  type ContentCubeSession,
+} from './contentCubeSession'
 import { useNativeFeedAdVisibility } from './useNativeFeedAdVisibility'
 import { onAvatarCubeChange, wornCubeModelUrl } from './avatarCube'
 import ScreenCoach from './ScreenCoach'
@@ -3206,6 +3218,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         }
       }
       if (event.data.type === 'poplur-map-speak' && typeof event.data.line === 'string') {
+        // The map authored this line and knows the stop's topic, so this is
+        // the exact reading of "the radio is talking about sports" — no guess
+        // at a station name, which is the signal this deliberately avoids.
+        const spoken = topicForSpokenTour(
+          typeof event.data.topic === 'string' ? event.data.topic : null,
+        )
+        if (spoken) setContentTopic(spoken)
         const line = event.data.line.trim().slice(0, 1000)
         if (line && !isGateMuted()) {
           if (isMapRadioActive()) announceMapTour(line)
@@ -3582,6 +3601,53 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // cube, HUD row and stat cards leave entirely (chromeHidden, not the idle
   // ghost) so the clip truly owns the screen. FeedTwin resets this on exit and
   // on unmount, so a tab change can never strand the home with no chrome.
+  // The content cube: a ten-second announcement about what you are watching or
+  // listening to. Two EXACT triggers only — the feed's channel id, and the map
+  // tour's own narration topic, both curated. A tuned internet station's name
+  // is deliberately not one: The Fan 590, TSN 1050 and talkSPORT carry no
+  // "sport" in them, and "fan"/"live"/"talk" false-positive everywhere.
+  const [contentTopic, setContentTopic] = useState<ContentCubeTopic | null>(null)
+  const contentCubeSessionRef = useRef<ContentCubeSession>(emptyContentCubeSession())
+  const [contentCubeActive, setContentCubeActive] = useState(false)
+  // TRIGGER B — the feed's own channel id. Hand-authored and stable (CH 104 is
+  // Sports), so this is a read rather than a guess at a caption. Only the
+  // channel is used: the visible post inside a channel lives in a ref, not
+  // state, so the shell cannot observe it without new plumbing in FeedTwin.
+  useEffect(() => {
+    if (committedTab !== 'feed') return
+    const channel = CHANNELS[chanIndex]
+    const topic = topicForFeedChannel(channel?.id)
+    if (topic) setContentTopic(topic)
+  }, [committedTab, chanIndex])
+
+  // Leaving the context is what re-arms the appearance: the reducer treats a
+  // false signal as the only way out of an exhausted session, so sitting on
+  // the sports channel shows the cube once rather than every ten seconds.
+  useEffect(() => {
+    if (committedTab === 'feed') return
+    setContentTopic(null)
+  }, [committedTab])
+
+  // One bounded appearance per run, through the reducer that was written for
+  // the food cube and orphaned with it.
+  useEffect(() => {
+    const decide = () => {
+      const decision = reconcileContentCubeSession(
+        contentCubeSessionRef.current,
+        contentTopic != null,
+        Date.now(),
+        CONTENT_CUBE_DISPLAY_MS,
+      )
+      contentCubeSessionRef.current = decision.session
+      setContentCubeActive(decision.active)
+      return decision.remainingMs
+    }
+    const remaining = decide()
+    if (remaining == null) return
+    const timer = window.setTimeout(decide, remaining)
+    return () => window.clearTimeout(timer)
+  }, [contentTopic])
+
   const [feedFullscreen, setFeedFullscreen] = useState(false)
   // Profile media is forwarded to the cross-origin map frame. The still is the
   // selfie video's poster; the pin itself is intentionally not a user photo.
@@ -4994,9 +5060,19 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const discoCubeActiveHere = discoCubeActive
     && discoCubeVisible
     && musicSessionRef.current.contextKey === discoNavigationContext
-  const eventCubeModel = mapContextModel ?? (discoCubeActiveHere ? DISCO_BALL_CUBE_MODEL : null)
+  // The content cube sits BELOW weather and breaking news and ABOVE the disco
+  // ball. Weather and news are conditions you may need to act on; this is an
+  // announcement about what you chose to watch. It outranks the disco ball
+  // because that one is content-blind — a music cube over a sports broadcast
+  // would be answering the wrong thing.
+  const contentCubeModelUrl = contentCubeActive ? contentCubeModel(contentTopic) : null
+  const eventCubeModel = mapContextModel
+    ?? contentCubeModelUrl
+    ?? (discoCubeActiveHere ? DISCO_BALL_CUBE_MODEL : null)
   const cubeEventSignal = postVerifiedCubeActive
     ? 'posted'
+    : contentCubeModelUrl
+      ? `content:${contentTopic}`
     : radiusRewardNavigatorModel
       ? `map-reward:dice:${radiusRewardDiceSignal?.changedAt ?? 'unknown'}`
     : breakingNewsCubeActive
