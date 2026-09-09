@@ -1283,7 +1283,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // scrubs non-page ids), and bootResume above additionally refuses anything
   // that is not a real page — so the menu can only open at boot onto an actual
   // screen. Re-disabling this would take the requirement out with the bug.
-  const [holdOpen, setHoldOpen] = useState(initialHoldOpen || bootResume != null)
+  const [holdOpen, setHoldOpen] = useState(initialHoldOpen || bootResume != null || initialCameraPage === 'roll')
   // The nonce is the menu's REMOUNT key. It must move only when a new resume
   // (or a deliberate wheel-open over one) needs a fresh instance — keying by
   // tab remounted the menu in the same render the tab changed, and the fresh
@@ -1296,8 +1296,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     setResume(current => ({ screen: 'profile-stats', n: current.n + 1 }))
     setHoldOpen(true)
   }, [])
+  // `initialCameraPage: 'roll'` is the harness's ?view=cameraroll route. It used
+  // to seed the camera's pager, which is how that route ended up showing a
+  // different roll from every other entrance. It boots the one Camera Roll
+  // screen instead.
   const [resume, setResume] = useState<{ screen: string | null; n: number; origin?: 'bell' }>(
-    { screen: bootResume, n: 0 },
+    { screen: initialCameraPage === 'roll' ? 'camera-roll' : bootResume, n: 0 },
   )
   /** Bumped by a cube long-press while the menu is already up. Unlike the
       resume nonce this does NOT remount the menu — it asks the live instance to
@@ -4446,6 +4450,26 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   //
   // photo -> video -> the camera's subscreens -> CAMERA ROLL -> repeat, in the
   // hold wheel's own tile order so the two navigations agree stop for stop.
+  /**
+   * The one way into the Camera Roll.
+   *
+   * There used to be two rolls: this screen, and a second page of the camera's
+   * own pager that `onOpenRoll` stepped to. They looked different, only one had
+   * the camera-roll cube, and only this one carries selection, deletion and
+   * preview — so which roll you got depended on which control you happened to
+   * press. Every entrance now lands here: the camera's roll button, the wheel's
+   * ROLL action, the channel-arrow ring and the harness route.
+   *
+   * It matters for capture too. The pager kept the viewfinder mounted
+   * underneath, so the shutter stayed live behind a library you were browsing.
+   * As a hold-menu page the camera surface is covered, and the cube belongs to
+   * the page's own back ladder rather than to the shutter.
+   */
+  const openCameraRollScreen = useCallback(() => {
+    setResume(current => ({ screen: 'camera-roll', n: current.n + 1 }))
+    setHoldOpen(true)
+  }, [])
+
   const stepCameraMode = (dir: 1 | -1) => {
     const onRoll = ((cameraStep % 2) + 2) % 2 === 1
     const openRing = holdOpen && cubeScreen ? CAMERA_STOP_BY_SCREEN[cubeScreen] ?? null : null
@@ -4542,7 +4566,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const pendingMenuActionRef = useRef<FeedAction | HomeCameraAction | null>(null)
   const performMenuAction = useCallback((action: FeedAction | HomeCameraAction) => {
     if (action === 'roll') {
-      setCameraStep(current => current + 1)
+      openCameraRollScreen()
       return
     }
     // Selection, not firing. The cube remains the shutter for its selected
@@ -5901,7 +5925,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             // passed, so the camera's bound roll action was a dead end: the
             // only thing that could open the roll was the hold-menu tile,
             // which is exactly the tile that is now a button on the camera.
-            onOpenRoll={() => setCameraStep(s => s + 1)}
+            onOpenRoll={openCameraRollScreen}
             onCloseRoll={() => setCameraStep(s => s - 1)}
             bindActions={actions => { cameraActionsRef.current = actions }}
             onRecordingChange={setRecordMs}

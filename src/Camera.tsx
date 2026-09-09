@@ -502,7 +502,16 @@ export default function Camera({
   // The composer's own back-one-screen, driven by the cube while it is open.
   const composerBackRef = useRef<(() => void) | null>(null)
   const composingRef = useRef(false)
+  /** True while a just-taken photo or clip is on screen awaiting keep/discard.
+   *  `liveSurfaceVisible` deliberately does NOT include this: the viewfinder
+   *  stays mounted so discarding returns you to a warm camera instead of a
+   *  restarting one. That is right for the hardware and wrong for the shutter,
+   *  which stayed armed behind the review — pressing the cube while looking at
+   *  the shot you just took captured another one of whatever the lens happened
+   *  to be pointed at. */
+  const reviewingRef = useRef(false)
   composingRef.current = Boolean(composing)
+  reviewingRef.current = reviewMedia != null
   useLayoutEffect(() => {
     const open = Boolean(composing)
     onComposingChange?.(open)
@@ -1488,8 +1497,10 @@ export default function Camera({
   // ── take a picture ───────────────────────────────────────────────────────
   const capturePhoto = useCallback(() => {
     // Camera Roll is browse/select only. Both the cube and a pinned PHOTO
-    // favourite terminate here while the roll or composer is visible.
-    if (!liveSurfaceVisible || composingRef.current) return
+    // favourite terminate here while the roll or composer is visible — and
+    // while a capture is being reviewed, which keeps the viewfinder mounted
+    // and so passes liveSurfaceVisible.
+    if (!liveSurfaceVisible || composingRef.current || reviewingRef.current) return
     playPop()
     onPhotoCapture?.()
     if (flash && facing === 'user') {
@@ -1646,9 +1657,9 @@ export default function Camera({
   }, [setFlashEnabled])
 
   const toggleVideo = useCallback(() => {
-    // A roll/composer tap must never begin recording. An already-active
+    // A roll/composer/review tap must never begin recording. An already-active
     // recording may still be stopped if a page transition completes mid-tap.
-    if ((page !== 'live' || composingRef.current)
+    if ((page !== 'live' || composingRef.current || reviewingRef.current)
       && !nativeRecordingRef.current
       && !recorderRef.current) return
     if (NATIVE_SHELL && !streamRef.current) {
