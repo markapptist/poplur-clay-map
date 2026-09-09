@@ -351,11 +351,25 @@ export class NativeMapRenderer {
   setConfigProperty(id: string, key: string, value: any) { this.send('config', id, key, value); return this }
   hasImage(id: string) { return this.images.has(id) }
   loadImage(url: string, callback: (error: Error | null, image?: HTMLImageElement) => void) { const image = new Image(); image.crossOrigin = 'anonymous'; image.onload = () => callback(null, image); image.onerror = () => callback(new Error(`Map image failed: ${url}`)); image.src = url }
+  /**
+   * Mapbox accepts three shapes here and so must we. A canvas or an <img> can
+   * be drawn; an ImageData is put; and a bare `{width, height, data}` — the
+   * StyleImageInterface form, which is what the claims hatch is — is neither,
+   * so `drawImage` rejected it with a TypeError. That threw straight out of
+   * `installClaimsLayer`, which runs inside ClayMap's clay-world build, whose
+   * guard reads any throw as "the style went away" and waits for the next
+   * styledata to try again. On the phone it therefore retried forever and the
+   * clay world was never built at all: no clay land colour, no clay roads, no
+   * clay water — a dark base map wearing only the things added outside that
+   * build (labels, the landmark models, the claim ring).
+   */
   addImage(id: string, image: any, options?: any) {
     this.images.add(id)
     const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height
     const context = canvas.getContext('2d')!
-    if (image instanceof ImageData) context.putImageData(image,0,0); else context.drawImage(image,0,0)
+    if (image instanceof ImageData) context.putImageData(image,0,0)
+    else if (image?.data) context.putImageData(new ImageData(new Uint8ClampedArray(image.data), image.width, image.height),0,0)
+    else context.drawImage(image,0,0)
     this.send('image', id, canvas.toDataURL('image/png'), options ?? {}); canvas.width = canvas.height = 1; return this
   }
   queryRenderedFeatures(geometry?: any, options: any = {}) {

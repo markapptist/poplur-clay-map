@@ -133,3 +133,57 @@ describe('native map bridge lifecycle', () => {
     marker.remove()
   })
 })
+
+describe('style images', () => {
+  // happy-dom has no 2D context, so the canvas is stubbed with one that behaves
+  // the way a browser's does about what it will draw: `drawImage` rejects
+  // anything that is not a real drawable, which is the whole point here.
+  function stubContext() {
+    const calls: string[] = []
+    const context = {
+      putImageData: (image: unknown) => {
+        if (!(image instanceof ImageData)) throw new TypeError('putImageData needs ImageData')
+        calls.push('putImageData')
+      },
+      drawImage: (image: unknown) => {
+        const drawable = image instanceof HTMLCanvasElement || image instanceof HTMLImageElement
+        if (!drawable) throw new TypeError("Failed to execute 'drawImage' on 'CanvasRenderingContext2D'")
+        calls.push('drawImage')
+      },
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as never)
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,x')
+    return calls
+  }
+
+  // Mapbox takes a bare { width, height, data } — the StyleImageInterface form
+  // — and that is exactly what the claims hatch is. The bridge fed it to
+  // drawImage, which rejects it, and the TypeError unwound out of
+  // installClaimsLayer through ClayMap's clay-world guard, which read it as the
+  // style going away and retried forever. The phone's map therefore kept the
+  // bare base style: no clay land, no clay roads, no clay water.
+  it('accepts a raw pixel image, not only canvases and ImageData', async () => {
+    const calls = stubContext()
+    const map = makeMap()
+    const size = 2
+    const data = new Uint8Array(size * size * 4).fill(255)
+    expect(() => map.addImage('poplur-claims-hatch', { width: size, height: size, data }, { pixelRatio: 2 }))
+      .not.toThrow()
+    expect(calls).toEqual(['putImageData'])
+    await Promise.resolve()
+    const messages = vi.mocked(postNativeEvent).mock.calls.map(([message]) => message as any)
+    const images = messages.flatMap(message => message.commands ?? []).filter((c: any) => c.op === 'image')
+    expect(images.length).toBe(1)
+    expect(images[0].args[0]).toBe('poplur-claims-hatch')
+    expect(map.hasImage('poplur-claims-hatch')).toBe(true)
+  })
+
+  it('still puts an ImageData and draws a canvas', () => {
+    const calls = stubContext()
+    const map = makeMap()
+    const canvas = document.createElement('canvas'); canvas.width = 2; canvas.height = 2
+    expect(() => map.addImage('from-imagedata', new ImageData(2, 2))).not.toThrow()
+    expect(() => map.addImage('from-canvas', canvas)).not.toThrow()
+    expect(calls).toEqual(['putImageData', 'drawImage'])
+  })
+})

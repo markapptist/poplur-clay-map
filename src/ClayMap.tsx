@@ -4202,7 +4202,20 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         clayWorldBooted = true
         stopBootWatch()
       } catch (error) {
-        console.warn('[ClayMap] style became unavailable during boot; waiting for styledata', error)
+        // Not every throw here is the style going away. A defect inside
+        // buildClayWorld lands in exactly the same place, and worded as
+        // "unavailable" it reads as a transient the retry will clear. It never
+        // does — the next styledata runs the same code into the same throw and
+        // the map sits on the bare base style forever, which is how a native
+        // bridge that could not accept the claims hatch cost the phone its
+        // whole clay world without ever logging an error. Say which one it is.
+        let styleAlive = false
+        try { styleAlive = map.isStyleLoaded() } catch { styleAlive = false }
+        if (styleAlive) {
+          console.error('[ClayMap] clay world build failed while the style was loaded — this is a defect, not a transient', error)
+        } else {
+          console.warn('[ClayMap] style became unavailable during boot; waiting for styledata', error)
+        }
       } finally {
         clayWorldBooting = false
       }
