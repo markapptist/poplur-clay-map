@@ -2663,12 +2663,17 @@ export default function ProfileTwin({
             onClick={() => { playPop(); window.dispatchEvent(new CustomEvent('poplur-open-store')) }}
             aria-label="Store"
           >
-            {/* The clay Poplur bag the hold menu's own STORE tile wears. The
-                supplied profile-controls cart is an app-icon plate on an opaque
-                black ground — no alpha anywhere in the file — so on the
-                profile's light paper it read as a black tile rather than a clay
-                object like the bell, gear and pin beside it. */}
-            <img src="holdmenu/ShoppingBag.png" alt="" draggable="false" />
+            {/* The supplied cart, with its black ground keyed out — the icon
+                the owner asked for, twice. As exported it was an app-icon plate
+                on an opaque black field, which is what read as a black tile.
+                The substitute tried in between (holdmenu/ShoppingBag.png, the
+                hold menu's STORE tote) fixed the plate but not the problem: it
+                is a black-bodied bag, 62% dark pixels against the map pin's
+                2.4% beside it, so it still sat dark in a row of bright clay.
+                Keyed, this measures 40.6% dark / luminance 66.5 against the
+                bag's 62% / 54.1 — closer to the pin's 82.8, and the remaining
+                dark is the artwork's own centre disc rather than a background. */}
+            <img src="profile-controls/shopping-cart.png" alt="" draggable="false" />
           </button>
         )}
       </TabControlRail>
