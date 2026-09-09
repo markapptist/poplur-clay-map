@@ -1268,6 +1268,29 @@ export default function Camera({
   // animation, already finished, never plays again.
   const [focusTap, setFocusTap] = useState<{ x: number; y: number; id: number } | null>(null)
   const focusTapIdRef = useRef(0)
+  const cameraSurfaceRef = useRef<HTMLElement | null>(null)
+  // The lens refocused on its own, so SAY so.
+  //
+  // The shell has always run AVFoundation's default `.continuousAutoFocus` - it
+  // never configures focus at all - so the camera was already refocusing on
+  // whatever came into frame. The bracket just never appeared unless a finger
+  // asked for it, which read as "the app only focuses when I tap". Native now
+  // forwards the device's own subject-area notification and the sight answers
+  // it, in the same place the lens actually focuses: AVFoundation's default AF
+  // region is centre-weighted, and no focusPointOfInterest is ever set, so the
+  // centre is the truth here rather than a guess at a subject.
+  useEffect(() => {
+    const onNativeFocus = () => {
+      const element = cameraSurfaceRef.current
+      if (!element) return
+      const bounds = element.getBoundingClientRect()
+      if (!bounds.width || !bounds.height) return
+      focusTapIdRef.current += 1
+      setFocusTap({ x: bounds.width / 2, y: bounds.height / 2, id: focusTapIdRef.current })
+    }
+    window.addEventListener('poplur-native-camera-focus', onNativeFocus)
+    return () => window.removeEventListener('poplur-native-camera-focus', onNativeFocus)
+  }, [])
   useEffect(() => {
     if (!focusTap) return
     // Matches the 1400ms pulse. The node leaves the DOM rather than lingering
@@ -1812,6 +1835,7 @@ export default function Camera({
   const live = (key: string, real: boolean) => (
     <section
       key={key}
+      ref={real ? cameraSurfaceRef : undefined}
       className={styles.cameraFull}
       aria-label="Camera preview twin"
       onPointerDown={real ? onCameraPointerDown : undefined}
@@ -1942,10 +1966,13 @@ export default function Camera({
           under the controls. Neither is part of the capture. */}
       {real && gridOn && <div className={styles.camGrid} aria-hidden="true" />}
       {/* The focus square: the bracket every camera wears in the middle of the
-          frame. It is a SIGHT, not a readout — nothing on the bridge reports
-          where the lens actually focused, and no shell exposes a focus API to
-          ask — so it never claims a lock, and the green the detector locks with
-          stays the detector's. It now answers a tap where the tap landed and
+          frame. It answers the LENS as well as a finger now. The iOS shell owns
+          the AVCaptureDevice and forwards its subject-area notification, so the
+          sight appears on its own whenever the camera refocuses — which it has
+          always been doing, since the shell never configures focus and so runs
+          AVFoundation's default continuous autofocus. It still never claims a
+          LOCK (nothing reports lens position), and the green the detector locks
+          with stays the detector's. It answers a tap where the tap landed and
           fades, instead of sitting permanently in the middle of the frame at
           44vw: a sight that large covers the subject you are aiming at, and one
           that is always on reads as the app aiming for you. Tap feedback only —

@@ -2851,7 +2851,19 @@ export default function MapApp() {
           { allowSyntheticOnboarding: rnWebShellRoute },
         )
         setOwnUid(nextUid)
-        setNativeAccountTotals(payload.accountTotals ?? null)
+        // Native's own totals take the scale's ceiling too. This is the path a
+        // real device actually uses, so leaving it unclamped meant the card
+        // still read a total above its own maximum however the two web
+        // producers behaved. Only the DISPLAY total saturates; the earned
+        // radius is the create rule's entitlement and is passed through
+        // untouched, because shrinking it is what once made the picker offer
+        // more reach than the server would accept.
+        setNativeAccountTotals(payload.accountTotals
+          ? {
+            ...payload.accountTotals,
+            totalReachKm: clampRadiusKm(payload.accountTotals.totalReachKm),
+          }
+          : null)
         const forwarded = nativeFeedPostsToMapPins(posts, nextUid, { syntheticOnly: rnWebShellRoute })
         setAccountMapPosts(forwarded.filter(p => p.mine))
         if (discoveryEnabled === false || rnWebShellRoute) setLiveMapPosts(forwarded)
@@ -2901,7 +2913,11 @@ export default function MapApp() {
       // server would accept and the drop came back "Missing or insufficient
       // permissions" — worse after every post, since each one widened the gap.
       radiusKm: mine.reduce((sum, pin) => sum + earnedRadiusKmFromPin(pin), 0),
-      totalReachKm: mine.reduce((sum, pin) => sum + Math.max(0, pin.radiusKm), 0),
+      // Saturate at the scale's ceiling, exactly as the web producer does
+      // (accountRadiusSnapshotFromDocuments). Summing per-post radii that are
+      // each already clamped still walks past the top of the scale, which is
+      // how the card came to read a total larger than its own maximum.
+      totalReachKm: clampRadiusKm(mine.reduce((sum, pin) => sum + Math.max(0, pin.radiusKm), 0)),
       postCount: mine.length,
     })
   }, [accountMapPosts, nativeShell, nativeAccountTotals, rnWebShellRoute])

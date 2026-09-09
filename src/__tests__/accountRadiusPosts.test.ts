@@ -7,6 +7,23 @@ import {
 const post = (id: string, data: Record<string, unknown>) => ({ id, data: () => data })
 
 describe('authoritative account post radius', () => {
+  it('saturates the displayed total at the scale ceiling instead of summing past it', () => {
+    // Each post is already clamped to the Earth's radius on the way in, but a
+    // sum of clamped numbers still walks past the top of the scale: the card
+    // read "TOTAL RADIUS 22,573 km of 6,371 km", a total larger than its own
+    // maximum.
+    const documents = Array.from({ length: 6 }, (_, index) => post(String(index), {
+      radiusMeters: 6_371_000,
+    }))
+    const snapshot = accountRadiusSnapshotFromDocuments(documents)
+    expect(snapshot.totalReachKm).toBe(6_371)
+    expect(snapshot.postCount).toBe(6)
+    // The EARNED radius is the create rule's entitlement, not a display number,
+    // and is deliberately left to accumulate: shrinking it is what once made
+    // the picker offer more reach than the server would accept.
+    expect(snapshot.radiusKm).toBeGreaterThan(6_371)
+  })
+
   it('is exactly zero for a fresh account', () => {
     expect(accountRadiusSnapshotFromDocuments([])).toEqual({ radiusKm: 0, totalReachKm: 0, postCount: 0 })
   })
