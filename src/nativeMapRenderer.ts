@@ -8,7 +8,7 @@ import { geographic, mercator, projectWorld, solveProjection, unprojectWorld, ty
 type Listener = { layer?: string; callback: (event: any) => void; once: boolean }
 type Camera = { center: XY; zoom: number; pitch: number; bearing: number }
 type NativeEvent = {
-  type: 'poplur-native-map-event'; session: string; event: string
+  type: 'poplur-native-map-event'; session: string; event: string; op?: string
   camera?: Camera; projection?: ProjectionSample[]; moving?: boolean
   style?: mapboxgl.StyleSpecification; query?: string; features?: any[]
   point?: XY; coordinate?: XY; message?: string; gesture?: boolean; id?: string
@@ -130,7 +130,12 @@ export class NativeMapRenderer {
   private receive = (event: MessageEvent) => this.accept(event.data)
   private accept(data: NativeEvent) {
     if (this.disposed || data?.type !== 'poplur-native-map-event' || data.session !== this.session) return
-    if (data.event === 'error') { this.fire('error', { error: new Error(data.message ?? 'Native map error') }); return }
+    if (data.event === 'error') {
+      // Carry the failing op across. Without it a dead renderer is
+      // indistinguishable from a missed tile on this side.
+      this.fire('error', { error: new Error(data.message ?? 'Native map error'), op: data.op })
+      return
+    }
     if (data.event === 'query' && data.query) {
       if (!this.queries.has(data.query)) return
       this.queries.set(data.query, { features: data.features ?? [], pending: false })

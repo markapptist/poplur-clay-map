@@ -2882,6 +2882,32 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       return
     }
     const mapCanvas = map.getCanvas()
+    // Every native-renderer failure ends at NativeMapRenderer.fire('error'),
+    // and nothing in src/ ever registered a listener for it - so a map that
+    // refused to draw produced no web-side signal at all, which is half of why
+    // an Android map with ZERO clay layers went unnoticed for so long. Native
+    // logs its own side now; this is the web's. console.error is deliberate:
+    // the Android host forwards only ERROR and WARNING console messages to
+    // logcat, so this is what a grep actually finds.
+    //
+    // Deduped and capped, because mapbox-gl fires 'error' for aborted tile
+    // requests too and this must never log per frame. The cap announces itself
+    // rather than going quietly dark.
+    const reportedMapErrors = new Set<string>()
+    let mapErrorsCapped = false
+    map.on('error', (event: unknown) => {
+      const raw = (event as { error?: unknown })?.error
+      const message = String((raw as { message?: unknown })?.message ?? raw ?? 'unknown')
+      if (reportedMapErrors.has(message)) return
+      if (reportedMapErrors.size >= 8) {
+        if (mapErrorsCapped) return
+        mapErrorsCapped = true
+        console.error('[PoplurNativeMap] further distinct map errors suppressed (8 already reported)')
+        return
+      }
+      reportedMapErrors.add(message)
+      console.error(`[PoplurNativeMap] map error native=${SHARED_ADAPTIVE_MAP} ${message}`)
+    })
     // Mapbox constrains the flat Mercator sheet correctly, but inherited
     // padding/pitch/rotation exposes its edge. Normalize direct moves while
     // allowing owned flights to finish; jumpTo during easeTo cancels zoom-in.
