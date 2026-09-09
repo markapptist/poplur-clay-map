@@ -37,14 +37,24 @@
      was clipped by this element. The panel below does the scrolling. */
   padding: 12px;
   border-radius: 34px;
+  /* The frame is Poplur pink by default and BORROWED when a card carries a
+     brand. A scan card sets --dialogAccent to the colour of the thing the
+     camera actually found, so the window arrives looking like that thing
+     rather than like Poplur (see brandAccent.ts). Everything is derived from
+     the one variable, so a card only ever has to supply a colour. */
   background:
-    linear-gradient(180deg, #ff6bb5 0%, #ff2f91 34%, #e8177d 100%);
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--dialogAccent, #ff2f91) 62%, white) 0%,
+      var(--dialogAccent, #ff2f91) 34%,
+      color-mix(in srgb, var(--dialogAccent, #ff2f91) 82%, black) 100%
+    );
   box-shadow:
     inset 0 3px 0 rgba(255, 255, 255, 0.55),
     inset 0 -4px 0 rgba(122, 0, 62, 0.55),
     inset 0 0 0 1px rgba(255, 255, 255, 0.18),
     0 22px 54px rgba(0, 0, 0, 0.62),
-    0 0 30px rgba(246, 59, 154, 0.35);
+    0 0 30px color-mix(in srgb, var(--dialogAccent, #f63b9a) 35%, transparent);
   pointer-events: auto;
   animation: poplurDialogIn 380ms cubic-bezier(0.18, 0.9, 0.26, 1.22) both;
 }
@@ -126,7 +136,8 @@
 
 .eyebrow {
   margin: 0;
-  color: #ff79b9;
+  /* Lifted toward white so a dark brand accent still reads on the panel. */
+  color: color-mix(in srgb, var(--dialogAccent, #ff79b9) 55%, white);
   font: 900 10px/1 system-ui, sans-serif;
   letter-spacing: 0.16em;
   text-align: center;

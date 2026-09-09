@@ -107,8 +107,11 @@ describe('the block control wears the supplied clay art', () => {
     }
   })
 
-  it('replaces the drawn glyph in the feed column and the moulded ring on a visited profile', () => {
-    expect(feed).toMatch(/<SideControlIconImage icon="global.block" displaySize=\{44\}(?: fluid)? \/>/)
+  it('wears the supplied clay art on the profile, and is not offered on the feed at all', () => {
+    // Blocking left the feed entirely (owner decision, 9 Sep): it is a decision
+    // about a PERSON, made on their profile where you can see whose account you
+    // are closing. The feed still honours blocks, it just does not take them.
+    expect(feed).not.toContain('icon="global.block"')
     expect(feed).not.toContain('<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M6 6l12 12" /></svg>')
     expect(profile).toContain('<SideControlIconImage icon="global.block" displaySize={44} />')
     expect(profile).not.toContain('kind="block"')

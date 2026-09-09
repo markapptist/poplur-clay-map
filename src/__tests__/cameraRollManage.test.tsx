@@ -106,7 +106,10 @@ it('parks the capture for the camera when POST is pressed, and leaves', () => {
   const closed = vi.fn()
   act(() => root.render(<CameraRollScreen onClosePage={closed} />))
   act(() => { tiles()[0].click() })
-  const post = Array.from(host.querySelectorAll('button')).find(b => b.textContent === 'Post this')
+  // POST is a rail button now, not a centred pill with a word in it, so it is
+  // found by its accessible name. The behaviour under test — park the media,
+  // leave the page — is unchanged.
+  const post = host.querySelector<HTMLButtonElement>('button[aria-label="Post this capture"]')
   expect(post).toBeDefined()
   act(() => { post!.click() })
   expect(closed).toHaveBeenCalled()

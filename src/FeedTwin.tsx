@@ -74,7 +74,7 @@ import { currentViewerCoords as viewerCoordsFromFix } from './viewerFix'
 import { useFeedPostComments } from './feedPostComments'
 import { mediaTimeLabel } from './mediaTiming'
 import { FEED_CHANNEL_STATIC_MS, FEED_LIVE_DWELL_SECONDS, FEED_PHOTO_DWELL_SECONDS, nextBroadcastPost } from './feedBroadcast'
-import { blockUser, blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } from './blockedUsers'
+import { blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } from './blockedUsers'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
 // a fullscreen vertical TV-channel video pager. Vertical swipe changes channel;
@@ -975,23 +975,16 @@ export default function FeedTwin({
   // Two controls about the post on screen, on the column the action rail
   // leaves free — the seat the camera's grid and timer take above its filter
   // wheel. BLOCK is offered on somebody else's post that carries an account
-  // id (the same rule as the DM above: a block has to land on an account).
-  // DELETE is offered on your own. Each asks first; a block is a boundary
-  // and a delete cannot be undone.
-  const [blockPromptPost, setBlockPromptPost] = useState<ChannelPost | null>(null)
+  // DELETE is offered on your own post, and asks first, because it cannot be
+  // undone. BLOCKING is no longer offered here at all: it is a decision about
+  // a person rather than about a post, so it lives on that person's profile
+  // (ProfileTwin, Block above Message) where you can see whose account you are
+  // closing before you close it. The feed still HONOURS every block —
+  // blockedUsers.ts filters these posts on the next render — it just is not
+  // where the decision gets made.
   const [deletePromptPost, setDeletePromptPost] = useState<ChannelPost | null>(null)
   const [deletePending, setDeletePending] = useState<{ requestId: string; postId: string } | null>(null)
-  const canBlockPoster = Boolean(dmPeer)
   const canDeletePost = Boolean(post?.id && post.ownerId && accountUid && post.ownerId === accountUid)
-  const confirmBlock = () => {
-    const target = blockPromptPost
-    setBlockPromptPost(null)
-    if (!target?.ownerId) return
-    // Local first: feedPostsForChannel drops their pops on the very next
-    // render, so the feed steps off this post by itself.
-    void blockUser({ uid: target.ownerId, username: target.user })
-    showPopup({ kind: 'engagement', icon: '⛔', text: `Blocked ${target.user || 'this account'}` })
-  }
   const confirmDelete = () => {
     const target = deletePromptPost
     const postId = target?.id?.trim()
@@ -2404,27 +2397,12 @@ export default function FeedTwin({
           // under it is the bottom-centre cluster now — so the rail runs the
           // full height instead of reserving room for a block that left.
           reserveBelow="0px"
-          // Block and delete belong to the action rail. The countdown sits
-          // under the username, and the opposite rail is the channel dial.
-          head={post && canBlockPoster ? (
-            <span className={styles.railHead}>
-              {/* Block wears the supplied clay art (global.block) through the
-                  registry, like every other side control. A plain button so
-                  the pointer-down can stay out of the channel dial's hands. */}
-              {canBlockPoster && (
-                <button
-                  type="button"
-                  className={styles.railArt}
-                  aria-label={`Block ${post?.user || 'this account'}`}
-                  data-feed-block=""
-                  onPointerDown={event => event.stopPropagation()}
-                  onClick={event => { event.stopPropagation(); playPop(); if (post) setBlockPromptPost(post) }}
-                >
-                  <SideControlIconImage icon="global.block" displaySize={44} fluid />
-                </button>
-              )}
-            </span>
-          ) : undefined}
+          // NO block control here. Blocking is a decision about a PERSON, and
+          // it is made on that person's profile, where you can see who they
+          // are before you decide (ProfileTwin carries Block above Message).
+          // On the feed it sat one thumb-width from Like on a post that was
+          // still playing, deciding for a whole account on the strength of a
+          // few seconds of video.
           onDelete={canDeletePost && post ? () => { playPop(); if (!deletePending) setDeletePromptPost(post) } : undefined}
           deletePending={Boolean(deletePending)}
           muted={muted}
@@ -2449,19 +2427,6 @@ export default function FeedTwin({
           onLike={likeCurrentPost}
           onDislike={dislikeCurrentPost}
         />
-        {blockPromptPost && (
-          <div className={surfaceStyles.scrim} onClick={() => setBlockPromptPost(null)} data-feed-safety-dialog="">
-            <PoplurDialog
-              eyebrow="Poplur"
-              title={`Block ${blockPromptPost.user || 'this account'}?`}
-              subtitle="Their pops leave your map and feed, and messages close both ways. You can undo this in Settings › Blocked."
-              primaryAction={{ label: 'Block', onActivate: () => { playPop(); confirmBlock() } }}
-              secondaryAction={{ label: 'Keep seeing them', onActivate: () => { playPop(); setBlockPromptPost(null) } }}
-              onClose={() => { playPop(); setBlockPromptPost(null) }}
-              dataId={`feed-block:${blockPromptPost.ownerId ?? ''}`}
-            />
-          </div>
-        )}
         {deletePromptPost && !deletePending && (
           <PostDeleteDialog
             onDelete={() => { playPop(); confirmDelete() }}

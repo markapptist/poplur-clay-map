@@ -13,7 +13,7 @@ import { cameraRollDisplayItems } from './cameraRollPolicy'
 // clay stills stand in for photos, the channel ad creatives for videos (their
 // first frame + a duration badge, like iOS Photos).
 
-interface RollItem {
+export interface RollItem {
   kind: 'photo' | 'video'
   src: string
   /** mm:ss badge for videos */
@@ -128,7 +128,16 @@ export default function CameraRoll({
   manage?: boolean
   /** Open the tile at this flat index in the host's preview. Takes precedence
    *  over composing, and is ignored in manage mode where a tap selects. */
-  onOpenItem?: (index: number, items: readonly { kind: 'photo' | 'video'; src: string; length?: string; poster?: string; id?: string }[]) => void
+  /** Hand the page the tapped tile, the whole library, and a resolver for
+   *  ORIGINAL-resolution pixels — the grid only ever holds thumbnails. */
+  onOpenItem?: (
+    index: number,
+    items: readonly RollItem[],
+    resolveFullAsset: (
+      item: RollItem,
+      resolve: (src: string, kind: 'photo' | 'video') => void,
+    ) => () => void,
+  ) => void
 } = {}) {
   // Native shell: the REAL device photo library replaces the mock grid. The
   // list remains thumbnail-only so opening it does not marshal 24 full-size
@@ -264,6 +273,58 @@ export default function CameraRoll({
   const items = [...shot, ...rollItems]
     .filter(item => (!photoOnly || item.kind === 'photo') && (!videoOnly || item.kind === 'video'))
 
+  /**
+   * Ask the shell for this asset at original resolution.
+   *
+   * The grid is fed THUMBNAILS — that is the whole point of the roll bridge,
+   * and it is why the tiles are cheap. Anything that shows an asset large has
+   * to come back here for the real pixels first, or it paints a thumbnail
+   * blown up to full screen. This resolver is exported upward (onOpenItem's
+   * third argument) because the native callbacks may only ever have ONE owner
+   * — see the effect above — so the page cannot run its own copy.
+   */
+  const resolveFullAsset = (
+    item: RollItem,
+    resolve: (src: string, kind: 'photo' | 'video') => void,
+  ): (() => void) => {
+    const settleWithThumbnail = () => resolve(item.fullSrc || item.src, item.kind)
+    if (!isNativeShell() || !item.assetId) {
+      settleWithThumbnail()
+      return () => {}
+    }
+    const requestId = `roll-view-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+    const finishFallback = () => {
+      const pending = pendingAssetRequests.current.get(requestId)
+      if (!pending) return
+      pendingAssetRequests.current.delete(requestId)
+      settleWithThumbnail()
+    }
+    const timer = window.setTimeout(finishFallback, ROLL_ASSET_TIMEOUT_MS)
+    pendingAssetRequests.current.set(requestId, {
+      assetId: item.assetId,
+      timer,
+      fallback: settleWithThumbnail,
+      resolve,
+    })
+    if (!postNativeEvent({
+      type: 'requestCameraRollAsset',
+      requestId,
+      assetId: item.assetId,
+      maxPixelSize: MAX_ROLL_ASSET_EDGE,
+    })) {
+      window.clearTimeout(timer)
+      finishFallback()
+    }
+    // Stepping to the next capture must abandon this one, or a late iCloud
+    // result paints the picture you already walked past.
+    return () => {
+      const pending = pendingAssetRequests.current.get(requestId)
+      if (!pending) return
+      window.clearTimeout(pending.timer)
+      pendingAssetRequests.current.delete(requestId)
+    }
+  }
+
   const pickItem = (item: RollItem) => {
     playPop()
     // In manage mode a tap is a selection, whether or not a picker is wired.
@@ -278,7 +339,7 @@ export default function CameraRoll({
     // what a tile means on the roll PAGE, and posting is a control inside the
     // preview rather than the consequence of a tap.
     if (onOpenItem) {
-      onOpenItem(items.indexOf(item), items)
+      onOpenItem(items.indexOf(item), items, resolveFullAsset)
       return
     }
     if (!onPick) {

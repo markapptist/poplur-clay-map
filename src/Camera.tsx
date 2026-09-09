@@ -8,9 +8,9 @@ import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import { readCameraAiVoice, writeCameraAiVoice, onCameraPreferenceChange } from './cameraPreferences'
 import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
-import { playPop } from './pop'
+import { playPop, popHaptic } from './pop'
 import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
-import { addCapture, isDetectOn, setDetectOn, onCameraStore, listCaptures, getLibraryNewest, setLastSceneTerms, takePendingMapPost, type PendingMapPost,
+import { addCapture, removeCaptures, isDetectOn, setDetectOn, onCameraStore, listCaptures, getLibraryNewest, setLastSceneTerms, takePendingMapPost, type PendingMapPost,
   takePendingRollPost,
 } from './cameraStore'
 import RecognitionAura from './RecognitionAura'
@@ -208,6 +208,11 @@ function clampZoom(value: number, range: CameraZoomRange): number {
 // the capture, the recording and — next — the AR filters all have to act on an
 // actual frame. Where the camera is refused or absent, the viewfinder stays
 // plainly unavailable and offers a retry instead of pretending a still is live.
+/** How often the camera puts the focus square up and re-runs autofocus.
+ *  Long enough not to read as a flashing UI or to make the lens hunt
+ *  continuously; short enough that pointing at something new gets answered. */
+const AUTO_REFOCUS_MS = 4_000
+
 export default function Camera({
   step = 0,
   captureMode = 'photo',
@@ -297,6 +302,9 @@ export default function Camera({
   })
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  // Who the scanner last recognised, so the confirmation haptic fires on the
+  // EDGE of recognising someone rather than on every frame they are in.
+  const lastRecognizedKeyRef = useRef<string | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const deferredCameraActionRef = useRef<DeferredCameraAction | null>(null)
   const [deferredCameraActionToken, setDeferredCameraActionToken] = useState(0)
@@ -460,6 +468,12 @@ export default function Camera({
   // or recorder produced, then keep it (→ composer) or retake (→ live camera).
   // Roll picks bypass this — choosing a saved photo is already a decision.
   const [reviewMedia, setReviewMedia] = useState<ComposerMedia | null>(null)
+  // Which roll entry this review is showing. Every capture route adds to the
+  // roll BEFORE the review opens (so a crash between the two cannot lose the
+  // shot), which means Retake has to take it back out again — otherwise every
+  // rejected frame stayed in the roll forever and "retake" only meant "take
+  // another one as well".
+  const [reviewCaptureId, setReviewCaptureId] = useState<string | null>(null)
   const [composerDraft, setComposerDraft] = useState<Omit<PendingMapPost, 'media'> | null>(null)
   // Camera→map, the return leg: a target arriving while a parked draft exists
   // means the user just picked their spot — resume the SAME draft at the
@@ -940,6 +954,18 @@ export default function Camera({
             : detection)
           : detail
       setDetections(enriched)
+      // The phone confirms a RECOGNITION in the hand, not just on the screen.
+      // Edge-triggered on the identity: detections arrive many times a second
+      // and a buzz per frame would be a continuous rumble, so this fires once
+      // when a face becomes known and stays silent until it is a different
+      // person (or the same person re-enters frame after leaving).
+      const recognizedKey = resolvedUser
+        ? (resolvedUser.handle ?? resolvedUser.name ?? 'known')
+        : null
+      if (recognizedKey && recognizedKey !== lastRecognizedKeyRef.current) {
+        popHaptic()
+      }
+      lastRecognizedKeyRef.current = recognizedKey
       onDetectUser?.(resolvedUser)
       // The scanner: each DISTINCT object cashes in the radius it holds in
       // other people's posts. A new find pops, exactly like a claim landing.
@@ -1314,6 +1340,49 @@ export default function Camera({
       window.removeEventListener('poplur-native-camera-focus', onNativeFocus)
     }
   }, [])
+  /**
+   * The camera refocuses on a beat, and SHOWS it.
+   *
+   * The lens has always run continuous autofocus, but nothing drove it and the
+   * square only ever appeared when a finger asked — so the app looked like it
+   * focused only when tapped. This puts the sight in the middle of the frame on
+   * a fixed cadence, fires the haptic, and asks the shell for a REAL one-shot
+   * autofocus (CameraKitController.refocusCentre) rather than drawing over a
+   * lens nobody is driving.
+   *
+   * Only while the viewfinder is actually live and front: a timer that keeps
+   * refocusing a parked preview is battery spent on a camera nobody is looking
+   * at, and the governor parks this surface deliberately.
+   */
+  useEffect(() => {
+    if (!effectiveLiveSurfaceVisible || nativePreviewParked) return
+    if (reviewMedia || composing) return
+    const beat = window.setInterval(() => {
+      const element = cameraSurfaceRef.current
+      if (!element) return
+      const bounds = element.getBoundingClientRect()
+      if (!bounds.width || !bounds.height) return
+      focusTapIdRef.current += 1
+      setFocusTap({ x: bounds.width / 2, y: bounds.height / 2, id: focusTapIdRef.current })
+      // The square is the tell; the buzz is the confirmation. Haptic only —
+      // a camera that chirped every few seconds would be unusable.
+      popHaptic()
+      // iOS drives the real lens. Browsers/Android get the same request through
+      // the track constraint where the platform supports it; where it does not,
+      // continuous AF is already running and the square is still honest.
+      postNativeEvent({ type: 'cameraControl', control: 'refocus' })
+      const track = streamRef.current?.getVideoTracks?.()[0]
+      try {
+        // focusMode is a real constraint but is missing from lib.dom's
+        // MediaTrackConstraintSet, so it has to be asserted through.
+        void track?.applyConstraints({
+          advanced: [{ focusMode: 'single-shot' }],
+        } as unknown as MediaTrackConstraints)
+      } catch { /* focusMode is not universally supported; AF continues */ }
+    }, AUTO_REFOCUS_MS)
+    return () => window.clearInterval(beat)
+  }, [effectiveLiveSurfaceVisible, nativePreviewParked, reviewMedia, composing])
+
   useEffect(() => {
     if (!focusTap) return
     // Matches the 1400ms pulse. The node leaves the DOM rather than lingering
@@ -1482,6 +1551,7 @@ export default function Camera({
       ctx.drawImage(faceAR, 0, 0, faceAR.width, faceAR.height, 0, 0, canvas.width, canvas.height)
     }
     const shot = addCapture({ kind: 'photo', src: canvas.toDataURL('image/jpeg', 0.9) })
+    setReviewCaptureId(shot.id)
     // A capture that only lands in the roll looks like nothing happened. Review
     // it first — accept moves on to the composer, retake returns to live.
     setReviewMedia({ kind: 'photo', src: shot.src })
@@ -1559,6 +1629,7 @@ export default function Camera({
         } catch { /* tainted or torn down — fall back to the video frame */ }
       }
       const clip = addCapture({ kind: 'video', src: URL.createObjectURL(blob), length: mmss(performance.now() - started), poster })
+      setReviewCaptureId(clip.id)
       recorderRef.current = null
       setRecStart(null)
       playPop()
@@ -2325,8 +2396,19 @@ export default function Camera({
       {reviewMedia && !composing && (
         <CaptureReview
           media={reviewMedia}
-          onAccept={() => { setComposing(reviewMedia); setReviewMedia(null) }}
-          onRetake={() => setReviewMedia(null)}
+          onAccept={() => { setComposing(reviewMedia); setReviewMedia(null); setReviewCaptureId(null) }}
+          onRetake={() => {
+            // Throw the rejected shot away rather than leaving it in the roll.
+            if (reviewCaptureId) removeCaptures([reviewCaptureId])
+            setReviewMedia(null)
+            setReviewCaptureId(null)
+          }}
+          onKeep={reviewCaptureId ? () => {
+            // It is already in the roll — this is simply the exit that does not
+            // go on to the composer, so you can keep shooting.
+            setReviewMedia(null)
+            setReviewCaptureId(null)
+          } : undefined}
         />
       )}
       {/* Every capture route — shutter, recording, roll pick — ends here. */}

@@ -66,8 +66,11 @@ describe('the capture review is not covered by the home chrome', () => {
     expect(panelBlocks.some(block => block.includes('var(--composer-home-clearance)'))).toBe(true)
     expect(reviewCss).toContain('bottom: var(--composer-home-clearance)')
     expect(reviewCss).toContain('background: transparent')
-    expect(review).toContain("import dialog from './PoplurDialog.module.css'")
-    expect(review).toContain('className={dialog.primary}')
-    expect(review).toContain('${dialog.primary} ${styles.retake}')
+    // The three exits are RAIL buttons now, not bubbly pills across the middle
+    // of the shot. The clearance contract above is unchanged and still matters:
+    // the copy panel still spends it, and the rail brings its own.
+    expect(review).toContain("import TabControlRail from './TabControlRail'")
+    expect(review).toContain('label="Review controls"')
+    expect(review).not.toContain("import dialog from './PoplurDialog.module.css'")
   })
 })

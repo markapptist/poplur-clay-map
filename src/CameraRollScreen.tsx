@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import CameraRoll from './CameraRoll'
+import CameraRoll, { type RollItem } from './CameraRoll'
 import PoplurDialog from './PoplurDialog'
-import { SideControlIconImage } from './SideControlIcon'
+import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
+import TabControlRail from './TabControlRail'
+import { useControlSide } from './controlPlacement'
 import styles from './ViewHarness.module.css'
 import { playPop } from './pop'
 import { useImmersiveControls } from './useImmersiveControls'
@@ -32,13 +34,14 @@ import {
  * Profile and Mail. Manage mode lives here, opt-in, so those three are
  * untouched.
  */
-interface RollViewerItem {
-  kind: 'photo' | 'video'
-  src: string
-  length?: string
-  poster?: string
-  id?: string
-}
+type RollViewerItem = RollItem
+
+/** The resolver CameraRoll hands up when a tile is opened. The grid holds
+ *  thumbnails; this is the only way to the real pixels. */
+type ResolveFullAsset = (
+  item: RollItem,
+  resolve: (src: string, kind: 'photo' | 'video') => void,
+) => () => void
 
 export default function CameraRollScreen({
   onPick,
@@ -79,8 +82,33 @@ export default function CameraRollScreen({
   const selectableIds = useMemo(() => captures.map(c => c.id), [captures])
   const allSelected = selectableIds.length > 0 && picked >= selectableIds.length
 
+  // The grid is fed thumbnails, so the tile's own src is a small JPEG. Opening
+  // it full screen used to paint exactly that, stretched over the whole stage —
+  // which is why a library photo looked soft and pixelated here while the same
+  // picture was sharp in Photos. Ask the shell for the real asset on open, and
+  // show the thumbnail meanwhile so the viewer never flashes empty.
+  const controlSide = useControlSide()
+  const resolveFullAssetRef = useRef<ResolveFullAsset | null>(null)
+  const [fullSrc, setFullSrc] = useState<string | null>(null)
+
   const keyOf = (item: RollViewerItem | undefined) => item?.id ?? item?.src ?? null
   const viewerItem = viewerIdx == null ? undefined : viewerItems[viewerIdx]
+
+  // One request per opened item, abandoned the moment you step to another so a
+  // slow iCloud fetch cannot paint over the picture you already walked past.
+  const viewerSrcKey = viewerItem ? (viewerItem.assetId ?? viewerItem.src) : null
+  useEffect(() => {
+    setFullSrc(null)
+    if (!viewerItem) return
+    const resolve = resolveFullAssetRef.current
+    if (!resolve) return
+    let live = true
+    const abandon = resolve(viewerItem, src => {
+      if (live) setFullSrc(src)
+    })
+    return () => { live = false; abandon() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewerSrcKey])
 
   // If the list moved under the preview, follow the capture rather than the
   // slot. Closing on every re-push is the bug this avoids: the shell answers
@@ -95,7 +123,12 @@ export default function CameraRollScreen({
     else { setViewerIdx(null); viewerKeyRef.current = null }
   }, [viewerItems, viewerIdx])
 
-  const openViewer = useCallback((index: number, items: readonly RollViewerItem[]) => {
+  const openViewer = useCallback((
+    index: number,
+    items: readonly RollViewerItem[],
+    resolve: ResolveFullAsset,
+  ) => {
+    resolveFullAssetRef.current = resolve
     setViewerItems(items)
     setViewerIdx(index)
     viewerKeyRef.current = keyOf(items[index])
@@ -263,47 +296,57 @@ export default function CameraRollScreen({
           onPointerCancel={endViewerGesture}
         >
           {viewerItem.kind === 'photo' ? (
-            <img className={styles.rollViewerMedia} src={viewerItem.src} alt="" draggable={false} />
+            <img
+              className={styles.rollViewerMedia}
+              src={fullSrc ?? viewerItem.fullSrc ?? viewerItem.src}
+              alt=""
+              draggable={false}
+            />
           ) : (
             // key on the src so stepping to another clip swaps the element
             // rather than reusing one decoder for a different video, which
             // leaves the previous frame on screen until the new one paints.
             <video
-              key={viewerItem.src}
+              key={fullSrc ?? viewerItem.src}
               className={styles.rollViewerMedia}
-              src={viewerItem.src}
+              src={fullSrc ?? viewerItem.fullSrc ?? viewerItem.src}
               poster={viewerItem.poster}
               controls
               playsInline
             />
           )}
-          <div className={styles.rollViewerActions}>
-            <button
-              type="button"
-              className={styles.rollViewerPost}
-              onClick={() => {
+          {/* The roll's own side rail, in the app's one control language. A
+              centred "Post this" pill was the only place in Poplur where the
+              action on an open piece of media was a word in the middle of the
+              screen rather than a button on the rail your thumb already rests
+              on — and it sat over the picture you were trying to look at. */}
+          <TabControlRail side={controlSide} label="Capture controls">
+            <SideControlIconButton
+              icon="profile.camera"
+              aria-label="Post this capture"
+              onActivate={() => {
                 playPop()
                 // The page lives in the hold menu, not in Camera, so it cannot
                 // reach Camera's composer state. Park the media and leave; the
-                // camera drains it on arrival.
-                setPendingRollPost({ kind: viewerItem.kind, src: viewerItem.src, length: viewerItem.length })
+                // camera drains it on arrival. Post the RESOLVED asset, never
+                // the grid thumbnail, or the pop ships at tile resolution.
+                setPendingRollPost({
+                  kind: viewerItem.kind,
+                  src: fullSrc ?? viewerItem.fullSrc ?? viewerItem.src,
+                  length: viewerItem.length,
+                })
                 closeViewer()
                 onClosePage?.()
               }}
-            >
-              Post this
-            </button>
-            {viewerItem.id && (
-              <button
-                type="button"
-                className={styles.rollViewerDelete}
+            />
+            {viewerItem.id ? (
+              <SideControlIconButton
+                icon="profile.delete"
                 aria-label="Delete this capture"
-                onClick={() => { playPop(); setConfirming(true) }}
-              >
-                <SideControlIconImage icon="profile.delete" displaySize={30} />
-              </button>
-            )}
-          </div>
+                onActivate={() => { playPop(); setConfirming(true) }}
+              />
+            ) : null}
+          </TabControlRail>
         </div>
       )}
       {confirming && (

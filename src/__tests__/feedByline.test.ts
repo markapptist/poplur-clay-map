@@ -48,7 +48,12 @@ describe('feed popup and profile radius', () => {
     expect(win).toContain("import PoplurDialog, { type PoplurDialogPill } from './PoplurDialog'")
     expect(win).not.toContain('NewsPopCard')
     expect(win).toContain('<PoplurDialog')
-    expect(win).toContain('eyebrow="POPLUR AD"')
+    // The eyebrow names WHAT WAS FOUND now, not who is showing it — a scan
+    // card wears the identity of the thing the camera recognised. The
+    // disclosure moved into the pills rather than disappearing.
+    expect(win).not.toContain('eyebrow="POPLUR AD"')
+    expect(win).toContain("eyebrow={(card.sponsor ?? card.title ?? 'SPOTTED').toUpperCase()}")
+    expect(win).toContain("{ icon: '🛍', text: 'Sponsored' }")
     // Sponsor, channel and offer rows travel as fact pills, the way the pop
     // card carries its radius and place.
     expect(win).toMatch(/const pills: PoplurDialogPill\[\] = \[[\s\S]*?card\.sponsor \?\? card\.title/)
