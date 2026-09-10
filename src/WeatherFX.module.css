@@ -6,6 +6,24 @@
   overflow: hidden;
 }
 
+/* The thermal governor parks generic decorative animation after a short idle —
+   and on a native shell that idle is a 3s burst followed by a 12s rest, with a
+   return visit to the map asleep on arrival. Weather is a live map condition,
+   not decoration, so keep its small, compositor-only visual layer moving while
+   this screen is visible. Without this the drops sit paused at top:-30px and
+   real rain shows as clear sky. Audio and document-hidden timers are still
+   stopped in WeatherFX.tsx. Emergency/low-power remain the final thermal safety
+   valve — matched case-insensitively because the iOS shell writes LOW_POWER /
+   EMERGENCY while index.css spells them lower-case.
+
+   This rule was lost once already (authored in cd21f96, clobbered by the
+   27 Aug shared-snapshot import) while WeatherFX.tsx kept referencing the
+   class. weatherFxAlwaysAnimating.test.ts now pins both halves together. */
+:global(html.poplur-ambient-sleep:not([data-poplur-performance-mode="low_power" i]):not([data-poplur-performance-mode="emergency" i])) .weatherAlwaysAnimating,
+:global(html.poplur-ambient-sleep:not([data-poplur-performance-mode="low_power" i]):not([data-poplur-performance-mode="emergency" i])) .weatherAlwaysAnimating * {
+  animation-play-state: running !important;
+}
+
 /* ── Rain: glossy clay droplets streaking down ── */
 .drop {
   position: absolute;
