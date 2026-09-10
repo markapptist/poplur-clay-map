@@ -23,7 +23,15 @@ function makeParticles(count: number, seed: number): Particle[] {
   const rand = () => { s = (s * 16807) % 2147483647; return s / 2147483647 }
   return Array.from({ length: count }, () => ({
     left: rand() * 100,
-    delay: rand() * 4,
+    // NEGATIVE, so every particle starts already in flight. Two things follow
+    // that a positive delay did not give us. The storm is at full strength on
+    // the first frame — a delay of up to 4s meant the native shell's 3s ambient
+    // burst could expire before some drops had started at all. And every PAUSED
+    // frame now holds the particle at a scattered on-screen position instead of
+    // at its authored top:-30px, so anything that stops the motion (reduced
+    // motion, low power, emergency) leaves static weather rather than clear
+    // sky. Stopping the rain must never mean hiding the rain.
+    delay: -rand() * 4,
     duration: 0.6 + rand() * 0.9,
     scale: 0.6 + rand() * 0.8,
   }))

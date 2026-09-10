@@ -62,3 +62,41 @@ describe('WeatherFX ambient-sleep exemption', () => {
     expect(INDEX_CSS).toMatch(/animation-play-state:\s*paused\s*!important/)
   })
 })
+
+describe('Weather never renders as nothing', () => {
+  // The whole class of bug behind "it was raining but I saw no rain": a
+  // particle rests at its authored top:-30px, ABOVE the viewport, so every
+  // mechanism that stops the motion — ambient sleep, low power, emergency,
+  // reduced motion — turned a rainy map into clear sky rather than into still
+  // rain. A negative animation-delay moves the resting frame on screen, so
+  // stopping the motion can only ever make the weather STILL, never absent.
+
+  it('starts every particle already in flight, so a paused frame is on screen', () => {
+    expect(WEATHER_FX_TSX).toMatch(/delay:\s*-rand\(\)/)
+    // A positive delay also meant the native shell's 3s ambient burst could
+    // expire before a drop with a 4s delay had started at all.
+    expect(WEATHER_FX_TSX).not.toMatch(/delay:\s*rand\(\)\s*\*/)
+  })
+
+  it('keeps reduced motion still rather than empty', () => {
+    const reduced = WEATHER_FX_CSS.slice(WEATHER_FX_CSS.indexOf('prefers-reduced-motion'))
+    // Particles pause (visible, motionless); they must not lose the animation
+    // outright, which is what put them back above the viewport.
+    expect(reduced).toMatch(/\.drop,\s*\.flake,\s*\.stone\s*\{\s*animation-play-state:\s*paused/)
+    expect(reduced).not.toMatch(/\.drop[^{]*\{\s*animation:\s*none/)
+  })
+
+  it('applies the motion preference to hail too', () => {
+    // .stone was absent from the reduced-motion block entirely, so hail kept
+    // hammering down for a user who had asked for less motion.
+    const reduced = WEATHER_FX_CSS.slice(WEATHER_FX_CSS.indexOf('prefers-reduced-motion'))
+    expect(reduced).toContain('.stone')
+  })
+
+  it('leaves clouds on `animation: none`, whose resting frame is the visible one', () => {
+    // Inverse of the particles: `drift` STARTS at translate -240px, off the
+    // left edge, so pausing a cloud would hide it. Natural position is correct.
+    const reduced = WEATHER_FX_CSS.slice(WEATHER_FX_CSS.indexOf('prefers-reduced-motion'))
+    expect(reduced).toMatch(/\.cloud,\s*\.lightning,\s*\.fog\s*\{\s*animation:\s*none/)
+  })
+})

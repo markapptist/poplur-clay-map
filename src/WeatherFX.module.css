@@ -149,5 +149,18 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .drop, .flake, .cloud, .lightning, .fog { animation: none; }
+  /* Reduced motion must remove MOTION, not information — a map in a downpour
+     still has to read as rain. Pausing holds each particle at the scattered
+     mid-fall position its negative delay puts it at, so the storm goes STILL
+     rather than disappearing. `animation: none` sent them back to the authored
+     top:-30px, above the viewport: measured 0 of 46 drops on screen, i.e. a
+     rainy map rendering as clear sky. .stone was missing from this block
+     entirely, so hail ignored the preference altogether. */
+  .drop, .flake, .stone { animation-play-state: paused; }
+
+  /* Clouds are the opposite case: `drift` STARTS at translate -240px, off the
+     left edge, so their visible resting state is the natural position that
+     `none` restores. Lightning must not strobe, and fog is a static wash
+     without its pulse. */
+  .cloud, .lightning, .fog { animation: none; }
 }
