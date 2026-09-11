@@ -629,6 +629,21 @@ export default function Camera({
     if (!NATIVE_CAMERA_PREVIEW || !effectiveLiveSurfaceVisible || !nativeCameraBudget?.canResume) return
     postNativeEvent({ type: 'cameraControl', control: 'resumePreview' })
   }, [effectiveLiveSurfaceVisible, nativeCameraBudget?.canResume])
+  // The gesture-only rule above is a THERMAL rule: a sensor the OS parked for
+  // heat must not restart from a timer. A park the device can serve again —
+  // a recording that ended, a window that expired, an entry that never
+  // opened — is different: the sensor was running a moment ago and the user
+  // is still looking at the viewfinder. Reopen it as soon as the surface is
+  // visible instead of leaving a black frame behind a "Camera ready to
+  // resume" card. Native still decides: if it is too warm it answers with a
+  // thermal park and the card shows; the effect fires once per budget value.
+  useEffect(() => {
+    if (!NATIVE_CAMERA_PREVIEW || !effectiveLiveSurfaceVisible) return
+    if (nativeCameraBudget?.state !== 'parked' || !nativeCameraBudget.canResume) return
+    if (nativeCameraBudget.reason === 'thermal' || nativeCameraBudget.reason === 'unavailable') return
+    if (nativeCameraBudget.reason === 'leftCamera') return
+    postNativeEvent({ type: 'cameraControl', control: 'resumePreview' })
+  }, [effectiveLiveSurfaceVisible, nativeCameraBudget])
   // An applied AR filter needs a face reading even when object detection is
   // toggled off. Merely opening the filter tray on "None" does not: starting
   // ML for a menu visit warmed the phone before any effect was selected.
