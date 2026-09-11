@@ -840,9 +840,10 @@
   height: 100%;
   padding: 0;
   border: 0;
-  background:
-    radial-gradient(circle at 50% 48%, rgba(246, 59, 154, 0.06), rgba(9, 3, 9, 0.5) 72%),
-    rgba(7, 4, 9, 0.2);
+  /* No dimming. While Drop a Pop is up the thing the user is deciding about
+     is the claim circle on the map behind it, so the scrim only catches the
+     dismiss tap and leaves the map at full strength. */
+  background: transparent;
   cursor: default;
 }
 
@@ -875,16 +876,19 @@
   padding: 0;
   border: 3px solid #ff82c4;
   border-radius: 28px;
+  /* Translucent, deliberately: the owner wants to SEE the radius claim on the
+     map while the slider moves. Same clay palette, at glass opacity, and the
+     big drop shadows eased so they stop shading the circle beneath. */
   background:
-    radial-gradient(circle at 22% -4%, rgba(255, 121, 193, 0.42), transparent 36%),
-    linear-gradient(145deg, #49142f 0%, #220817 48%, #10080f 100%);
+    radial-gradient(circle at 22% -4%, rgba(255, 121, 193, 0.30), transparent 36%),
+    linear-gradient(145deg, rgba(73, 20, 47, 0.58) 0%, rgba(34, 8, 23, 0.52) 48%, rgba(16, 8, 15, 0.56) 100%);
   box-shadow:
-    0 7px 0 #7d124c,
-    0 11px 0 rgba(27, 4, 18, 0.86),
-    0 24px 52px rgba(5, 2, 6, 0.64),
-    0 0 24px rgba(246, 59, 154, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.66),
-    inset 0 -3px 0 rgba(0, 0, 0, 0.34);
+    0 7px 0 rgba(125, 18, 76, 0.7),
+    0 11px 0 rgba(27, 4, 18, 0.5),
+    0 18px 36px rgba(5, 2, 6, 0.28),
+    0 0 24px rgba(246, 59, 154, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -3px 0 rgba(0, 0, 0, 0.24);
   color: #fff7fb;
   font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
   animation: composePop 0.22s cubic-bezier(0.2, 1.45, 0.4, 1) both;
@@ -1001,9 +1005,11 @@
 .composeBody {
   padding: 12px;
   color: #24101c;
+  /* Light glass, not a slab. The section cards inside carry the legibility
+     (they stay more opaque); the gaps between them show the claim circle. */
   background:
-    radial-gradient(circle at 88% 6%, rgba(127, 227, 255, 0.2), transparent 34%),
-    linear-gradient(160deg, #fff8fc 0%, #f6d9e8 100%);
+    radial-gradient(circle at 88% 6%, rgba(127, 227, 255, 0.14), transparent 34%),
+    linear-gradient(160deg, rgba(255, 248, 252, 0.40) 0%, rgba(246, 217, 232, 0.36) 100%);
 }
 
 .composeRadiusPanel,
@@ -1014,13 +1020,16 @@
   padding: 9px 10px 10px;
   border: 2px solid #f25aab;
   border-radius: 19px;
+  /* The section cards carry the legibility of a translucent dialog, so they
+     stay the most opaque layer — but glass, not a slab: the claim circle on
+     the map still reads through them while the slider moves. */
   background:
-    radial-gradient(circle at 12% 0%, rgba(255,255,255,.98), transparent 45%),
-    linear-gradient(160deg, #fffafd, #f7d6e7);
+    radial-gradient(circle at 12% 0%, rgba(255,255,255,.72), transparent 45%),
+    linear-gradient(160deg, rgba(255, 250, 253, 0.74), rgba(247, 214, 231, 0.68));
   box-shadow:
-    0 4px 0 #a9276a,
-    0 7px 13px rgba(76, 15, 50, 0.18),
-    inset 0 1px 0 #fff;
+    0 4px 0 rgba(169, 39, 106, 0.85),
+    0 6px 11px rgba(76, 15, 50, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .composeSectionHeader {
