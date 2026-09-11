@@ -3391,6 +3391,32 @@ export default function MapApp() {
   /** The pop itself, as the dialog a tap opens: who, what they said, the
    *  media, and the ways to act on it. Shared with SELECT MODE, whose arrows
    *  land on this card too — a preview window, not just a name at the top. */
+  /** Hand a pop to the Feed: the shell switches to Feed, tunes the pop's channel
+   *  and focuses this post (HomeTwin's poplur-map-open-feed-content handler).
+   *  Only a pop that HAS media can travel — the feed drops a media-less row on
+   *  the native path while the map still shows the pin, so callers keep the
+   *  card for those. Used by the card's VIEW IN FEED and, since the owner asked
+   *  for it on 11 Sep, by a plain press on the pin. */
+  const openPinInFeed = useCallback((pin: PopPin) => {
+    window.parent?.postMessage({
+      type: 'poplur-map-open-feed-content',
+      content: {
+        id: pin.id,
+        channelId: pin.channel ?? 'live',
+        username: pin.user ?? '@you',
+        caption: pin.media?.alt || pin.name,
+        mediaURL: pin.media?.src,
+        mediaType: pin.media?.kind === 'image' ? 'photo' : 'video',
+        posterURL: pin.media?.poster,
+        radiusMeters: Math.max(0, pin.radiusKm * 1_000),
+        createdAtMillis: 0,
+        locationVisibility: 'approximate',
+        originLatitude: Math.round(pin.coords[1] * 1_000) / 1_000,
+        originLongitude: Math.round(pin.coords[0] * 1_000) / 1_000,
+      },
+    }, '*')
+  }, [])
+
   const showPinContentCard = useCallback((pin: PopPin) => {
     showPopup({
       kind: 'mapContent',
@@ -3408,25 +3434,7 @@ export default function MapApp() {
       // then drops on the native path while the map still shows the pin — the
       // exact mismatch that makes a post look present and broken at once.
       // Without this the card simply does not offer the action.
-      onActivate: pin.media ? () => {
-        window.parent?.postMessage({
-          type: 'poplur-map-open-feed-content',
-          content: {
-            id: pin.id,
-            channelId: pin.channel ?? 'live',
-            username: pin.user ?? '@you',
-            caption: pin.media?.alt || pin.name,
-            mediaURL: pin.media?.src,
-            mediaType: pin.media?.kind === 'image' ? 'photo' : 'video',
-            posterURL: pin.media?.poster,
-            radiusMeters: Math.max(0, pin.radiusKm * 1_000),
-            createdAtMillis: 0,
-            locationVisibility: 'approximate',
-            originLatitude: Math.round(pin.coords[1] * 1_000) / 1_000,
-            originLongitude: Math.round(pin.coords[0] * 1_000) / 1_000,
-          },
-        }, '*')
-      } : undefined,
+      onActivate: pin.media ? () => { openPinInFeed(pin) } : undefined,
       action: {
         label: pin.user ? `VIEW ${pin.user}` : 'VIEW YOUR PROFILE',
         onActivate: () => {
@@ -3812,10 +3820,17 @@ export default function MapApp() {
     markPostsSeen([feedPostIdFromPinId(pin.id)])
     setCurrentPlace(displayPlaceName(pin.name))
     focusMapPointForPin(pin.id)
+    // OWNER DECISION 11 Sep: pressing a pin shows the post's media directly in
+    // the Feed, on its channel — no card in between. Automatic landings (the
+    // point arrows) and pops without media keep the card: the arrows are a
+    // survey, and a media-less pop cannot travel to the feed at all.
+    const directToFeed = !automatic && Boolean(pin.media)
     // Show how much ground this pop holds: its radius painted on the land in
-    // the pin's own colour, cleared again when the card goes.
+    // the pin's own colour, cleared again when the card goes. Not on the
+    // direct-to-feed path — there is no card to clear it, and a stale
+    // spotlight would greet the user on the way back to the map.
     const live = mapRef.current
-    if (live) {
+    if (live && !directToFeed) {
       try {
         installPinSpotlight(live)
         updatePinSpotlight(live, pin)
@@ -3836,8 +3851,9 @@ export default function MapApp() {
       popId: pin.id,
     }, '*')
 
-    showPinContentCard(pin)
-  }, [accountPostCount, accountRadiusKm, accountTotalReachKm, focusMapPointForPin, liveMapPosts, showPinContentCard])
+    if (directToFeed) openPinInFeed(pin)
+    else showPinContentCard(pin)
+  }, [accountPostCount, accountRadiusKm, accountTotalReachKm, focusMapPointForPin, liveMapPosts, openPinInFeed, showPinContentCard])
 
   /** Where the radius bench has planted its pin, if it has. Dev-only; null in
    *  every shipped build because the bench that sets it cannot render there. */
