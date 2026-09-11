@@ -2,7 +2,7 @@
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import CameraAvailability, { readNativeCameraBudget, type NativeCameraBudget } from '../CameraAvailability'
+import CameraAvailability, { cameraParkPlan, readNativeCameraBudget, type NativeCameraBudget } from '../CameraAvailability'
 
 let root: Root | undefined
 afterEach(() => {
@@ -73,5 +73,38 @@ describe('native camera availability', () => {
     const budget: NativeCameraBudget = { state: 'parked', reason: 'thermal', canResume: false, windowMs: 0 }
     Object.assign(window, { __poplurCameraBudget: budget })
     expect(readNativeCameraBudget()).toEqual(budget)
+  })
+})
+
+describe('cameraParkPlan', () => {
+  const parked = (reason: NativeCameraBudget['reason'], canResume: boolean): NativeCameraBudget =>
+    ({ state: 'parked', reason, canResume, windowMs: 0 })
+
+  it('never gates a park the device serves again on its own', () => {
+    for (const reason of ['recordingFinished', 'windowExpired', 'explicitResume'] as const) {
+      expect(cameraParkPlan(parked(reason, true)), reason).toEqual({ card: false, autoResume: true, graceMs: 0 })
+    }
+  })
+
+  it('leaves entry to native, which reopens the window when its grant lands', () => {
+    expect(cameraParkPlan(parked('entry', true))).toEqual({ card: false, autoResume: false, graceMs: 0 })
+  })
+
+  it('retries a resumable start failure once and holds the card for a beat', () => {
+    // A transient "could not start" (device lock busy, input not yet attached)
+    // recovers on its own or on this retry; the card must not flash for it.
+    expect(cameraParkPlan(parked('unavailable', true))).toEqual({ card: true, autoResume: true, graceMs: 1200 })
+    expect(cameraParkPlan(parked('unavailable', false))).toEqual({ card: true, autoResume: false, graceMs: 0 })
+  })
+
+  it('makes heat wait for a deliberate tap, with no grace and no auto-resume', () => {
+    expect(cameraParkPlan(parked('thermal', true))).toEqual({ card: true, autoResume: false, graceMs: 0 })
+    expect(cameraParkPlan(parked('thermal', false))).toEqual({ card: true, autoResume: false, graceMs: 0 })
+  })
+
+  it('shows nothing when running, recording, hidden, or absent', () => {
+    expect(cameraParkPlan(null)).toEqual({ card: false, autoResume: false, graceMs: 0 })
+    expect(cameraParkPlan({ state: 'running', reason: 'entry', canResume: false, windowMs: 0 }).card).toBe(false)
+    expect(cameraParkPlan(parked('leftCamera', true)).card).toBe(false)
   })
 })

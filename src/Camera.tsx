@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import CameraRoll from './CameraRoll'
-import CameraAvailability, { readNativeCameraBudget, type NativeCameraBudget } from './CameraAvailability'
+import CameraAvailability, { cameraParkPlan, readNativeCameraBudget, type NativeCameraBudget } from './CameraAvailability'
 import PoplurDialog from './PoplurDialog'
 import ShellOverlayPortal from './ShellOverlayPortal'
 import CameraScanButton from './CameraScanButton'
@@ -637,12 +637,20 @@ export default function Camera({
   // visible instead of leaving a black frame behind a "Camera ready to
   // resume" card. Native still decides: if it is too warm it answers with a
   // thermal park and the card shows; the effect fires once per budget value.
+  // The plan (cameraParkPlan) says whether to ask native once, and whether to
+  // hold the card back for a grace period first. A grace that expires while
+  // the same park is still in force reveals the card; native publishing a new
+  // state cancels it. Native still decides — a hot device answers with a
+  // thermal park, which has no grace and no auto-resume.
+  const [parkedCardHeld, setParkedCardHeld] = useState(false)
   useEffect(() => {
-    if (!NATIVE_CAMERA_PREVIEW || !effectiveLiveSurfaceVisible) return
-    if (nativeCameraBudget?.state !== 'parked' || !nativeCameraBudget.canResume) return
-    if (nativeCameraBudget.reason === 'thermal' || nativeCameraBudget.reason === 'unavailable') return
-    if (nativeCameraBudget.reason === 'leftCamera') return
-    postNativeEvent({ type: 'cameraControl', control: 'resumePreview' })
+    if (!NATIVE_CAMERA_PREVIEW || !effectiveLiveSurfaceVisible) { setParkedCardHeld(false); return }
+    const plan = cameraParkPlan(nativeCameraBudget)
+    if (plan.autoResume) postNativeEvent({ type: 'cameraControl', control: 'resumePreview' })
+    if (!plan.card || plan.graceMs <= 0) { setParkedCardHeld(false); return }
+    setParkedCardHeld(true)
+    const timer = window.setTimeout(() => setParkedCardHeld(false), plan.graceMs)
+    return () => window.clearTimeout(timer)
   }, [effectiveLiveSurfaceVisible, nativeCameraBudget])
   // An applied AR filter needs a face reading even when object detection is
   // toggled off. Merely opening the filter tray on "None" does not: starting
@@ -1979,7 +1987,7 @@ export default function Camera({
       style={{ touchAction: real ? 'pan-y' : undefined }}
     >
       {real && NATIVE_CAMERA_PREVIEW && effectiveLiveSurfaceVisible && !needsCameraPermission && (
-        <CameraAvailability budget={nativeCameraBudget} onResume={resumeNativePreview}
+        <CameraAvailability budget={parkedCardHeld ? null : nativeCameraBudget} onResume={resumeNativePreview}
           onOpenRoll={() => onOpenRoll?.()} />
       )}
       {!NATIVE_CAMERA_PREVIEW && real && (
