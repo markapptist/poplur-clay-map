@@ -35,6 +35,24 @@ export function authToken(): string | null {
   return idToken
 }
 
+/** The uid inside the token the shell pushed, or null. A Firebase ID token is
+ *  a JWT whose `sub` is the uid; reading it needs no verification here — the
+ *  server verifies the signature on every call — and it is how the web layer
+ *  learns WHO is signed in on the native shell before any screen has fetched
+ *  a profile. Read from the held token even once it has expired: the uid does
+ *  not change when the token does, and a fresh token is requested for sending. */
+export function authUid(): string | null {
+  if (!idToken) return null
+  try {
+    const payload = idToken.split('.')[1] ?? ''
+    const padded = payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(payload.length + (4 - payload.length % 4) % 4, '=')
+    const claims = JSON.parse(atob(padded)) as { sub?: unknown; user_id?: unknown }
+    if (typeof claims.sub === 'string' && claims.sub) return claims.sub
+    if (typeof claims.user_id === 'string' && claims.user_id) return claims.user_id
+    return null
+  } catch { return null }
+}
+
 /** Ask the shell for a fresh token. It answers on poplur-native-auth-token.
  *  This goes over the NATIVE BRIDGE, not a window event: a window event stays
  *  inside this document, where the shell cannot hear it. */

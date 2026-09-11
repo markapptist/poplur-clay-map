@@ -4,7 +4,14 @@ import { onlinePeopleSnapshot, presenceCountFromResponse, startAppPresence } fro
 import { resetAccountStoreForTests, setAccountAuth, setAccountProfile } from '../accountStore'
 
 vi.mock('../nativeBridge', () => ({ isNativeShell: () => true }))
-vi.mock('../nativeAuth', () => ({ authToken: () => 'test-token', requestAuthToken: vi.fn() }))
+// The shell's auth, as the reporter sees it: what token it holds, whose it is,
+// and whether it has been asked for one. Tests move these to stage a launch.
+const native = vi.hoisted(() => ({ token: 'test-token' as string | null, uid: null as string | null, request: vi.fn() }))
+vi.mock('../nativeAuth', () => ({
+  authToken: () => native.token,
+  authUid: () => native.uid,
+  requestAuthToken: native.request,
+}))
 
 let stop: (() => void) | undefined
 let fetchMock: ReturnType<typeof vi.fn>
@@ -15,6 +22,7 @@ const settle = async () => { await vi.advanceTimersByTimeAsync(0) }
 beforeEach(() => {
   vi.useFakeTimers()
   resetAccountStoreForTests()
+  native.token = 'test-token'; native.uid = null; native.request.mockClear()
   delete window.__poplurNativeAppActive
   vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
   fetchMock = vi.fn(reply)
@@ -31,6 +39,24 @@ describe('one foreground presence reporter', () => {
     expect(presenceCountFromResponse({ peopleOnline: 0, validForMs: 120_000 })).toBe(0)
     expect(presenceCountFromResponse({ peopleOnline: -1, validForMs: 120_000 })).toBeNull()
     expect(presenceCountFromResponse({ peopleOnline: '1200000', validForMs: 120_000 })).toBeNull()
+  })
+  it('on the native shell the pushed ID token alone starts reporting — no profile visit needed', async () => {
+    // A fresh native launch: the shell is signed in, but the web account store
+    // is empty and no token has been pushed yet. This is the phone's real
+    // startup, and the reporter used to sit dark here until a Profile visit.
+    native.token = null
+    stop = startAppPresence(); await settle()
+    expect(native.request).toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    native.token = 'test-token'; native.uid = 'tester-one'
+    window.dispatchEvent(new CustomEvent('poplur-native-auth-token', { detail: { token: 'test-token', expiresIn: 3600 } })); await settle()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][1].headers.authorization).toBe('Bearer test-token')
+    expect(requests()[0].active).toBe(true)
+    expect(onlinePeopleSnapshot()).toBe(3)
+    // A plain refresh of the same person's token is not a restart.
+    window.dispatchEvent(new CustomEvent('poplur-native-auth-token', { detail: { token: 'test-token-2', expiresIn: 3600 } })); await settle()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
   it('renews once per minute without restarting on profile metadata changes', async () => {
     signIn(); stop = startAppPresence(); await settle()

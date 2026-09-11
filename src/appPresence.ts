@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react'
 import { accountSnapshot, onAccountChange } from './accountStore'
-import { authToken, requestAuthToken } from './nativeAuth'
+import { authToken, authUid, requestAuthToken } from './nativeAuth'
 import { isNativeShell } from './nativeBridge'
 
 const URL = 'https://us-central1-poplur2025.cloudfunctions.net/appPresence'
@@ -102,7 +102,16 @@ export function startAppPresence(): () => void {
   }
   const sync = () => {
     const account = accountSnapshot()
-    const nextUid = account.authenticated ? account.uid : null
+    // The native shell owns auth, and the web account store only learns the
+    // uid from the web Firebase SDK (null on native) or from a Profile visit —
+    // so on a fresh native launch it sits empty while the shell is signed in,
+    // and ONLINE NOW never reported until the person happened to open their
+    // profile. Read the uid off the shell's ID token instead, the way every
+    // other native call already trusts that token; if none has been pushed
+    // yet, ask, and the token listener below re-syncs when it lands.
+    const native = isNativeShell()
+    const nextUid = account.authenticated ? account.uid : native ? authUid() : null
+    if (!nextUid && native && !authToken()) requestAuthToken()
     revision++
     clearTimeout(timer)
     if (uid !== nextUid || !isActive()) offline()
@@ -120,6 +129,13 @@ export function startAppPresence(): () => void {
   const offAccount = onAccountChange(account => {
     if ((account.authenticated ? account.uid : null) !== uid) sync()
   })
+  // The shell answered a token request, or refreshed one. Only a CHANGE of who
+  // is signed in restarts the reporter — a plain refresh must not fire an extra
+  // pulse — the same rule the account listener applies. nativeAuth's own
+  // listener stores the token first: it registered at module load, and this
+  // module imports it, so it is always ahead of us on the same event.
+  const nativeToken = () => { if (isNativeShell() && authUid() !== uid) sync() }
+  window.addEventListener('poplur-native-auth-token', nativeToken)
   document.addEventListener('visibilitychange', sync)
   window.addEventListener('poplur-native-app-lifecycle', lifecycle)
   window.addEventListener('pagehide', hide)
@@ -132,6 +148,7 @@ export function startAppPresence(): () => void {
     offline()
     clearTimeout(timer); clearTimeout(expiry)
     offAccount()
+    window.removeEventListener('poplur-native-auth-token', nativeToken)
     document.removeEventListener('visibilitychange', sync)
     window.removeEventListener('poplur-native-app-lifecycle', lifecycle)
     window.removeEventListener('pagehide', hide)
