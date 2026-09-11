@@ -15,6 +15,9 @@ import { addCapture, removeCaptures, isDetectOn, setDetectOn, onCameraStore, lis
   takePendingRollExtras,
 } from './cameraStore'
 import RecognitionAura from './RecognitionAura'
+import DetectionOverlay from './DetectionOverlay'
+import { focusLockFor, objectLookupUrl } from './focusLock'
+import { openInPoplurBrowser } from './inAppBrowser'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
 import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
 import CameraARRail from './CameraARRail'
@@ -408,6 +411,29 @@ export default function Camera({
   const detectionsRef = useRef(detections)
   detectionsRef.current = detections
   const currentCameraReads = useMemo(() => meaningfulCameraReads(detections), [detections])
+
+  // Pressing the focus square. The square is the handle on what the scanner
+  // found (focusLock.ts): a known face goes IN to that person's profile — the
+  // same event the news page uses to open an author, so the shell owns the
+  // tab switch — and anything the app does not know goes OUT to the Poplur
+  // browser, on the first Google result for the object. Native owns the
+  // external document, exactly as it does for every other advertised link.
+  const onFocusLockPress = useCallback((detection: Detection) => {
+    const lock = focusLockFor(detection)
+    if (!lock || !lock.action) return
+    if (lock.kind === 'user') {
+      popHaptic()
+      window.dispatchEvent(new CustomEvent('poplur-open-profile-mode', {
+        // No handle means YOU — the same convention the shell's handler reads.
+        detail: detection.isUser ? {} : { handle: detection.user?.handle },
+      }))
+      return
+    }
+    const url = objectLookupUrl(detection.label)
+    if (!url) return
+    playPop()
+    openInPoplurBrowser(url)
+  }, [])
   const [lastCameraReads, setLastCameraReads] = useState<Detection[]>([])
   const detectorRef = useRef<FrameDetector | null>(null)
   const [commerceCard, setCommerceCard] = useState<SmartCard | null>(null)
@@ -2090,6 +2116,21 @@ export default function Camera({
           active={effectiveLiveSurfaceVisible && auraDetections.length > 0}
           motionAllowed={liveDetectionActive && !nativePreviewParked && recognitionMotionAllowed}
           userSeen={auraDetections.some(d => d.isUser || (faceIdEnabled() && !!d.user))}
+        />
+      )}
+      {/* The focus square, locked to whatever the scanner found. Retired on
+          7 Aug for the rainbow edge above; back by request as a HANDLE rather
+          than a marker: green for a Poplur user (press → their profile), red
+          for anything the app does not know (press → the Poplur browser on
+          the first Google result). It rides the same gates as the aura, and
+          the same mirror as the AR, so a selfie lock sits on the face the eye
+          sees. A parked preview shows no square: there is nothing live to
+          press on. */}
+      {real && detectOn && effectiveLiveSurfaceVisible && !nativePreviewParked && (
+        <DetectionOverlay
+          detections={detections}
+          mirrored={facing === 'user'}
+          onPress={onFocusLockPress}
         />
       )}
 

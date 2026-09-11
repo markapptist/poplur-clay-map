@@ -1,30 +1,66 @@
-/* Detection overlay — green locks over the viewfinder, labels in the same
-   shader type the radius label and the feed use, so they read against any
-   frame the camera happens to be pointing at. */
+/* Focus squares over the viewfinder. The colour is the verdict: green is a
+   Poplur user, red is something the app does not know. Both are pressable. */
 
 .layer {
   position: absolute;
   inset: 0;
+  /* The layer itself must never take a gesture — an inset:0 element that
+     eats touches is the exact defect that once made the map read as locked.
+     Only the squares are targets. */
   pointer-events: none;
   z-index: 24;
 }
 
 .box {
   position: absolute;
-  border: 2px solid rgba(77, 255, 105, 0.9);
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 2px solid var(--lock);
   border-radius: 4px;
   box-shadow:
-    0 0 12px rgba(77, 255, 105, 0.35),
-    inset 0 0 18px rgba(77, 255, 105, 0.12);
+    0 0 12px var(--lockGlow),
+    inset 0 0 18px var(--lockInner);
   transition: left 0.12s linear, top 0.12s linear, width 0.12s linear, height 0.12s linear;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
-/* a person reads warmer than a chair */
+.box:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+
+.box:active {
+  transform: scale(0.97);
+}
+
+/* Someone the app knows: green, the colour a recognition has always been. */
 .boxUser {
-  border-color: rgba(120, 255, 150, 0.95);
-  box-shadow:
-    0 0 20px rgba(77, 255, 105, 0.5),
-    inset 0 0 26px rgba(77, 255, 105, 0.16);
+  --lock: rgba(120, 255, 150, 0.95);
+  --lockGlow: rgba(77, 255, 105, 0.5);
+  --lockInner: rgba(77, 255, 105, 0.16);
+  --bracket: #7dff9a;
+}
+
+/* Something the app does not know: red, so a stranger's face and an LG TV
+   read as "outside Poplur" at a glance, and pressing goes OUT to the browser
+   rather than IN to a profile. */
+.boxObject {
+  --lock: rgba(255, 84, 84, 0.95);
+  --lockGlow: rgba(255, 60, 60, 0.45);
+  --lockInner: rgba(255, 60, 60, 0.14);
+  --bracket: #ff6b6b;
+}
+
+/* A square with nothing useful to do on press — an unrecognised person, whose
+   only "search" would be the word person. Still red, still a lock; just not a
+   button in the hand. */
+.boxInert {
+  cursor: default;
+  pointer-events: none;
 }
 
 /* corner brackets */
@@ -32,7 +68,8 @@
   position: absolute;
   width: 12px;
   height: 12px;
-  border: 3px solid #7dff9a;
+  border: 3px solid var(--bracket);
+  pointer-events: none;
 }
 
 .c1 { top: -3px; left: -3px; border-right: 0; border-bottom: 0; }
@@ -40,8 +77,7 @@
 .c3 { bottom: -3px; left: -3px; border-right: 0; border-top: 0; }
 .c4 { bottom: -3px; right: -3px; border-left: 0; border-top: 0; }
 
-/* The per-box label pill (.tag / .tagText / .tagUserText / .pct) lived here.
-   It is gone: the boxes no longer carry the class name and confidence, because
-   that put a second and third piece of text on screen against the shader
-   readout under the wordmark. The readout names one winner; these boxes only
-   show where the model is looking. */
+@media (prefers-reduced-motion: reduce) {
+  .box { transition: none; }
+  .box:active { transform: none; }
+}
