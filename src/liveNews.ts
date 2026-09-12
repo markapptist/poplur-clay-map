@@ -17,6 +17,7 @@ export interface LiveNewsSource {
 }
 
 export interface LiveNewsMedia {
+  embedUrl?: string;
   kind: 'photo' | 'video'
   src: string
   poster?: string
@@ -25,7 +26,20 @@ export interface LiveNewsMedia {
   rights: 'provider-thumbnail' | 'official-embed' | 'licensed' | 'preview'
 }
 
+export interface LiveNewsAuthor {
+  id: string;
+  name: string;
+  handle: string;
+  avatar?: string;
+  bio?: string;
+  profileUrl: string;
+  platform: "Bluesky";
+  region: string;
+}
+
 export interface LiveNewsEvent {
+  author?: LiveNewsAuthor;
+  hashtags?: string[];
   id: string
   title: string
   /** Source-derived editorial summary. AI may refine this server-side, but it
@@ -82,7 +96,7 @@ const FAILURE_BACKOFF_MS = 60_000
 const CACHE_MAX_MS = 24 * 60 * 60_000
 const EVENT_MAX_AGE_MS = 7 * 24 * 60 * 60_000
 const WIRE_STALE_MS = 90 * 60_000
-const MAX_EVENTS = 40
+const MAX_EVENTS = 120
 const FOREGROUND_REFRESH_MS = 5 * 60_000
 
 const STATUS_SCORE: Record<LiveNewsStatus, number> = {
@@ -200,7 +214,19 @@ function mediaField(value: unknown): LiveNewsMedia | null {
     : null
   if (!kind || !src || !sourceUrl || !credit || !rights) return null
   const poster = kind === 'video' ? httpsUrl(record.poster) : null
-  return { kind, src, sourceUrl, credit, rights, ...(poster ? { poster } : {}) }
+  const candidate = httpsUrl(record.embedUrl)
+  const embedUrl = candidate && /^https:\/\/embed\.bsky\.app\/embed\/did:plc:[a-z0-9]+\/app\.bsky\.feed\.post\/[a-z0-9]+$/.test(candidate) ? candidate : null
+  if (record.embedUrl && (!embedUrl || kind !== 'video' || rights !== 'official-embed')) return null
+  return { kind, src, sourceUrl, credit, rights, ...(poster ? { poster } : {}), ...(embedUrl ? { embedUrl } : {}) }
+}
+
+function authorField(value: unknown): LiveNewsAuthor | undefined {
+  const r = recordField(value)
+  if (!r || r.platform !== 'Bluesky') return undefined
+  const id = textField(r.id,100), name = textField(r.name,100), handle = textField(r.handle,100)
+  const profileUrl = httpsUrl(r.profileUrl), avatar = httpsUrl(r.avatar), bio = textField(r.bio,400)
+  if (!/^did:plc:[a-z0-9]+$/.test(id) || !name || !/^[a-z0-9.-]+$/.test(handle) || profileUrl !== `https://bsky.app/profile/${id}`) return undefined
+  return { id, name, handle, profileUrl, platform: 'Bluesky', region: textField(r.region,80), ...(avatar ? { avatar } : {}), ...(bio ? { bio } : {}) }
 }
 
 function eventField(value: unknown, nowMs: number): LiveNewsEvent | null {
@@ -208,7 +234,7 @@ function eventField(value: unknown, nowMs: number): LiveNewsEvent | null {
   const record = value as Record<string, unknown>
   const id = textField(record.id, 180)
   const title = textField(record.title, 220)
-  const summary = textField(record.summary, 520)
+  const summary = textField(record.summary, 1000)
   const place = textField(record.place, 160)
   const country = textField(record.country, 100)
   const category = textField(record.category, 80) || 'world'
@@ -252,6 +278,8 @@ function eventField(value: unknown, nowMs: number): LiveNewsEvent | null {
     confidence,
     sources,
     media,
+    ...(authorField(record.author) ? { author: authorField(record.author) } : {}),
+    hashtags: Array.isArray(record.hashtags) ? [...new Set(record.hashtags.filter((tag): tag is string => typeof tag === 'string' && /^[\p{L}\p{N}_]{1,64}$/u.test(tag)))].slice(0,12) : [],
   }
 }
 

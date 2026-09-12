@@ -224,3 +224,19 @@ describe('shared live news wire', () => {
     expect(liveNewsCameraFrame(event({ scope: 'global' })).zoom).toBe(3.1)
   })
 })
+
+describe('real source identities and official media', () => {
+  const author = { id: 'did:plc:abc123', name: 'World Source', handle: 'news.example', profileUrl: 'https://bsky.app/profile/did:plc:abc123', platform: 'Bluesky' as const, region: 'Global' }
+  const media = { kind: 'video' as const, src: 'https://video.bsky.app/thumb.jpg', sourceUrl: 'https://bsky.app/profile/did:plc:abc123/post/xyz', credit: 'World Source', rights: 'official-embed' as const, embedUrl: 'https://embed.bsky.app/embed/did:plc:abc123/app.bsky.feed.post/xyz' }
+  it('preserves author identities, Unicode hashtags, and a validated player', () => {
+    const [parsed] = parseLiveNewsPayload([event({ author, hashtags: ['CélineDion', 'CélineDion', '<bad>'], media: [media] })],NOW)
+    expect(parsed.author).toEqual(author)
+    expect(parsed.hashtags).toEqual(['CélineDion'])
+    expect(parsed.media[0].embedUrl).toEqual(media.embedUrl)
+  })
+  it('rejects impostor profile URLs and foreign iframe origins', () => {
+    const [parsed] = parseLiveNewsPayload([event({ author: { ...author, profileUrl: 'https://evil.example' }, media: [{ ...media, embedUrl: 'https://evil.example/player' }] })],NOW)
+    expect(parsed.author).toBeUndefined()
+    expect(parsed.media).toEqual([])
+  })
+})

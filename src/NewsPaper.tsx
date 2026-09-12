@@ -9,6 +9,7 @@ import { localDaylight } from './skyCycle'
 import ScreenCoach from './ScreenCoach'
 import ClayCornerButton from './ClayCornerButton'
 import ShaderVideoPlayer from './ShaderVideoPlayer'
+import NewsSourceVideo from './NewsSourceVideo'
 import TabControlRail from './TabControlRail'
 import SideControlIconButton from './SideControlIcon'
 import { useControlSide } from './controlPlacement'
@@ -41,7 +42,7 @@ import {
 // Publisher-sourced reporting and the messages you posted on the map.
 
 type EntryMediaAttachment = NewsMediaAttachment & Partial<Pick<LiveNewsMedia,
-  'credit' | 'sourceUrl' | 'rights'
+  'credit' | 'sourceUrl' | 'rights' | 'embedUrl'
 >>
 
 export interface Entry {
@@ -131,10 +132,10 @@ function liveEntries(list: LiveNewsEvent[], nowMs: number): Entry[] {
   return list.map(event => ({
     id: `live-news-${event.id}`,
     kind: 'liveNews' as const,
-    who: event.sources[0]?.publisher ?? 'Poplur News',
-    handle: '@poplurnews',
-    avatar: '/holdmenu/News.png',
-    headline: event.title,
+    who: event.author?.name ?? event.sources[0]?.publisher ?? 'Poplur News',
+    handle: event.author ? `@${event.author.handle}` : event.sources[0]?.publisher ?? '',
+    avatar: event.author?.avatar,
+    headline: event.author ? undefined : event.title,
     body: event.summary,
     radiusKm: liveNewsRadiusKm(event),
     distanceKm: event.coords ? +distanceKm(HOME, event.coords[0], event.coords[1]).toFixed(1) : 0,
@@ -150,15 +151,6 @@ function liveEntries(list: LiveNewsEvent[], nowMs: number): Entry[] {
     verified: undefined,
     liveEvent: event,
   }))
-}
-
-function editionStamp(now: Date) {
-  return {
-    date: now.toLocaleDateString(undefined, {
-      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-    }),
-    time: now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true }),
-  }
 }
 
 function VerifyBadge({ tier }: { tier: 'verified' | 'confirmed' }) {
@@ -183,7 +175,7 @@ function MediaCredits({ media }: { media: EntryMediaAttachment[] }) {
         <span className={styles.mediaCreditLine} key={`${item.src}-${index}`}>
           <span className={styles.mediaCreditText}>
             {media.length > 1 ? `${index + 1}. ` : ''}{item.credit}
-            {item.rights ? ` · ${item.rights.replace(/-/g, ' ').toUpperCase()}` : ''}
+
           </span>
           {item.sourceUrl && (
             <button
@@ -217,6 +209,8 @@ function EntryMedia({
 }) {
   if (!media.length) return null
   const first = media[0]
+
+  if (first.kind === 'video' && first.embedUrl && first.sourceUrl) return <NewsSourceVideo embedUrl={first.embedUrl} poster={first.poster} sourceUrl={first.sourceUrl} active={active} />
 
   if (first.kind === 'video') {
     return (
@@ -268,7 +262,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
     }, 30_000)
     return () => window.clearInterval(id)
   }, [])
-  const stamp = editionStamp(now)
+
   // The pops you dropped from the map, live. They arrive in this document
   // either through the shell's forward or through the storage event — the map
   // composer runs in the iframe, which has its own module state.
@@ -389,6 +383,8 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   const [scope, setScope] = useState<'posts' | 'users' | 'explore'>('posts')
   /** Set by picking a user out of the drawer: the paper narrows to their work. */
   const [byHandle, setByHandle] = useState<string | null>(null)
+  const [feedTab, setFeedTab] = useState<'world' | 'video'>('world')
+  const [selectedTag, setSelectedTag] = useState<string | null>(null)
   /** The story opened as a full page, the way a tweet opens. */
   const [detail, setDetail] = useState<Entry | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -430,6 +426,8 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
     if (menuOpen) { setMenuOpen(false); return true }
     if (detail) { setDetail(null); return true }
     if (replyingTo) { setReplyingTo(null); setReplyDraft(''); return true }
+    if (byHandle) { setByHandle(null); return true }
+    if (selectedTag) { setSelectedTag(null); return true }
     return false
   }
   useEffect(() => {
@@ -456,10 +454,12 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   const needle = query.trim().toLowerCase()
   const matches = (e: Entry) => scope === 'users'
     ? e.who.toLowerCase().includes(needle) || e.handle.toLowerCase().includes(needle)
-    : e.body.toLowerCase().includes(needle)
-  const narrowed = byHandle ? entries.filter(e => e.handle === byHandle) : entries
+    : `${e.headline ?? ''} ${e.body}`.toLowerCase().includes(needle)
+  const tagged = entries.filter(e => (!selectedTag || e.liveEvent?.hashtags?.some(tag => tag.toLocaleLowerCase() === selectedTag.toLocaleLowerCase()) || (e.body.match(/#[\p{L}\p{N}_]+/gu) ?? []).some(tag => tag.slice(1).toLocaleLowerCase() === selectedTag.toLocaleLowerCase())) && (feedTab !== 'video' || e.media?.some(m => m.kind === 'video')))
+  const narrowed = byHandle ? tagged.filter(e => e.handle === byHandle) : tagged
   const shown = needle ? narrowed.filter(matches) : narrowed
-  const filtering = Boolean(needle) || Boolean(byHandle)
+  const filtering = Boolean(needle) || Boolean(byHandle) || Boolean(selectedTag) || feedTab === 'video'
+  const sourceProfile = entries.find(e => e.handle === byHandle)?.liveEvent?.author
 
   /** Distinct authors for the USERS list — the paper's people, deduped. */
   const people = (() => {
@@ -511,6 +511,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
     playCubeNavigationPop()
     setMenuOpen(false)
     setDetail(null)
+    if (entries.some(e => e.handle === handle && e.liveEvent)) { setByHandle(handle ?? null); setSelectedTag(null); setFeedTab('world'); scrollHost.current?.scrollTo({ top: 0 }); return }
     // Their profile, on Messages — the same hand-off the drawer's own Profile
     // row uses. (Whose profile is a live-service question; the shell opens the
     // profile surface and the mode it was asked for.)
@@ -520,8 +521,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
     }))
   }
 
-  const lead = filtering ? undefined : shown[0]
-  const rest = filtering ? shown : shown.slice(1)
+  const rest = shown
 
   // Refresh the source wire and locally posted messages together.
   const refresh = useCallback(() => {
@@ -581,15 +581,11 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
         )}
 
         <header className={styles.masthead}>
-          <div className={styles.mastRule}>
-            <span>NO. {1200 + entries.length}</span>
-            <span>{liveNews.events.length ? 'WORLD WIRE + YOUR RADIUS' : 'WITHIN YOUR RADIUS'}</span>
-            <span>FREE</span>
-          </div>
-          <h1 className={`${styles.title} ${styles.inkShader}`}>The Poplur Times</h1>
-          <div className={styles.mastRuleThin}>
-            <span>{stamp.date}</span>
-            <span>{stamp.time}</span>
+          <h1 className={styles.socialTitle}>Poplur News</h1>
+          <p className={styles.socialSubtitle}>Real voices. Stories from around the world.</p>
+          <div className={styles.feedTabs} role="tablist" aria-label="News feeds">
+            <button role="tab" aria-selected={feedTab === 'world'} onClick={() => setFeedTab('world')}>World</button>
+            <button role="tab" aria-selected={feedTab === 'video'} onClick={() => setFeedTab('video')}>Video</button>
           </div>
         </header>
 
@@ -606,49 +602,17 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
           </div>
         )}
 
-        {lead && (
-          <article
-            className={styles.lead}
-            role="button"
-            tabIndex={0}
-            aria-label={`Open ${lead.headline ?? lead.who}`}
-            onClick={() => { playPop(); setDetail(lead) }}
-            onKeyDown={event => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
-                playPop()
-                setDetail(lead)
-              }
-            }}
-          >
-            <div className={styles.kicker}>
-              {lead.liveEvent
-                ? `${lead.liveEvent.preview ? 'PREVIEW' : lead.liveEvent.status.toUpperCase()} · ${lead.liveEvent.place.toUpperCase()}`
-                : lead.kind === 'dispatch' ? 'MAP DISPATCH' : lead.mine ? 'YOUR POP' : 'FROM THE STREET'}
-            </div>
-            <h2 className={`${styles.leadHead} ${styles.inkShader}`}>{lead.headline ?? lead.body.split(/[:.]/)[0]}</h2>
-            <p className={styles.leadBody}>
-              <span className={styles.dropCap}>{lead.body.trim()[0]}</span>
-              {lead.body.trim().slice(1)}
-            </p>
-            {lead.media?.length ? <EntryMedia media={lead.media} large active={!detail} /> : null}
-            {snapshotFor(lead) && (
-              <figure className={styles.plate}>
-                <img className={styles.plateImg} src={snapshotFor(lead)!} alt="Map of the area this story covers" loading="lazy" />
-                <figcaption className={styles.plateCap}>
-                  THE MAP AT {stamp.time} · {lead.radiusKm} KM RADIUS
-                </figcaption>
-              </figure>
-            )}
-            <div className={styles.byline}>
-              By {lead.who} · {lead.liveEvent ? `${lead.liveEvent.sources.length} linked sources` : `${lead.radiusKm} km radius`}
-              {' · '}{lead.liveEvent && !lead.liveEvent.coords ? 'World news' : `${lead.distanceKm} km away`} · {lead.when === 'now' ? 'just now' : `${lead.when} ago`}
-            </div>
-          </article>
-        )}
-
         <div className={styles.columnsRule} aria-hidden="true" />
 
+        {sourceProfile && <section className={styles.sourceProfile} aria-label="Source profile">
+          {sourceProfile.avatar && <img src={sourceProfile.avatar} alt="" />}
+          <h2>{sourceProfile.name}</h2><p>@{sourceProfile.handle}</p>
+          <p>{sourceProfile.bio}</p>
+          <small>{sourceProfile.platform} source · {sourceProfile.region}</small>
+          <button onClick={() => openInPoplurBrowser(sourceProfile.profileUrl)}>View original profile ↗</button>
+          <small>Recent posts in this edition</small>
+        </section>}
+        {selectedTag && <button className={styles.filterChip} onClick={() => setSelectedTag(null)}>#{selectedTag} · Clear filter</button>}
         {byHandle && (
           <button className={styles.filterChip} onClick={() => { playPop(); setByHandle(null) }}>
             Showing only {byHandle} · TAP TO CLEAR
@@ -657,7 +621,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
 
         {filtering && shown.length === 0 && (
           <p className={styles.noHits}>
-            Nothing in this edition matches {needle ? `“${query.trim()}”` : byHandle}.
+            {feedTab === 'video' && !needle && !byHandle && !selectedTag ? 'No videos in this edition yet.' : `No posts match ${needle ? `“${query.trim()}”` : byHandle ?? (selectedTag ? `#${selectedTag}` : 'this filter')}.`}
           </p>
         )}
 
@@ -683,24 +647,27 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                 })
               }}
             >
-              <img className={styles.avatar} src={entry.avatar} alt="" draggable="false" />
+              <button className={styles.authorAvatar} aria-label={`View ${entry.who}'s source profile`} onClick={() => openProfileFor(entry.handle)}>
+                {entry.avatar ? <img className={styles.avatar} src={entry.avatar} alt="" draggable="false" loading="lazy" /> : <span className={styles.avatarInitial}>{entry.who.slice(0,2).toUpperCase()}</span>}
+              </button>
               <div className={styles.entryBody}>
                 <div className={styles.entryTop}>
-                  <span className={styles.who}>{entry.who}</span>
-                  {!entry.liveEvent && <span className={styles.handle}>{entry.handle}</span>}
+                  <button className={styles.authorName} onClick={() => openProfileFor(entry.handle)}>{entry.who}</button>
+                  <span className={styles.handle}>{entry.handle}</span>
                   {entry.verified && <VerifyBadge tier={entry.verified} />}
                   <span className={styles.dot}>·</span>
                   <span className={styles.when}>{entry.when}</span>
                   {entry.kind === 'dispatch' && <span className={styles.aiTag}>MAP DISPATCH</span>}
                   {entry.liveEvent && (
                     <span className={`${styles.aiTag} ${styles.liveTag}`}>
-                      {entry.liveEvent.preview ? 'PREVIEW' : entry.liveEvent.status.toUpperCase()}
+                      {entry.liveEvent.preview ? 'PREVIEW' : entry.liveEvent.author ? 'BLUESKY' : 'NEWS'}
                     </span>
                   )}
                   {entry.mine && <span className={styles.mineTag}>YOUR POP</span>}
                 </div>
                 {entry.headline && <h3 className={styles.entryHeadline}>{entry.headline}</h3>}
-                <p className={styles.body}>{entry.body}</p>
+                <p className={styles.body}>{entry.body.split(/(#[\p{L}\p{N}_]+)/u).map((part,index) => part.startsWith('#') ? <button key={index} className={styles.inlineTag} onClick={() => { setSelectedTag(part.slice(1)); setByHandle(null); scrollHost.current?.scrollTo({ top: 0 }) }}>{part}</button> : part)}</p>
+                {!!entry.liveEvent?.hashtags?.length && <div className={styles.hashtags}>{entry.liveEvent.hashtags.map(tag => <button key={tag} onClick={() => { setSelectedTag(tag); setByHandle(null); scrollHost.current?.scrollTo({ top: 0 }) }}>#{tag}</button>)}</div>}
                 {entry.media?.length ? <EntryMedia media={entry.media} active={!detail} /> : null}
                 {(entry.kind === 'dispatch' || entry.kind === 'liveNews' || entry.mine) && snapshotFor(entry) && (
                   entry.liveEvent ? (
@@ -740,7 +707,10 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                   <span className={styles.reachPip} aria-hidden="true" />
                   {entry.liveEvent && !entry.liveEvent.coords ? 'World news · Read the original reporting' : `${entry.radiusKm} km radius · ${entry.distanceKm} km from you`}
                 </div>
-                <div className={styles.actions}>
+                {entry.liveEvent ? <div className={styles.sourceActions}>
+                  <button onClick={() => openInPoplurBrowser(entry.liveEvent!.sources[0].url)}>Read original ↗</button>
+                  <button onClick={() => openProfileFor(entry.handle)}>Source profile</button>
+                </div> : <div className={styles.actions}>
                   <button
                     className={replyingTo === entry.id ? `${styles.action} ${styles.actionOn}` : styles.action}
                     onClick={() => beginReply(entry)}
@@ -761,7 +731,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                   >
                     <span aria-hidden="true">♥</span> {entry.likes + (liked.has(entry.id) ? 1 : 0)}
                   </button>
-                </div>
+                </div>}
                 {replyingTo === entry.id && (
                   <form
                     className={styles.replyComposer}
@@ -874,11 +844,11 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                 </p>
               )}
 
-              <div className={styles.detailStats}>
+              {!detail.liveEvent && <div className={styles.detailStats}>
                 <span>✎ {detail.replies}</span>
                 <span>⇄ {detail.repops}</span>
                 <span>♥ {detail.likes + (liked.has(detail.id) ? 1 : 0)}</span>
-              </div>
+              </div>}
 
               {detail.liveEvent?.coords && (
                 <button
@@ -889,7 +859,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                 </button>
               )}
 
-              {!detail.liveEvent && (
+              {(
                 <button className={styles.detailProfile} onClick={() => openProfileFor(detail.handle)}>
                   OPEN {detail.who.toUpperCase()}’S PROFILE
                 </button>
@@ -910,11 +880,11 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
 
       <ScreenCoach
         id="news"
-        title="THE POPLUR TIMES"
+        title="POPLUR NEWS"
         lines={[
-          'Live stories and the map use the same source-backed event.',
+          'Switch between World stories and Video.',
           'Pull down to update the world wire.',
-          'The menu searches posts and people.',
+          'Tap a source or hashtag to explore its posts.',
         ]}
       />
 

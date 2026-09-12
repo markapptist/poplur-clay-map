@@ -78,3 +78,11 @@ X's documentation currently describes [pay-per-usage billing](https://docs.x.com
 Initial review targets: no invented identities or counts; priority-source freshness within 10 minutes and ordinary sources within 30 minutes when providers are healthy; a diverse opening World feed whenever enough fresh coverage exists; one active video decoder; zero hidden playback; no unrelated location inferred from the viewer. Tune numerical performance and coverage targets against a pilot rather than promising them before source access is confirmed.
 
 Recommended first milestone: a working World + Video timeline with real source accounts and clickable hashtags. Add personalization once that feed is demonstrably useful and fresh.
+
+## Milestone 1 implementation — September 12, 2026
+
+Implemented World and Video tabs, a compact timeline, source profiles, and Unicode hashtag filters. The importer reads reviewed public Bluesky accounts for ABC Australia, Reuters, AP, France 24, The Guardian, Al Jazeera, Le Monde, EL PAÍS, and Rest of World, with BBC RSS and GDELT retained. Each account is pinned to its DID and expected domain handle; reposts, replies, labelled posts, and posts older than 48 hours are omitted. Per-account caps keep one publisher from filling the edition. Source profiles clearly identify their external platform and carry no invented Poplur account or radius.
+
+Video posts use the official Bluesky embed behind a tap-to-load poster. A single decoder lease coordinates playback with local video, and the embed is removed when offscreen, covered by a detail page, backgrounded, or replaced by another video. The original post remains accessible through Poplur Browser. Imported posts show source actions rather than fabricated Poplur reply/repost counts.
+
+The first live ingestion check returned 69 posts, nine accounts, and six videos. These counts change with the live edition. Client parsing, server normalization, source identity rejection, freshness, Unicode hashtags, media URLs, and decoder lifecycle have regression coverage. Following, native Poplur conversations, and additional social providers remain later milestones.

@@ -135,7 +135,7 @@ describe('News shader video thermal lifecycle', () => {
 
     // The opaque detail sheet owns the only active copy of an opened story;
     // list copies stay mounted for layout but release their media pipelines.
-    expect(paper.match(/active=\{!detail\}/g)).toHaveLength(2)
+    expect(paper.match(/active=\{!detail\}/g)).toHaveLength(1)
     expect(paper).toContain('<EntryMedia media={detail.media} large active />')
   })
 })
