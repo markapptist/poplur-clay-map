@@ -1,22 +1,6 @@
 import type { Detection } from './mlDetect'
 
-/**
- * What the focus square says about the thing it has locked onto, and what
- * pressing it does.
- *
- * The camera's tracker boxes were retired on 7 Aug in favour of the rainbow
- * edge glow. They are back by request, with a job: the square is not just
- * "the model is looking here", it is a HANDLE on the thing it found.
- *
- *   - A registered Poplur user's face locks GREEN. Pressing it opens their
- *     profile — your own, if the face is yours.
- *   - Anything that is NOT in the app locks RED. Pressing it hands the object
- *     to the Poplur browser, which searches Google for it and opens the first
- *     result, so an LG TV becomes the page about that TV rather than a
- *     results list to read through.
- *
- * Everything here is pure so the two rules can be tested without a camera.
- */
+/** Recognition state and tap destination for the camera's existing square. */
 export type FocusLockKind = 'user' | 'object'
 
 export interface FocusLock {
@@ -31,9 +15,6 @@ export interface FocusLock {
 const UNSEARCHABLE_LABELS = new Set(['person', 'face', 'human', 'people'])
 
 export function focusLockFor(detection: Detection): FocusLock | null {
-  // A whole-frame classification has no position and is the readout's
-  // business, never a square. Same rule the old overlay took.
-  if (detection.whole) return null
   if (detection.user) {
     return {
       kind: 'user',
@@ -67,4 +48,24 @@ export function objectLookupUrl(rawLabel: string): string | null {
   const label = presentableLabel(rawLabel)
   if (!label || UNSEARCHABLE_LABELS.has(label.toLowerCase())) return null
   return `https://www.google.com/search?igu=1&btnI=1&q=${encodeURIComponent(label)}`
+}
+
+/** Prefer the object under the focus point, then the nearest located result.
+ * Whole-frame labels are a fallback only; none controls the square geometry. */
+export function selectFocusDetection(
+  detections: readonly Detection[],
+  point = { x: 0.5, y: 0.5 },
+  mirrored = false,
+): Detection | null {
+  const candidates = detections.filter(d => Number.isFinite(d.confidence) && d.confidence > 0 && presentableLabel(d.label))
+  const located = candidates.filter(d => !d.whole && [d.x, d.y, d.w, d.h].every(Number.isFinite) && d.w > 0 && d.h > 0)
+  const distance = (d: Detection) => {
+    const x = mirrored ? 1 - d.x - d.w : d.x
+    const inside = point.x >= x && point.x <= x + d.w && point.y >= d.y && point.y <= d.y + d.h
+    return (inside ? 0 : 2) + Math.hypot(point.x - x - d.w / 2, point.y - d.y - d.h / 2)
+  }
+  return located.sort((a, b) => distance(a) - distance(b) || b.confidence - a.confidence)[0]
+    ?? candidates.find(d => d.primary)
+    ?? candidates.sort((a, b) => b.confidence - a.confidence)[0]
+    ?? null
 }

@@ -15,8 +15,8 @@ import { addCapture, removeCaptures, isDetectOn, setDetectOn, onCameraStore, lis
   takePendingRollExtras,
 } from './cameraStore'
 import RecognitionAura from './RecognitionAura'
-import DetectionOverlay from './DetectionOverlay'
-import { focusLockFor, objectLookupUrl } from './focusLock'
+import CameraFocusSquare from './CameraFocusSquare'
+import { focusLockFor, objectLookupUrl, selectFocusDetection } from './focusLock'
 import { openInPoplurBrowser } from './inAppBrowser'
 import { FrameDetector, faceIdEnabled, type Detection } from './mlDetect'
 import { recordScanDetections, resetScan, scanTotalKm } from './scanRadius'
@@ -431,7 +431,7 @@ export default function Camera({
     }
     const url = objectLookupUrl(detection.label)
     if (!url) return
-    playPop()
+    popHaptic()
     openInPoplurBrowser(url)
   }, [])
   const [lastCameraReads, setLastCameraReads] = useState<Detection[]>([])
@@ -1345,6 +1345,12 @@ export default function Camera({
   const [focusTap, setFocusTap] = useState<{ x: number; y: number; id: number } | null>(null)
   const focusTapIdRef = useRef(0)
   const cameraSurfaceRef = useRef<HTMLElement | null>(null)
+  const focusBounds = cameraSurfaceRef.current?.getBoundingClientRect()
+  const focusDetection = detectOn ? selectFocusDetection(detections, {
+    x: focusTap && focusBounds?.width ? focusTap.x / focusBounds.width : 0.5,
+    y: focusTap && focusBounds?.height ? focusTap.y / focusBounds.height : 0.5,
+  }, facing === 'user') : null
+
   // The lens refocused on its own, so SAY so.
   //
   // The shell has always run AVFoundation's default `.continuousAutoFocus` - it
@@ -2099,22 +2105,6 @@ export default function Camera({
           userSeen={auraDetections.some(d => d.isUser || (faceIdEnabled() && !!d.user))}
         />
       )}
-      {/* The focus square, locked to whatever the scanner found. Retired on
-          7 Aug for the rainbow edge above; back by request as a HANDLE rather
-          than a marker: green for a Poplur user (press → their profile), red
-          for anything the app does not know (press → the Poplur browser on
-          the first Google result). It rides the same gates as the aura, and
-          the same mirror as the AR, so a selfie lock sits on the face the eye
-          sees. A parked preview shows no square: there is nothing live to
-          press on. */}
-      {real && detectOn && effectiveLiveSurfaceVisible && !nativePreviewParked && (
-        <DetectionOverlay
-          detections={detections}
-          mirrored={facing === 'user'}
-          onPress={onFocusLockPress}
-        />
-      )}
-
       {/* Screen flash exists only on the front camera. The back uses its torch. */}
       {flash && facing === 'user' && <div className={styles.camFlashEdge} aria-hidden="true" />}
       {/* …and the bloom at the instant of capture — the front camera's flash */}
@@ -2122,24 +2112,13 @@ export default function Camera({
       {/* Composition grid and the self-timer's count, over the preview and
           under the controls. Neither is part of the capture. */}
       {real && gridOn && <div className={styles.camGrid} aria-hidden="true" />}
-      {/* The focus square: the bracket every camera wears in the middle of the
-          frame. It answers the LENS as well as a finger now. The iOS shell owns
-          the AVCaptureDevice and forwards its subject-area notification, so the
-          sight appears on its own whenever the camera refocuses — which it has
-          always been doing, since the shell never configures focus and so runs
-          AVFoundation's default continuous autofocus. It still never claims a
-          LOCK (nothing reports lens position), and the green the detector locks
-          with stays the detector's. It answers a tap where the tap landed and
-          fades, instead of sitting permanently in the middle of the frame at
-          44vw: a sight that large covers the subject you are aiming at, and one
-          that is always on reads as the app aiming for you. Tap feedback only —
-          the lens is NOT being refocused. */}
-      {real && effectiveLiveSurfaceVisible && !nativePreviewParked && focusTap && (
-        <div
-          key={focusTap.id}
-          className={styles.camFocus}
-          style={{ left: `${focusTap.x}px`, top: `${focusTap.y}px` }}
-          aria-hidden="true"
+      {/* One focus square serves both autofocus and recognition. Detection
+          changes its colour and action, never its size or shape. */}
+      {real && effectiveLiveSurfaceVisible && !nativePreviewParked && (
+        <CameraFocusSquare
+          detection={focusDetection}
+          point={focusTap}
+          onPress={onFocusLockPress}
         />
       )}
       {real && timerLeft != null && (

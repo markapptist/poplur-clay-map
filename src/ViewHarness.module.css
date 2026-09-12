@@ -1287,6 +1287,7 @@
    `transform` has to stay free for the pulse. Green belongs to the detector
    (DetectionOverlay.module.css) — this is a sight, not a lock. */
 .camFocus {
+  --focus-color: #fff;
   position: absolute;
   z-index: 30;
   width: 76px;
@@ -1295,10 +1296,10 @@
   margin: -38px 0 0 -38px;
   pointer-events: none;
   background-image:
-    linear-gradient(#fff, #fff), linear-gradient(#fff, #fff),
-    linear-gradient(#fff, #fff), linear-gradient(#fff, #fff),
-    linear-gradient(#fff, #fff), linear-gradient(#fff, #fff),
-    linear-gradient(#fff, #fff), linear-gradient(#fff, #fff);
+    linear-gradient(var(--focus-color), var(--focus-color)), linear-gradient(var(--focus-color), var(--focus-color)),
+    linear-gradient(var(--focus-color), var(--focus-color)), linear-gradient(var(--focus-color), var(--focus-color)),
+    linear-gradient(var(--focus-color), var(--focus-color)), linear-gradient(var(--focus-color), var(--focus-color)),
+    linear-gradient(var(--focus-color), var(--focus-color)), linear-gradient(var(--focus-color), var(--focus-color));
   background-position:
     left top, left top, right top, right top,
     left bottom, left bottom, right bottom, right bottom;
@@ -1327,6 +1328,40 @@
   0%, 70% { opacity: 0.95; }
   100%    { opacity: 0; }
 }
+
+/* Recognition uses the same 76px autofocus bracket, held visible until the
+   current detection leaves. No detector-sized rectangles are rendered. */
+.camFocus.camFocusLocked {
+  animation: none;
+  opacity: 1;
+  transform: none;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background-color: transparent;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.camFocus[data-focus-lock='object'] { --focus-color: #ff5454; }
+.camFocus[data-focus-lock='user'] { --focus-color: #78ff96; }
+.camFocus:focus-visible { outline: 2px solid var(--focus-color); outline-offset: 5px; }
+.camFocusIdentity {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 120px;
+  max-width: 220px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #78ff96;
+  font: 700 13px/1.35 system-ui, sans-serif;
+  text-align: center;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+.camFocusIdentity span { display: block; }
 
 .camCountdown {
   position: absolute;

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { focusLockFor, objectLookupUrl, presentableLabel } from '../focusLock'
+import { focusLockFor, objectLookupUrl, presentableLabel, selectFocusDetection } from '../focusLock'
 import type { Detection } from '../mlDetect'
 
 /**
@@ -42,9 +42,8 @@ describe('what the square locks onto', () => {
     expect(objectLookupUrl('person')).toBeNull()
   })
 
-  it('a whole-frame classification gets no square at all', () => {
-    // It has no position; drawing it was a full-screen rectangle.
-    expect(focusLockFor(box({ label: 'living room', whole: true }))).toBeNull()
+  it('a whole-frame classification can colour the existing square without setting geometry', () => {
+    expect(focusLockFor(box({ label: 'living room', whole: true }))?.kind).toBe('object')
   })
 })
 
@@ -64,45 +63,35 @@ describe('the lookup goes to the first result, not the results page', () => {
   })
 })
 
-describe('the camera wires the square up', () => {
+describe('one target for the existing focus square', () => {
+  it('selects the object under the focus point instead of drawing every result', () => {
+    const left = box({ id: 'left', x: 0.05, y: 0.1, w: 0.2, h: 0.2 })
+    const middle = box({ id: 'middle', x: 0.4, y: 0.4, w: 0.2, h: 0.2 })
+    expect(selectFocusDetection([left, middle])?.id).toBe('middle')
+    expect(selectFocusDetection([left, middle], { x: 0.15, y: 0.15 })?.id).toBe('left')
+  })
+  it('matches the mirrored selfie preview', () => {
+    const left = box({ id: 'left', x: 0, y: 0.4, w: 0.2, h: 0.2 })
+    const right = box({ id: 'right', x: 0.8, y: 0.4, w: 0.2, h: 0.2 })
+    expect(selectFocusDetection([left, right], { x: 0.9, y: 0.5 }, true)?.id).toBe('left')
+  })
+  it('prefers located objects and clears when detection leaves', () => {
+    expect(selectFocusDetection([])).toBeNull()
+    const whole = box({ id: 'whole', whole: true, primary: true })
+    const located = box({ id: 'located' })
+    expect(selectFocusDetection([whole, located])?.id).toBe('located')
+    expect(selectFocusDetection([whole])?.id).toBe('whole')
+  })
+})
+
+describe('camera focus wiring', () => {
   const camera = readFileSync(new URL('../Camera.tsx', import.meta.url), 'utf8')
-  const overlay = readFileSync(new URL('../DetectionOverlay.tsx', import.meta.url), 'utf8')
-  const css = readFileSync(new URL('../DetectionOverlay.module.css', import.meta.url), 'utf8')
-
-  it('renders the overlay again, on the same gates as the aura and the same mirror as the AR', () => {
-    // Retired 7 Aug (c217006); back by request.
-    expect(camera).toContain("import DetectionOverlay from './DetectionOverlay'")
-    expect(camera).toMatch(/real && detectOn && effectiveLiveSurfaceVisible && !nativePreviewParked && \(\s*<DetectionOverlay/)
-    expect(camera).toMatch(/<DetectionOverlay[\s\S]{0,200}mirrored=\{facing === 'user'\}/)
-    expect(camera).toMatch(/<DetectionOverlay[\s\S]{0,200}onPress=\{onFocusLockPress\}/)
+  it('uses the existing square once and removes the detector rectangles', () => {
+    expect(camera).not.toContain('<DetectionOverlay')
+    expect(camera.match(/<CameraFocusSquare/g)).toHaveLength(1)
   })
-
-  it('a green press opens the profile through the shell, not by itself', () => {
-    // The same event the news page uses to open an author; the shell owns the
-    // tab switch. No handle means you.
-    expect(camera).toContain("window.dispatchEvent(new CustomEvent('poplur-open-profile-mode', {")
+  it('opens the matched profile or the Poplur browser, with a haptic', () => {
     expect(camera).toContain('detail: detection.isUser ? {} : { handle: detection.user?.handle },')
-  })
-
-  it('a red press goes out through the in-app browser boundary', () => {
-    expect(camera).toContain("import { openInPoplurBrowser } from './inAppBrowser'")
-    expect(camera).toContain('openInPoplurBrowser(url)')
-    expect(camera).toContain('const url = objectLookupUrl(detection.label)')
-  })
-
-  it('draws a button per lock, coloured by kind, and never lets the layer eat a gesture', () => {
-    expect(overlay).toContain('<button')
-    expect(overlay).toContain("lock.kind === 'user' ? styles.boxUser : styles.boxObject")
-    // The inset:0 layer must stay pass-through — an inset:0 element that
-    // takes touches is the exact defect that once made the map read as locked.
-    expect(css).toMatch(/\.layer \{[^}]*pointer-events: none;/)
-    expect(css).toMatch(/\.box \{[^}]*pointer-events: auto;/)
-    expect(css).toMatch(/\.boxUser \{[^}]*--lock: rgba\(120, 255, 150/)
-    expect(css).toMatch(/\.boxObject \{[^}]*--lock: rgba\(255, 84, 84/)
-  })
-
-  it('an unrecognised person is not a button', () => {
-    expect(overlay).toContain('aria-disabled={pressable ? undefined : true}')
-    expect(css).toMatch(/\.boxInert \{[^}]*pointer-events: none;/)
+    expect(camera).toContain('popHaptic()\n    openInPoplurBrowser(url)')
   })
 })
