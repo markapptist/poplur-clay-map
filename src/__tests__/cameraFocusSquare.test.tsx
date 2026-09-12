@@ -39,3 +39,17 @@ describe('the original camera square', () => {
     host.remove()
   })
 })
+
+
+it('keeps both autofocus and detection centred after an off-centre tap', () => {
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const point = { x: 28, y: 610, id: 1 }
+  for (const detection of [null, object, { ...object, user: { handle: '@mark', name: 'Mark', radiusKm: 177 } }]) {
+    act(() => root.render(<CameraFocusSquare detection={detection} point={point} onPress={() => {}} />))
+    const square = host.firstElementChild as HTMLElement
+    expect(square.style.left).toBe('50%')
+    expect(square.style.top).toBe('50%')
+  }
+  act(() => root.unmount())
+})

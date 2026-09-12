@@ -1345,11 +1345,7 @@ export default function Camera({
   const [focusTap, setFocusTap] = useState<{ x: number; y: number; id: number } | null>(null)
   const focusTapIdRef = useRef(0)
   const cameraSurfaceRef = useRef<HTMLElement | null>(null)
-  const focusBounds = cameraSurfaceRef.current?.getBoundingClientRect()
-  const focusDetection = detectOn ? selectFocusDetection(detections, {
-    x: focusTap && focusBounds?.width ? focusTap.x / focusBounds.width : 0.5,
-    y: focusTap && focusBounds?.height ? focusTap.y / focusBounds.height : 0.5,
-  }, facing === 'user') : null
+  const focusDetection = detectOn ? selectFocusDetection(detections, { x: 0.5, y: 0.5 }, facing === 'user') : null
 
   // The lens refocused on its own, so SAY so.
   //
@@ -1525,7 +1521,7 @@ export default function Camera({
     gesture.lastTapX = event.clientX
     gesture.lastTapY = event.clientY
     // A single tap used to be recorded and otherwise swallowed, so tapping the
-    // viewfinder produced no feedback at all. Answer it where it landed. The
+    // viewfinder produced no feedback at all. Pulse the fixed centre square. The
     // rect is read here, synchronously, because currentTarget is gone by the
     // time the state update flushes.
     const bounds = event.currentTarget.getBoundingClientRect()
@@ -2316,7 +2312,7 @@ export default function Camera({
           It replaces the six-row column that used to hang under the left rail:
           same two jobs, same artwork, but now a screen change never moves the
           arrows. */}
-      {real && (
+      {real && !GESTURE_NAVIGATION_TRIAL && (
         <ClayArrowCluster
           size={responsiveChannelControlSize()}
           aria-label="Filter and zoom controls"

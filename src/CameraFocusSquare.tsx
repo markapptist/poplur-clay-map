@@ -10,7 +10,7 @@ export default function CameraFocusSquare({ detection, point, onPress }: {
   onPress: (detection: Detection) => void
 }) {
   const pressed = useRef<Detection | null>(null)
-  const position = { left: point ? `${point.x}px` : '50%', top: point ? `${point.y}px` : '50%' }
+  const position = { left: '50%', top: '50%' }
   const lock = detection ? focusLockFor(detection) : null
   if (!detection || !lock) {
     return point ? <div key={point.id} className={styles.camFocus} style={position} aria-hidden="true" /> : null
