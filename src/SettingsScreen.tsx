@@ -70,6 +70,7 @@ import {
   onTestActivityConsentChange,
   setTestActivityConsent,
 } from './testActivity'
+import { readNotificationPrefs, writeNotificationPref, type NotificationPrefs } from './notificationPrefs'
 
 
 
@@ -87,13 +88,14 @@ import {
 // lives under Audio playback. Pages with nothing to set yet still get a row — a gap in
 // the list would read as "this page has no settings screen", which is a
 // different claim from "there is nothing to set here yet".
-type Page = 'home' | 'map' | 'feed' | 'camera' | 'radio' | 'ringtone' | 'app' | 'privacy' | 'blocked' | 'profile' | 'verify'
+type Page = 'home' | 'map' | 'feed' | 'camera' | 'notifications' | 'radio' | 'ringtone' | 'app' | 'privacy' | 'blocked' | 'profile' | 'verify'
 
 const PAGE_TITLE: Record<Page, string> = {
   home: 'HOME',
   map: 'MAP',
   feed: 'FEED',
   camera: 'CAMERA',
+  notifications: 'NOTIFICATIONS',
   radio: 'AUDIO',
   ringtone: 'RINGTONE',
   app: 'APP ICON',
@@ -238,6 +240,34 @@ export default function SettingsScreen({ bindBack }: {
     playPop()
     void blockUser({ username: handle })
     setBlockDraft('')
+  }
+
+  // The switches live on the account, so they are fetched, not remembered here.
+  // `null` means not known — the rows say so rather than showing a default the
+  // account may not hold, because a switch that lies about its own state is
+  // worse than one that admits it cannot be read.
+  const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs | null>(null)
+  const [notifBusy, setNotifBusy] = useState<keyof NotificationPrefs | null>(null)
+  const [notifError, setNotifError] = useState(false)
+  useEffect(() => {
+    let live = true
+    readNotificationPrefs()
+      .then(prefs => { if (live) { setNotifPrefs(prefs); setNotifError(prefs === null) } })
+      .catch(() => { if (live) setNotifError(true) })
+    return () => { live = false }
+  }, [])
+  const setNotifPref = (patch: Partial<NotificationPrefs>) => {
+    const key = Object.keys(patch)[0] as keyof NotificationPrefs
+    if (notifBusy) return
+    setNotifBusy(key)
+    setNotifError(false)
+    // Optimistic, because a switch that waits on a round trip feels broken —
+    // but the server's answer replaces it, so a refused write snaps back.
+    setNotifPrefs(current => (current ? { ...current, ...patch } : current))
+    writeNotificationPref(patch)
+      .then(prefs => { if (prefs) setNotifPrefs(prefs); else setNotifError(true) })
+      .catch(() => setNotifError(true))
+      .finally(() => setNotifBusy(null))
   }
 
   const openPage = (next: Page) => {
@@ -552,6 +582,21 @@ export default function SettingsScreen({ bindBack }: {
                 <span className={styles.chev} aria-hidden="true">›</span>
               </button>
 
+              <button type="button" className={styles.row} onClick={() => openPage('notifications')}>
+                <span className={styles.rowText}>
+                  <b>Notifications</b>
+                  <i>What Poplur is allowed to interrupt you for.</i>
+                </span>
+                <span className={styles.rowValue}>
+                  {notifPrefs
+                    ? (notifPrefs.messages || notifPrefs.engagement !== 'off' || notifPrefs.radius !== 'off'
+                        ? `${[notifPrefs.messages, notifPrefs.engagement !== 'off', notifPrefs.radius !== 'off'].filter(Boolean).length} of 3 on`
+                        : 'All off')
+                    : '—'}
+                </span>
+                <span className={styles.chev} aria-hidden="true">›</span>
+              </button>
+
               <button type="button" className={styles.row} onClick={() => openPage('radio')}>
                 <span className={styles.rowText}>
                   <b>Audio playback</b>
@@ -721,6 +766,50 @@ export default function SettingsScreen({ bindBack }: {
               <em />
             </span>
           </button>
+        </article>
+        )}
+
+        {page === 'notifications' && (
+        <article className={styles.group} aria-label="Notifications">
+          {([
+            ['messages', 'Direct messages', 'Someone writes to you.'],
+            ['engagement', 'Your pops', 'Likes, views and comments on what you posted.'],
+            ['radius', 'Radius news', 'When a pop starts losing its reach. At most one a day.'],
+          ] as Array<[keyof NotificationPrefs, string, string]>).map(([key, label, note]) => {
+            const on = key === 'messages' ? notifPrefs?.messages === true : notifPrefs?.[key] !== 'off'
+            return (
+              <button
+                type="button"
+                key={String(key)}
+                className={styles.switchRow}
+                role="switch"
+                aria-checked={notifPrefs ? on : false}
+                disabled={!notifPrefs || notifBusy !== null}
+                onClick={() => setNotifPref(
+                  key === 'messages'
+                    ? { messages: !on }
+                    : key === 'engagement'
+                      ? { engagement: on ? 'off' : 'every' }
+                      : { radius: on ? 'off' : 'daily' },
+                )}
+              >
+                <span className={styles.switchText}>
+                  <b>{label}</b>
+                  <i>{note}</i>
+                </span>
+                <span className={notifPrefs && on ? `${styles.switchTrack} ${styles.switchOn}` : styles.switchTrack}>
+                  <em />
+                </span>
+              </button>
+            )
+          })}
+          <p className={styles.radioScopeNote}>
+            {notifError
+              ? 'Could not reach your settings. They are unchanged — try again in a moment.'
+              : !notifPrefs
+                ? 'Reading your settings…'
+                : 'Muted notifications are never sent, so your phone stays quiet. You can still see everything on the Notifications screen.'}
+          </p>
         </article>
         )}
 
