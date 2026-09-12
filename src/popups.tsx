@@ -1,3 +1,4 @@
+import { cameraPopupsSuppressed, useCameraPopupsSuppressed } from './cameraPopupPolicy'
 import { createPortal } from 'react-dom'
 import React, { useEffect, useState } from 'react'
 import surfaceStyles from './TransientPopupSurface.module.css'
@@ -216,7 +217,7 @@ export function showPopup(item: Omit<PopupItem, 'id' | 'ttl'> & { ttl?: number }
   const id = nextId++
   // Silently dropped, not queued: by the time the player closes this notice
   // would be stale news, same rule as the MAX_LIVE overflow below.
-  if (suppressedAll || suppressedKinds.has(item.kind)) return id
+  if (cameraPopupsSuppressed() || suppressedAll || suppressedKinds.has(item.kind)) return id
   const ttl = item.ttl ?? TTL[item.kind]
   // One banner at a time. A second push while the first is still up replaces
   // it rather than stacking a column of them down the screen.
@@ -260,6 +261,7 @@ export function clearPopups(kind?: PopupKind): void {
  * same notices on the map and the feed without either one owning them.
  */
 export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBackdrop?: boolean }) {
+  const cameraSuppressed = useCameraPopupsSuppressed()
   const [live, setLive] = useState<PopupItem[]>(items)
   useEffect(() => subscribe(setLive), [])
 
@@ -273,7 +275,7 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
   // A TAP dismisses; a DRAG is left alone so it reaches the map as usual. The
   // tap's click is swallowed once so dismissing an ad does not also act on
   // whatever sits under it.
-  const dismissible = dismissOnBackdrop && live.length > 0
+  const dismissible = !cameraSuppressed && dismissOnBackdrop && live.length > 0
   useEffect(() => {
     if (!dismissible) return
     let startX = 0, startY = 0, startT = 0, tracking = false
@@ -317,7 +319,7 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
     return () => window.removeEventListener('poplur-native-map-tap', dismissFromNativeMap)
   }, [dismissible])
 
-  if (!live.length) return null
+  if (!live.length || cameraSuppressed) return null
 
   let popupDocument = document
   try { popupDocument = window.parent.document } catch { /* cross-origin host */ }

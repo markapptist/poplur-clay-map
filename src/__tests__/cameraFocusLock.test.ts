@@ -92,6 +92,7 @@ describe('camera focus wiring', () => {
   })
   it('opens the matched profile or the Poplur browser, with a haptic', () => {
     expect(camera).toContain('detail: detection.isUser ? {} : { handle: detection.user?.handle },')
-    expect(camera).toContain('popHaptic()\n    openInPoplurBrowser(url)')
+    expect(camera).toContain("if (NATIVE_SHELL) postNativeEvent({ type: 'openInAppBrowser', url })")
+    expect(camera).not.toContain('<CommerceSuggestionWindow')
   })
 })

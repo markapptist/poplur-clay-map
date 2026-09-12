@@ -1,3 +1,4 @@
+import { useCameraPopupsSuppressed } from './cameraPopupPolicy'
 import surfaceStyles from './TransientPopupSurface.module.css'
 import styles from './PoplurStatusToast.module.css'
 
@@ -10,6 +11,8 @@ export default function PoplurStatusToast({
   detail: string
   tone?: 'success' | 'error'
 }) {
+  const suppressed = useCameraPopupsSuppressed()
+  if (suppressed) return null
   return (
     <div
       className={`${styles.toast} ${surfaceStyles.surface}`}

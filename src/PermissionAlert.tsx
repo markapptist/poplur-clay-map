@@ -1,3 +1,4 @@
+import { useCameraPopupsSuppressed } from './cameraPopupPolicy'
 import React from 'react'
 import surfaceStyles from './TransientPopupSurface.module.css'
 import styles from './PermissionAlert.module.css'
@@ -39,6 +40,8 @@ export default function PermissionAlert({
   /** Accessible name for the dialog, e.g. "Camera permission". */
   label: string
 }) {
+  const suppressed = useCameraPopupsSuppressed()
+  if (suppressed) return null
   const iconClass =
     icon === 'camera' ? styles.iconCamera
       : icon === 'location' ? styles.iconLocation

@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import CameraRoll from './CameraRoll'
 import { cameraParkPlan, readNativeCameraBudget, type NativeCameraBudget } from './CameraAvailability'
-import PoplurDialog from './PoplurDialog'
-import ShellOverlayPortal from './ShellOverlayPortal'
+import { setCameraPopupsSuppressed } from './cameraPopupPolicy'
+import { clearPopups } from './popups'
 import CameraScanButton from './CameraScanButton'
 import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import { readCameraAiVoice, writeCameraAiVoice, onCameraPreferenceChange } from './cameraPreferences'
@@ -32,10 +32,6 @@ import {
 import FaceAROverlay, { drawFaceAREffect, hasCaptureCostume } from './FaceAROverlay'
 import PostComposer, { type ComposerMedia, type ComposerTarget, type PublishedPost } from './PostComposer'
 import CaptureReview from './CaptureReview'
-import PermissionAlert from './PermissionAlert'
-import CommerceSuggestionWindow from './CommerceSuggestionWindow'
-import { purchaseSuggestionForDetection } from './commerceSuggestions'
-import type { SmartCard } from './tourSmarts'
 import { useControlSide } from './controlPlacement'
 import TabControlRail from './TabControlRail'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
@@ -54,11 +50,6 @@ import { currentViewerCoords } from './viewerFix'
 // transparent hole so it shows through, while the approved chrome/icons here
 // drive the native camera over the bridge.
 const NATIVE_SHELL = isNativeShell()
-// How long a camera shopping card stays on screen after the object leaves the
-// frame. Long enough to read the offer and reach for it; short enough that a
-// card for something you have walked away from does not linger.
-const COMMERCE_MIN_DWELL_MS = 12_000
-
 // Vision publishes a ranked bag for every analyzed frame. The title has room
 // for a short scene read, not just one brittle taxonomy clue, so retain the
 // native primary and add up to two distinct, useful corroborating findings.
@@ -353,12 +344,10 @@ export default function Camera({
   const onAirRadiusRef = useRef(onAirRadiusKm)
   onAirRadiusRef.current = onAirRadiusKm
   // The iPhone preview is native and cannot supply a web MediaStream.
-  // Keep LIVE reachable in video mode and explain its availability without
-  // turning on a blank broadcast or inventing viewer counts.
-  const [liveInfoOpen, setLiveInfoOpen] = useState(false)
+  // Disable LIVE until the native preview can supply a broadcast stream.
   const canGoLive = !NATIVE_CAMERA_PREVIEW
   const toggleLive = useCallback(() => {
-    if (NATIVE_CAMERA_PREVIEW) { setLiveInfoOpen(true); return }
+    if (NATIVE_CAMERA_PREVIEW) return
     if (isLive()) { stopBroadcast(); return }
     const source = streamRef.current
     if (!source) return
@@ -432,28 +421,11 @@ export default function Camera({
     const url = objectLookupUrl(detection.label)
     if (!url) return
     popHaptic()
-    openInPoplurBrowser(url)
+    if (NATIVE_SHELL) postNativeEvent({ type: 'openInAppBrowser', url })
+    else openInPoplurBrowser(url)
   }, [])
   const [lastCameraReads, setLastCameraReads] = useState<Detection[]>([])
   const detectorRef = useRef<FrameDetector | null>(null)
-  const [commerceCard, setCommerceCard] = useState<SmartCard | null>(null)
-  const [commercePinned, setCommercePinned] = useState(false)
-  const commerceTimerRef = useRef<number | null>(null)
-  // Floor on how long a shopping card stays offered once it appears, and the
-  // timer that retires it when the object has left the frame for good.
-  const commerceHoldUntilRef = useRef(0)
-  const commerceHoldTimerRef = useRef<number | null>(null)
-  const commerceKeyRef = useRef<string | null>(null)
-  const dismissedCommerceRef = useRef(new Map<string, number>())
-  const dismissCommerce = useCallback(() => {
-    if (commerceKeyRef.current) {
-      dismissedCommerceRef.current.set(commerceKeyRef.current, Date.now())
-    }
-    commerceKeyRef.current = null
-    setCommercePinned(false)
-    setCommerceCard(null)
-  }, [])
-
   const [arFilter, setArFilter] = useState('none')
   /** Rule-of-thirds lines over the live preview. Purely a viewfinder aid:
    *  never drawn into the capture. */
@@ -571,6 +543,11 @@ export default function Camera({
   // that left reviewMedia set showed a black viewfinder with the HUD drawn
   // over it, and nothing on screen said why.
   const liveSurfaceVisible = surfaceVisible && page === 'live' && !composing
+  useLayoutEffect(() => {
+    setCameraPopupsSuppressed(liveSurfaceVisible)
+    if (liveSurfaceVisible) clearPopups()
+    return () => setCameraPopupsSuppressed(false)
+  }, [liveSurfaceVisible])
 
   // AR is scoped to one visit to the live viewfinder. Camera Roll, the post
   // composer, the hold menu, and another tab are all real exits: returning
@@ -1057,90 +1034,6 @@ export default function Camera({
     }, 250)
     return () => window.clearInterval(timer)
   }, [facing, liveDetectionActive, page, streamOn])
-
-  // A purchasable object has to remain stable under the lens before an ad can
-  // appear. Native shells receive real ML detections; the browser simulator is
-  // intentionally excluded unless the explicit visual-test flag is present.
-  const commerceMatch = detections
-    .map(detection => ({ detection, card: purchaseSuggestionForDetection(detection) }))
-    .find(match => match.card !== null) ?? null
-  const commerceKey = commerceMatch
-    ? `${commerceMatch.detection.label.toLowerCase()}:${commerceMatch.card!.link?.url ?? ''}`
-    : null
-  const cameraCommerceDemo = typeof window !== 'undefined'
-    && new URLSearchParams(window.location.search).get('cameraCommerceDemo') === '1'
-  const commerceAllowed = detectOn
-    && liveSurfaceVisible
-    && recStart === null
-    && (NATIVE_SHELL || cameraCommerceDemo)
-
-  useEffect(() => {
-    if (commerceTimerRef.current != null) {
-      window.clearTimeout(commerceTimerRef.current)
-      commerceTimerRef.current = null
-    }
-    if (!commerceAllowed) {
-      commerceKeyRef.current = null
-      setCommercePinned(false)
-      setCommerceCard(null)
-      return
-    }
-    // Once a person starts using the ad/browser controls, a momentary ML miss
-    // must not close the window under their finger.
-    if (commercePinned) return
-    if (!commerceKey || !commerceMatch?.card) {
-      // An ad gets a minimum time on screen once it has earned one.
-      //
-      // The window was bound frame-for-frame to the detection: glance away,
-      // let a hand cross the lens, or let the classifier drop the object for a
-      // single frame, and the card vanished mid-read. Nobody can act on an ad
-      // that is only present while the camera is held perfectly still. Hold it
-      // for COMMERCE_MIN_DWELL_MS from the moment it appeared, then let it go
-      // as before. A tap still dismisses instantly — this floors how long it
-      // is offered, it does not trap anyone.
-      const holdFor = commerceHoldUntilRef.current - Date.now()
-      if (commerceCard && holdFor > 0) {
-        if (commerceHoldTimerRef.current == null) {
-          commerceHoldTimerRef.current = window.setTimeout(() => {
-            commerceHoldTimerRef.current = null
-            commerceKeyRef.current = null
-            setCommerceCard(null)
-          }, holdFor)
-        }
-        return
-      }
-      commerceKeyRef.current = null
-      setCommerceCard(null)
-      return
-    }
-    // The object is back in frame before the hold expired — cancel the retire.
-    if (commerceHoldTimerRef.current != null) {
-      window.clearTimeout(commerceHoldTimerRef.current)
-      commerceHoldTimerRef.current = null
-    }
-    if (commerceKeyRef.current === commerceKey && commerceCard) return
-    const dismissedAt = dismissedCommerceRef.current.get(commerceKey) ?? 0
-    if (Date.now() - dismissedAt < 30_000) return
-
-    const nextCard = commerceMatch.card
-    commerceTimerRef.current = window.setTimeout(() => {
-      commerceTimerRef.current = null
-      commerceKeyRef.current = commerceKey
-      commerceHoldUntilRef.current = Date.now() + COMMERCE_MIN_DWELL_MS
-      setCommerceCard(nextCard)
-    }, 900)
-    return () => {
-      if (commerceTimerRef.current != null) {
-        window.clearTimeout(commerceTimerRef.current)
-        commerceTimerRef.current = null
-      }
-    }
-  }, [commerceAllowed, commerceCard, commerceKey, commercePinned])
-
-  useEffect(() => () => {
-    if (commerceTimerRef.current != null) window.clearTimeout(commerceTimerRef.current)
-    if (commerceHoldTimerRef.current != null) window.clearTimeout(commerceHoldTimerRef.current)
-  }, [])
 
   useEffect(() => {
     // Native supplies real boxes; do not also run the simulator over them.
@@ -1961,22 +1854,13 @@ export default function Camera({
     return () => document.documentElement.classList.remove('camera-live')
   }, [page])
 
-  // Camera permission, asked in Poplur's own alert before the OS one. The
-  // grant is remembered the way the roll remembers its own, so the ask happens
-  // once rather than on every visit to the tab. Browser twins never ask —
-  // there is no native camera behind them to open.
-  const needsCameraPermission = NATIVE_SHELL && cameraPermission === 'ask' && page === 'live'
-  const allowCamera = () => {
-    playPop()
+  // Opening the camera asks the OS directly, without an app pre-permission card.
+  useEffect(() => {
+    if (!NATIVE_SHELL || cameraPermission !== 'ask' || !liveSurfaceVisible) return
     try { window.localStorage.setItem('poplur.cameraPermission', 'granted') } catch { /* embedded */ }
     setCameraPermission('granted')
-    // Only now does the real prompt fire.
     postNativeEvent({ type: 'requestCameraPermission' })
-  }
-  const denyCamera = () => {
-    playPop()
-    setCameraPermission('denied')
-  }
+  }, [cameraPermission, liveSurfaceVisible])
 
   // Only the CENTRE live panel carries the stream — the wrap clone would need
   // a second camera to show the same picture, and one camera is all there is.
@@ -2292,9 +2176,9 @@ export default function Camera({
             ? 'End the live broadcast'
             : canGoLive
               ? 'Go live from this camera'
-              : 'Open live video'}
+              : 'Live video unavailable'}
           aria-pressed={onAir}
-          disabled={captureMode !== 'video'}
+          disabled={captureMode !== 'video' || !canGoLive}
           data-camera-live={onAir ? 'on' : 'off'}
           onPointerDown={event => event.stopPropagation()}
           onClick={event => { event.stopPropagation(); playPop(); toggleLive() }}
@@ -2392,23 +2276,6 @@ export default function Camera({
           </div>
         )
       })()}
-      {real && commerceCard && (
-        <div
-          className={styles.cameraCommerceOverlay}
-          onClick={() => {
-            playPop()
-            dismissCommerce()
-          }}
-        >
-          <CommerceSuggestionWindow
-            card={commerceCard}
-            variant="camera"
-            onInteract={() => setCommercePinned(true)}
-            onClose={dismissCommerce}
-          />
-        </div>
-      )}
-
     </section>
   )
 
@@ -2460,30 +2327,6 @@ export default function Camera({
           onClose={() => { setComposing(null); setComposerDraft(null); onPostTargetUsed?.() }}
           bindArrows={fn => { composerArrowsRef.current = fn }}
           bindBack={fn => { composerBackRef.current = fn }}
-        />
-      )}
-
-      {liveInfoOpen && <ShellOverlayPortal>
-        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: 24, pointerEvents: 'auto', background: 'rgba(0,0,0,.65)' }}>
-          <PoplurDialog title="Live video" eyebrow="LIVE" subtitle="Live broadcasting is not connected yet. You can record a video and post it to TV."
-            primaryAction={{ label: 'Record a video', onActivate: () => setLiveInfoOpen(false) }}
-            onClose={() => setLiveInfoOpen(false)} />
-        </div>
-      </ShellOverlayPortal>}
-
-      {/* Asked before the real one. The native layer holds the viewfinder shut
-          until this is answered, so the OS prompt only ever appears to someone
-          who has already said yes here. */}
-      {needsCameraPermission && (
-        <PermissionAlert
-          icon="camera"
-          label="Camera permission"
-          title={'Allow "Poplur" to use your camera?'}
-          copy="Post photos and video to the people inside your radius."
-          choices={[
-            { label: "Don't Allow", onPick: denyCamera },
-            { label: 'Allow', grants: true, onPick: allowCamera },
-          ]}
         />
       )}
     </div>

@@ -1,3 +1,4 @@
+import { useCameraPopupsSuppressed } from './cameraPopupPolicy'
 import { useEffect, useRef, useState } from 'react'
 import surfaceStyles from './TransientPopupSurface.module.css'
 import styles from './ScreenCoach.module.css'
@@ -47,6 +48,7 @@ export interface CoachProps {
 }
 
 export default function ScreenCoach({ id, title, lines, split, pinArrows }: CoachProps) {
+  const suppressed = useCameraPopupsSuppressed()
   const [open, setOpen] = useState(() => !seen()[id])
   const timer = useRef(0)
 
@@ -74,7 +76,7 @@ export default function ScreenCoach({ id, title, lines, split, pinArrows }: Coac
     }
   }, [open, id])
 
-  if (!open) return null
+  if (!open || suppressed) return null
 
   return (
     <div className={styles.coach} data-coach={id} aria-live="polite">

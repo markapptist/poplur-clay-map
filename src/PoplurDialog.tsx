@@ -1,3 +1,4 @@
+import { useCameraPopupsSuppressed } from './cameraPopupPolicy'
 import type { CSSProperties, KeyboardEvent, ReactNode } from 'react'
 import BoundedPopupVideo from './BoundedPopupVideo'
 import styles from './PoplurDialog.module.css'
@@ -114,6 +115,8 @@ export default function PoplurDialog({
       )}
     </>
   )
+  const suppressed = useCameraPopupsSuppressed()
+  if (suppressed) return null
   const hasActions = !!(primaryAction || tertiaryAction || secondaryAction)
   return (
     <section
