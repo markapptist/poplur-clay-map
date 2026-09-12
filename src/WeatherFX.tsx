@@ -112,7 +112,7 @@ export default function WeatherFX({ mode }: { mode: WeatherMode }) {
   const dims = DIM_MODES.includes(mode)
 
   return (
-    <div className={`${styles.layer} ${styles.weatherAlwaysAnimating}`} aria-hidden="true">
+    <div className={`${styles.layer} ${styles.weatherLayer}`} aria-hidden="true">
       {rains && (
         <div className={dims ? styles.stormDim : undefined}>
           {drops.map((d, i) => (

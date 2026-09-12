@@ -2442,7 +2442,7 @@ export default function ProfileTwin({
   const visitedRadiusKm = liveRadius.radiusKm ?? profilePosts.reduce((sum, post) => sum + (post.reachKm ?? 0), 0)
   const meterRadiusKm = viewerPost
     ? (viewerPost.reachKm ?? 0)
-    : uploadedPostsLoaded || visiting ? visitedRadiusKm : accountRadiusKm
+    : visiting ? visitedRadiusKm : accountRadiusKm
   const meterSubjectKey = viewerPost
     ? `pop:${viewerPostId}`
     : visiting ? `profile:${viewUserId ?? viewUser}` : 'account'
@@ -2456,8 +2456,8 @@ export default function ProfileTwin({
   // would throw before the effect ever ran.
   const visitedPostCount = authored.snapshot?.postCount ?? profilePosts.length
   useEffect(() => {
-    onVisitedTotals?.(visiting || uploadedPostsLoaded ? { radiusKm: visitedRadiusKm, posts: visitedPostCount } : null)
-  }, [visiting, uploadedPostsLoaded, visitedRadiusKm, visitedPostCount, onVisitedTotals])
+    onVisitedTotals?.(visiting || uploadedPostsLoaded ? { radiusKm: visiting ? visitedRadiusKm : accountRadiusKm, posts: visitedPostCount } : null)
+  }, [visiting, uploadedPostsLoaded, visitedRadiusKm, accountRadiusKm, visitedPostCount, onVisitedTotals])
   // Leaving the profile hands the card back to your own totals.
   useEffect(() => () => { onVisitedTotals?.(null) }, [onVisitedTotals])
   // Profile controls span the 200px avatar, with space-between gaps.

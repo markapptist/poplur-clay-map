@@ -15,9 +15,9 @@ describe('the profile radius meter is the map’s striker, in sync with the radi
     expect(profile).toContain("side={controlSide === 'right' ? 'left' : 'right'}")
     expect(profile).toContain('radiusKm={meterRadiusKm}')
     expect(profile).toContain('subjectKey={meterSubjectKey}')
-    // Open pop → that pop's reach; loaded profiles → the complete author's
-    // live total. The shell consumes the same visitedRadiusKm.
-    expect(profile).toMatch(/const meterRadiusKm = viewerPost\s*\?\s*\(viewerPost\.reachKm \?\? 0\)\s*:\s*uploadedPostsLoaded \|\| visiting \? visitedRadiusKm : accountRadiusKm/)
+    // Loading your posts must not override the shared account total.
+    expect(profile).toMatch(/const meterRadiusKm = viewerPost\s*\?\s*\(viewerPost\.reachKm \?\? 0\)\s*:\s*visiting \? visitedRadiusKm : accountRadiusKm/)
+    expect(profile).toContain('radiusKm: visiting ? visitedRadiusKm : accountRadiusKm, posts: visitedPostCount')
     expect(profile).toContain('readAccountRadiusKm')
     expect(profile).toContain('window.addEventListener(ACCOUNT_RADIUS_CHANGE_EVENT, refresh)')
   })

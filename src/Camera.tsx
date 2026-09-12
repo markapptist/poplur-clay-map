@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import CameraRoll from './CameraRoll'
-import CameraAvailability, { cameraParkPlan, readNativeCameraBudget, type NativeCameraBudget } from './CameraAvailability'
+import { cameraParkPlan, readNativeCameraBudget, type NativeCameraBudget } from './CameraAvailability'
 import PoplurDialog from './PoplurDialog'
 import ShellOverlayPortal from './ShellOverlayPortal'
 import CameraScanButton from './CameraScanButton'
@@ -655,28 +655,13 @@ export default function Camera({
     if (!NATIVE_CAMERA_PREVIEW || !effectiveLiveSurfaceVisible || !nativeCameraBudget?.canResume) return
     postNativeEvent({ type: 'cameraControl', control: 'resumePreview' })
   }, [effectiveLiveSurfaceVisible, nativeCameraBudget?.canResume])
-  // The gesture-only rule above is a THERMAL rule: a sensor the OS parked for
-  // heat must not restart from a timer. A park the device can serve again —
-  // a recording that ended, a window that expired, an entry that never
-  // opened — is different: the sensor was running a moment ago and the user
-  // is still looking at the viewfinder. Reopen it as soon as the surface is
-  // visible instead of leaving a black frame behind a "Camera ready to
-  // resume" card. Native still decides: if it is too warm it answers with a
-  // thermal park and the card shows; the effect fires once per budget value.
-  // The plan (cameraParkPlan) says whether to ask native once, and whether to
-  // hold the card back for a grace period first. A grace that expires while
-  // the same park is still in force reveals the card; native publishing a new
-  // state cancels it. Native still decides — a hot device answers with a
-  // thermal park, which has no grace and no auto-resume.
-  const [parkedCardHeld, setParkedCardHeld] = useState(false)
+  // Recover ordinary interruptions without a message or a tap gate. Native
+  // still owns thermal recovery, requested through the camera gesture below.
   useEffect(() => {
-    if (!NATIVE_CAMERA_PREVIEW || !effectiveLiveSurfaceVisible) { setParkedCardHeld(false); return }
-    const plan = cameraParkPlan(nativeCameraBudget)
-    if (plan.autoResume) postNativeEvent({ type: 'cameraControl', control: 'resumePreview' })
-    if (!plan.card || plan.graceMs <= 0) { setParkedCardHeld(false); return }
-    setParkedCardHeld(true)
-    const timer = window.setTimeout(() => setParkedCardHeld(false), plan.graceMs)
-    return () => window.clearTimeout(timer)
+    if (!NATIVE_CAMERA_PREVIEW || !effectiveLiveSurfaceVisible) return
+    if (cameraParkPlan(nativeCameraBudget).autoResume) {
+      postNativeEvent({ type: 'cameraControl', control: 'resumePreview' })
+    }
   }, [effectiveLiveSurfaceVisible, nativeCameraBudget])
   // An applied AR filter needs a face reading even when object detection is
   // toggled off. Merely opening the filter tray on "None" does not: starting
@@ -2012,10 +1997,6 @@ export default function Camera({
       // pointer handlers because there is nothing else for it to pan.
       style={{ touchAction: real ? 'pan-y' : undefined }}
     >
-      {real && NATIVE_CAMERA_PREVIEW && effectiveLiveSurfaceVisible && !needsCameraPermission && (
-        <CameraAvailability budget={parkedCardHeld ? null : nativeCameraBudget} onResume={resumeNativePreview}
-          onOpenRoll={() => onOpenRoll?.()} />
-      )}
       {!NATIVE_CAMERA_PREVIEW && real && (
         <>
           {!hardwareZoom && zoom < 1 && wideBackdrop && (

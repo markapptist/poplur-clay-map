@@ -6,22 +6,20 @@
   overflow: hidden;
 }
 
-/* The thermal governor parks generic decorative animation after a short idle —
-   and on a native shell that idle is a 3s burst followed by a 12s rest, with a
-   return visit to the map asleep on arrival. Weather is a live map condition,
-   not decoration, so keep its small, compositor-only visual layer moving while
-   this screen is visible. Without this the drops sit paused at top:-30px and
-   real rain shows as clear sky. Audio and document-hidden timers are still
-   stopped in WeatherFX.tsx. Emergency/low-power remain the final thermal safety
-   valve — matched case-insensitively because the iOS shell writes LOW_POWER /
-   EMERGENCY while index.css spells them lower-case.
+/* Keep weather visible when the map parks, without keeping its compositor
+   animations alive. Particles use negative delays, so a paused frame still
+   shows precipitation. Clouds need their natural position instead of drift's
+   offscreen starting frame. OS pressure uses the same still presentation. */
+:global(html.poplur-ambient-sleep) .weatherLayer *,
+:global(html[data-poplur-performance-mode="low_power" i]) .weatherLayer *,
+:global(html[data-poplur-performance-mode="emergency" i]) .weatherLayer * {
+  animation-play-state: paused !important;
+}
 
-   This rule was lost once already (authored in cd21f96, clobbered by the
-   27 Aug shared-snapshot import) while WeatherFX.tsx kept referencing the
-   class. weatherFxAlwaysAnimating.test.ts now pins both halves together. */
-:global(html.poplur-ambient-sleep:not([data-poplur-performance-mode="low_power" i]):not([data-poplur-performance-mode="emergency" i])) .weatherAlwaysAnimating,
-:global(html.poplur-ambient-sleep:not([data-poplur-performance-mode="low_power" i]):not([data-poplur-performance-mode="emergency" i])) .weatherAlwaysAnimating * {
-  animation-play-state: running !important;
+:global(html.poplur-ambient-sleep) .weatherLayer .cloud,
+:global(html[data-poplur-performance-mode="low_power" i]) .weatherLayer .cloud,
+:global(html[data-poplur-performance-mode="emergency" i]) .weatherLayer .cloud {
+  animation: none !important;
 }
 
 /* ── Rain: glossy clay droplets streaking down ── */

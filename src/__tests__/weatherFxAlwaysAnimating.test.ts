@@ -2,18 +2,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-// Live weather is a map CONDITION, not decoration. The frame governor's
-// ambient sleep pauses every particle animation by class-name substring
-// (index.css: `.poplur-ambient-sleep [class*="drop_"]`), and on a native shell
-// ambient sleep is the normal state — a 3s burst, a 12s rest, and a return
-// visit to the map that is asleep on arrival. A paused drop sits at top:-30px,
-// above the viewport, so a rainy day renders as clear sky.
-//
-// WeatherFX.module.css exempts the weather layer from that pause. The exemption
-// has been silently lost once already (authored in cd21f96, gone by 1 Sep) while
-// WeatherFX.tsx kept applying `styles.weatherAlwaysAnimating` — which quietly
-// resolves to `undefined` when the class is missing, so nothing failed and the
-// rain simply stopped. These tests pin the two halves to each other.
+// Idle weather remains visible, but must stop compositor motion alongside
+// the map renderer. Particle negative delays preserve the still weather.
 
 const src = (name: string) => readFileSync(join(__dirname, '..', name), 'utf8')
 
@@ -27,39 +17,26 @@ function undefinedStyleRefs(tsx: string, css: string): string[] {
   return [...new Set(referenced)].filter(name => !new RegExp(`\\.${name}\\b`).test(css))
 }
 
-describe('WeatherFX ambient-sleep exemption', () => {
-  it('defines every class WeatherFX.tsx applies', () => {
-    // A missing CSS-module class is not a type error and not a runtime error —
-    // it renders the string "undefined" into the class list. This is the check
-    // that would have caught the lost exemption the day it went.
+describe('WeatherFX idle motion', () => {
+  it('defines every class the weather layer applies', () => {
     expect(undefinedStyleRefs(WEATHER_FX_TSX, WEATHER_FX_CSS)).toEqual([])
+    expect(WEATHER_FX_TSX).toContain('styles.weatherLayer')
   })
 
-  it('still applies the always-animating hook to the weather layer', () => {
-    expect(WEATHER_FX_TSX).toContain('styles.weatherAlwaysAnimating')
+  it('parks all weather motion in ambient sleep and under OS pressure', () => {
+    for (const selector of [
+      ':global(html.poplur-ambient-sleep) .weatherLayer *',
+      ':global(html[data-poplur-performance-mode="low_power" i]) .weatherLayer *',
+      ':global(html[data-poplur-performance-mode="emergency" i]) .weatherLayer *',
+    ]) expect(WEATHER_FX_CSS).toContain(selector)
+    expect(WEATHER_FX_CSS).toContain('animation-play-state: paused !important;')
+    expect(WEATHER_FX_CSS).not.toContain('animation-play-state: running !important;')
+    expect(INDEX_CSS).toContain('.poplur-ambient-sleep')
   })
 
-  it('keeps the weather layer and its particles running through ambient sleep', () => {
-    const rule = WEATHER_FX_CSS.slice(WEATHER_FX_CSS.indexOf('.weatherAlwaysAnimating'))
-    expect(rule).toContain('poplur-ambient-sleep')
-    // Both halves: the layer itself and the drops/flakes/stones inside it.
-    expect(WEATHER_FX_CSS).toMatch(/\.weatherAlwaysAnimating \*/)
-    expect(rule).toMatch(/animation-play-state:\s*running\s*!important/)
-  })
-
-  it('retains low-power and emergency as the thermal safety valve', () => {
-    // The iOS shell writes LOW_POWER / EMERGENCY (PoplurPerformanceMode
-    // .diagnosticName); index.css spells them lower-case. The guard matches
-    // either, so the valve cannot be defeated by casing.
-    expect(WEATHER_FX_CSS).toMatch(/:not\(\[data-poplur-performance-mode="low_power" i\]\)/)
-    expect(WEATHER_FX_CSS).toMatch(/:not\(\[data-poplur-performance-mode="emergency" i\]\)/)
-  })
-
-  it('documents why the exemption is needed: ambient sleep pauses the particles', () => {
-    // If this pause ever goes away the exemption is harmless, but while it
-    // exists the exemption is the only thing keeping real rain on screen.
-    expect(INDEX_CSS).toContain('.poplur-ambient-sleep [class*="drop_"]')
-    expect(INDEX_CSS).toMatch(/animation-play-state:\s*paused\s*!important/)
+  it('keeps idle clouds in their visible resting position', () => {
+    expect(WEATHER_FX_CSS).toContain(':global(html.poplur-ambient-sleep) .weatherLayer .cloud')
+    expect(WEATHER_FX_CSS).toContain('animation: none !important;')
   })
 })
 

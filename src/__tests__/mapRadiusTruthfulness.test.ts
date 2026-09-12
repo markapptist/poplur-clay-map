@@ -35,7 +35,7 @@ describe('the account total is derived from something a phone can see', () => {
     // Both non-happy paths of the subscription emit {0, 0}; that is fine as an
     // error fallback and fatal as the routine path.
     const accountRadius = src('accountRadiusPosts.ts')
-    expect(accountRadius).toContain('listener({ radiusKm: 0, postCount: 0 })')
+    expect(accountRadius).toContain('listener({ radiusKm: 0, totalReachKm: 0, postCount: 0 })')
   })
 })
 
@@ -77,7 +77,7 @@ describe('the corner card reports the person on screen', () => {
   it("reads a visited profile's own totals instead of your account", () => {
     // Standing on somebody else's grid, the card used to fall through to
     // earnedRadiusKm and print YOUR radius over THEIR posts.
-    expect(profile).toContain('onVisitedTotals?.(visiting ? { radiusKm: visitedRadiusKm, posts: visitedPostCount } : null)')
+    expect(profile).toContain('onVisitedTotals?.(visiting || uploadedPostsLoaded ? { radiusKm: visiting ? visitedRadiusKm : accountRadiusKm, posts: visitedPostCount } : null)')
     expect(home).toContain('onVisitedTotals={setVisitedTotals}')
     expect(home).toContain("activeTab === 'profile' && visitedTotals != null\n              ? visitedTotals.radiusKm")
   })
