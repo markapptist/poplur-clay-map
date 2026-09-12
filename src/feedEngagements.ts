@@ -5,6 +5,12 @@ import { authToken, requestAuthToken } from './nativeAuth'
 export const POST_ENGAGEMENT_KINDS = ['view', 'like', 'dislike', 'comment'] as const
 export type PostEngagementKind = typeof POST_ENGAGEMENT_KINDS[number]
 
+/** Which screen the engagement happened on. The server copies it onto the
+ * private engagement document so the algorithm digest can split reach by
+ * surface; it never reaches the public radius ledger or the post itself. */
+export const POST_ENGAGEMENT_SURFACES = ['feed', 'map', 'profile', 'unknown'] as const
+export type PostEngagementSurface = typeof POST_ENGAGEMENT_SURFACES[number]
+
 export interface PostEngagementCounters {
   radiusMeters: number
   organicRadiusMeters: number
@@ -41,6 +47,15 @@ function canonicalPostId(value: string): string {
   return postId
 }
 
+// The callable rejects any key or value outside its allow-list, so a bad label
+// is refused here before it can consume the view fence or a network call.
+function canonicalSurface(value: PostEngagementSurface): PostEngagementSurface {
+  if (!(POST_ENGAGEMENT_SURFACES as readonly string[]).includes(value)) {
+    throw new Error('Unsupported post engagement surface.')
+  }
+  return value
+}
+
 function randomSuffix(): string {
   try { return crypto.randomUUID().replace(/-/g, '') } catch { /* older WebKit */ }
   return `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
@@ -55,16 +70,18 @@ export function postEngagementPayload(
   kind: PostEngagementKind,
   eventIdValue = createPostEngagementEventId(),
   text?: string,
-): { postId: string; eventId: string; kind: PostEngagementKind; text?: string } {
+  surface: PostEngagementSurface = 'unknown',
+): { postId: string; eventId: string; kind: PostEngagementKind; surface: PostEngagementSurface; text?: string } {
   if (!(POST_ENGAGEMENT_KINDS as readonly string[]).includes(kind)) {
     throw new Error('Unsupported post engagement.')
   }
+  canonicalSurface(surface)
   const postId = canonicalPostId(postIdValue)
   const eventId = eventIdValue.trim()
   if (!EVENT_ID_PATTERN.test(eventId)) throw new Error('Invalid post engagement event.')
   // Comment text is public content; counters and radius deltas are always
   // derived by the server and cannot enter this payload.
-  return { postId, eventId, kind, ...(kind === 'comment' && text ? { text: text.trim().slice(0, 500) } : {}) }
+  return { postId, eventId, kind, surface, ...(kind === 'comment' && text ? { text: text.trim().slice(0, 500) } : {}) }
 }
 
 async function waitForNativeToken(): Promise<string | null> {
@@ -118,8 +135,9 @@ export async function recordPostEngagement(
   kind: PostEngagementKind,
   eventId = createPostEngagementEventId(),
   text?: string,
+  surface: PostEngagementSurface = 'unknown',
 ): Promise<PostEngagementResult> {
-  const payload = postEngagementPayload(postId, kind, eventId, text)
+  const payload = postEngagementPayload(postId, kind, eventId, text, surface)
   // Analytics sees the action only, never the post. This is the single funnel
   // for like/dislike/comment on both the Feed and the Profile; a `view` only
   // reaches here through recordVisiblePostView, which owns pop_view.
@@ -145,8 +163,10 @@ export async function recordPostEngagement(
 export function recordVisiblePostView(
   postIdValue: string,
   now = Date.now(),
+  surface: PostEngagementSurface = 'unknown',
 ): Promise<PostEngagementResult | null> {
   const postId = canonicalPostId(postIdValue)
+  canonicalSurface(surface)
   const previous = viewAttemptAt.get(postId)
   if (previous != null && now - previous < CLIENT_VIEW_MIN_MS) return Promise.resolve(null)
   viewAttemptAt.set(postId, now)
@@ -154,7 +174,7 @@ export function recordVisiblePostView(
   // the server does, not raw impressions. No params: the surface is already
   // the current screen_view, and the post id never crosses.
   track('pop_view')
-  return recordPostEngagement(postId, 'view')
+  return recordPostEngagement(postId, 'view', undefined, undefined, surface)
 }
 
 /** Focused-test reset; production code never clears the view fence. */

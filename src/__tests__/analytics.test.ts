@@ -378,7 +378,7 @@ describe('analytics hook contract', () => {
     const view = source.indexOf("track('pop_view')")
     expect(fence).toBeGreaterThan(-1)
     expect(view).toBeGreaterThan(fence)
-    expect(view).toBeLessThan(source.indexOf("recordPostEngagement(postId, 'view')"))
+    expect(view).toBeLessThan(source.indexOf("recordPostEngagement(postId, 'view', undefined, undefined, surface)"))
     expect(source).toContain("if (kind !== 'view') track('pop_engagement', { action: kind })")
     expect(source.match(/track\(/g)).toHaveLength(2)
     for (const file of ['FeedTwin.tsx', 'ProfileTwin.tsx']) {

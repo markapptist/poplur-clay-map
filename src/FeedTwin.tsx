@@ -1318,7 +1318,7 @@ export default function FeedTwin({
   const adReady = Boolean(playbackKey) && readyPlaybackKey === playbackKey
   useEffect(() => {
     if (!post?.id || (!adReady && !posterReady && !post.stream)) return
-    void recordVisiblePostView(post.id).catch(() => {
+    void recordVisiblePostView(post.id, undefined, 'feed').catch(() => {
       // Offline/migration journal only. The existing reaction UI was already
       // shown and the authoritative snapshot remains untouched.
       recordPostView(postId)
@@ -1915,7 +1915,7 @@ export default function FeedTwin({
     // must never reach a Firestore engagement write, the discovery ranker, or
     // a real radius ledger.
     if (!current.demo) {
-      void recordPostEngagement(id, direction === 'up' ? 'like' : 'dislike').catch(() => {
+      void recordPostEngagement(id, direction === 'up' ? 'like' : 'dislike', undefined, undefined, 'feed').catch(() => {
         if (direction === 'up') recordPostLike(id, 1)
         else recordPostDislike(id, 1)
       })
@@ -2088,7 +2088,7 @@ export default function FeedTwin({
       [key]: [{ who: '@you', body, pic: mine ?? 'mark_talk0.png', mine: true }, ...(all[key] ?? [])],
     }))
     const engagementPostId = radiusPostId(ch.id, post)
-    void recordPostEngagement(engagementPostId, 'comment', undefined, body).catch(() => {
+    void recordPostEngagement(engagementPostId, 'comment', undefined, body, 'feed').catch(() => {
       setMyComments(all => ({ ...all, [key]: (all[key] ?? []).filter(row => row.body !== body) }))
       setCommentText(body)
       setCommentSent('Your comment could not be posted. Please try again.')

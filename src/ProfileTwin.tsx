@@ -2294,7 +2294,7 @@ export default function ProfileTwin({
   const reactToViewerPost = (direction: 'up' | 'down') => {
     if (!viewerPost) return
     const postId = viewerPost.id ?? viewerPost.video
-    void recordPostEngagement(postId, direction === 'up' ? 'like' : 'dislike').catch(() => {
+    void recordPostEngagement(postId, direction === 'up' ? 'like' : 'dislike', undefined, undefined, 'profile').catch(() => {
       if (direction === 'up') recordPostLike(postId, 1)
       else recordPostDislike(postId, 1)
     })
@@ -2310,7 +2310,7 @@ export default function ProfileTwin({
       ...current,
       [postId]: [...(current[postId] ?? []), body],
     }))
-    void recordPostEngagement(postId, 'comment', undefined, body).catch(() => {
+    void recordPostEngagement(postId, 'comment', undefined, body, 'profile').catch(() => {
       setViewerComments(current => ({ ...current, [postId]: (current[postId] ?? []).filter(text => text !== body) }))
       setViewerCommentText(body)
       flashNote('Your comment could not be posted. Please try again.')
@@ -2414,7 +2414,7 @@ export default function ProfileTwin({
   useEffect(() => () => { onPostReach?.(null) }, [onPostReach])
   useEffect(() => {
     if (!viewerPostId || !viewerPlaying || viewerCovered) return
-    void recordVisiblePostView(viewerPostId).catch(() => recordPostView(viewerPostId))
+    void recordVisiblePostView(viewerPostId, undefined, 'profile').catch(() => recordPostView(viewerPostId))
   }, [viewerCovered, viewerPlaying, viewerPostId])
   // Someone else's profile: their handle, their picture, and none of your own
   // controls (you cannot set another person's photo or read their bell).
