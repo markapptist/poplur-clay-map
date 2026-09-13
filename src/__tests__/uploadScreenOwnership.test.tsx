@@ -14,6 +14,7 @@ vi.mock('../VideoEditor', () => ({ default: () => null }))
 vi.mock('../VFXStudio', () => ({ default: () => null }))
 vi.mock('../ComposerAIChat', () => ({ default: () => null }))
 vi.mock('../NotifConfetti', () => ({ default: () => null }))
+vi.mock('../newsMessageDraft', () => ({ renderMessageCard: () => ({ kind: 'photo', src: 'data:image/jpeg;base64,fixture' }) }))
 vi.mock('../newsMessages', () => ({ dropNewsMessage: vi.fn() }))
 vi.mock('../nativeBridge', async importOriginal => ({ ...await importOriginal<typeof import('../nativeBridge')>(), isNativeShell: () => true, postNativeEvent: vi.fn() }))
 vi.mock('../pop', () => ({ playPop: vi.fn() }))
@@ -36,6 +37,26 @@ afterEach(() => {
 })
 
 describe('upload stage ownership', () => {
+  it.each([
+    { kind: 'photo' as const, messageCard: true },
+    { kind: 'photo' as const, messageCard: false },
+    { kind: 'video' as const, messageCard: false },
+  ])('publishes $kind Pop Messages with explicit classification (text card=$messageCard)', async ({ kind, messageCard }) => {
+    act(() => root.render(<PostComposer
+      media={{ kind, src: `data:${kind === 'photo' ? 'image/jpeg' : 'video/mp4'};base64,fixture` }}
+      target={{ lat: 43, lng: -79, radiusKm: 5 }}
+      draft={{ caption: 'Hello #Toronto', channelId: 'food', filterId: 'none', usedAI: false, rightsAttested: true, newsMessage: true, messageCard }}
+      onClose={vi.fn()} />))
+    const submit = [...document.querySelectorAll('button')].find(button => button.textContent?.includes('Post message to map'))!
+    expect(submit).toBeDefined()
+    await act(async () => submit.click())
+    const requests = vi.mocked(postNativeEvent).mock.calls.map(([data]) => data).filter(data => data.type === 'publishPost')
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({ contentType: 'message', messageCard, kind, caption: 'Hello #Toronto', radiusKm: 5 })
+    // Finish the mocked request; this never reaches a real native account.
+    await act(async () => window.dispatchEvent(new CustomEvent('poplur-upload-result', { detail: { requestId: requests[0].requestId, ok: true } })))
+  })
+
   it('replaces the form, waits through 100% transfer, then shows only verified completion', async () => {
     const onPosted = vi.fn()
     const onClose = vi.fn()

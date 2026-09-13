@@ -28,6 +28,9 @@ export interface NativeFeedPost {
   /** Carousel slides, cover first. Absent on a single-media post. */
   mediaURLs?: string[]
   mediaType: 'photo' | 'video'
+  /** Publishing intent; a caption alone never makes a media post a message. */
+  contentType?: 'post' | 'message'
+  messageCard?: boolean
   photoViewSeconds?: number | null
   posterURL?: string
   username: string
@@ -216,6 +219,8 @@ function normalizeFeedPost(
     posterURL,
     username: usernameValue.startsWith('@') ? usernameValue : `@${usernameValue}`,
     caption: boundedText(row.caption, 2_000),
+    contentType: row.contentType === 'message' ? 'message' : 'post',
+    messageCard: row.contentType === 'message' && row.messageCard === true,
     channelId,
     organicRadiusMeters: organicRadiusMeters == null
       ? undefined

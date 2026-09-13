@@ -713,7 +713,8 @@ export default function PostComposer({
           effectAssetTaskId: effectAsset?.taskId,
           effectAssetPrompt: effectAsset?.prompt,
           usedAI,
-          contentType: 'post',
+          contentType: draft?.newsMessage ? 'message' : 'post',
+          messageCard: draft?.newsMessage === true && draft?.messageCard === true,
           // Exact targets cross only this owner-authenticated native bridge and
           // are written to users/{uid}/postLocations. Public post fields below
           // are either a verifiable coarse cell or absent altogether.

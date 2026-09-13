@@ -8,6 +8,9 @@ export interface RealtimeProfilePost {
   video: string
   poster?: string
   mediaType?: 'photo' | 'video'
+  contentType?: 'post' | 'message'
+  messageCard?: boolean
+  createdAtMillis?: number
   syntheticPostId?: string
   /** The pop's own reach in km, server-owned. Carried so the radius card can
    *  show THIS post's radius while it is open, instead of falling through to
@@ -90,6 +93,9 @@ function profilePost(value: NativeFeedPost): RealtimeProfilePost | null {
     video: media,
     poster: poster && (/^https:\/\//i.test(poster) || isSyntheticURL(poster)) ? poster : undefined,
     mediaType: value.mediaType,
+    contentType: value.contentType,
+    messageCard: value.messageCard,
+    createdAtMillis: value.createdAtMillis,
     syntheticPostId: synthetic ? value.id : undefined,
     // Same expression the feed already uses (FeedTwin), so one post reports
     // one reach whichever surface it is opened from.
@@ -149,4 +155,14 @@ export function visitedProfilePhoto(
     if (!uid && target && row.username.trim().replace(/^@/, '').toLowerCase() === target) return row.ownerAvatarURL
   }
   return null
+}
+
+/** Media and public Pop Messages share publication/radius ownership, but each
+ * appears in its own profile tab. Attachments do not change message intent. */
+export function profilePostsForMode<T extends { contentType?: string }>(
+  posts: readonly T[], mode: 'media' | 'messages' | 'liked',
+): T[] {
+  return posts.filter(post => mode === 'messages'
+    ? post.contentType === 'message'
+    : post.contentType !== 'message')
 }

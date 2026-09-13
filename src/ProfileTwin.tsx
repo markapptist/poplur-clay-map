@@ -2,7 +2,7 @@ import { useAuthoredPosts } from './useAuthoredPosts'
 import { useLiveRadiusEstimate } from './useLiveRadiusEstimate'
 import { useFeedPostComments } from './feedPostComments'
 import { useImmersiveControls } from './useImmersiveControls'
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore, useMemo } from 'react'
 import ProfilePostPreview from './ProfilePostPreview'
 import { askForMotion } from './motionPermission'
 import { createPortal } from 'react-dom'
@@ -92,6 +92,7 @@ import {
 import {
   profilePostShareUrl,
   profilePostsFromRealtime,
+  profilePostsForMode,
   profileRecipientUid,
   visitedProfilePhoto,
 } from './profileRealtimePosts'
@@ -104,6 +105,7 @@ import { businessDirectorySnapshot, subscribeBusinessDirectory } from './busines
 import { shouldUseMiles } from './units'
 import PoplurDialog from './PoplurDialog'
 import PostDeleteDialog from './PostDeleteDialog'
+import { relativeWhen } from './newsMessages'
 import { blockUser, reportUser } from './blockedUsers'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
@@ -126,6 +128,9 @@ interface Post {
   video: string
   poster?: string
   mediaType?: 'photo' | 'video'
+  contentType?: 'post' | 'message'
+  messageCard?: boolean
+  createdAtMillis?: number
   syntheticPostId?: string
   /** This pop's own reach in km — see profileRealtimePosts. */
   reachKm?: number
@@ -291,13 +296,6 @@ function releaseViewerMedia(video: HTMLVideoElement): void {
 // are spoofed from stills we already ship (the ad posters and the Mark head)
 // until real accounts exist; nothing here is invented artwork.
 const FRIENDS: Array<{ handle: string; name: string; avatar: string }> = []
-
-// Your inbox. Every message carries the RADIUS it reached you across, the same
-// number the feed's "reached you from" line and the HUD's radius card report —
-// a message is a pop like anything else here, so the distance it travelled is
-// part of what it is, not decoration. Presented the way The Poplur Times
-// presents its stories: a standing list you read down, not three sample rows.
-const MESSAGES: Array<{ who: string; text: string; when: string; radiusKm: number }> = []
 
 // Same continent silhouette used by the pre-login animated clay dot map. The
 // notification banner mounts this only while it is visible.
@@ -635,10 +633,11 @@ export default function ProfileTwin({
   const liveRadius = useLiveRadiusEstimate(authored.snapshot, !authored.error)
   const [uploadedPosts, setUploadedPosts] = useState<Post[]>([])
   const [uploadedPostsLoaded, setUploadedPostsLoaded] = useState(false)
-  const profilePosts = uploadedPostsLoaded ? uploadedPosts : POSTS
+  const allProfilePosts = uploadedPostsLoaded ? uploadedPosts : POSTS
+  const profilePosts = useMemo(() => profilePostsForMode(allProfilePosts, mode), [allProfilePosts, mode])
   const profilePostsRef = useRef(profilePosts)
   profilePostsRef.current = profilePosts
-  useEffect(() => { onPostCountChange?.(authored.snapshot?.postCount ?? profilePosts.length) }, [onPostCountChange, profilePosts.length, authored.snapshot?.postCount])
+  useEffect(() => { onPostCountChange?.(authored.snapshot?.postCount ?? allProfilePosts.length) }, [onPostCountChange, allProfilePosts.length, authored.snapshot?.postCount])
 
   useEffect(() => onProfileThemeChange(setSelectedProfileTheme), [])
 
@@ -1189,10 +1188,10 @@ export default function ProfileTwin({
     setViewerIdx(current => {
       if (current == null) return null
       const openId = viewerPostIdRef.current
-      const index = openId == null ? -1 : next.findIndex(post => (post.id ?? post.video) === openId)
+      const index = openId == null ? -1 : profilePostsForMode(next, mode).findIndex(post => (post.id ?? post.video) === openId)
       return index >= 0 ? index : null
     })
-  }, [accountUid, realtimePosts, viewUser, viewUserId, authored.snapshot])
+  }, [accountUid, realtimePosts, viewUser, viewUserId, authored.snapshot, mode])
 
   const contentRef = useRef<HTMLDivElement>(null)
   const pullRef = useRef<HTMLDivElement>(null)
@@ -1396,7 +1395,10 @@ export default function ProfileTwin({
   const openedPostRequestRef = useRef<number | null>(null)
   useEffect(() => {
     if (!openPostRequest || openedPostRequestRef.current === openPostRequest.nonce) return
-    const index = profilePosts.findIndex(post => post.id?.replace(/^firestore:/, '') === openPostRequest.postId.replace(/^firestore:/, ''))
+    const requested = allProfilePosts.find(post => post.id?.replace(/^firestore:/, '') === openPostRequest.postId.replace(/^firestore:/, ''))
+    const targetMode = requested?.contentType === 'message' ? 'messages' : 'media'
+    const available = profilePostsForMode(allProfilePosts, targetMode)
+    const index = requested ? available.indexOf(requested) : -1
     if (index < 0) {
       if (authored.snapshot) {
         openedPostRequestRef.current = openPostRequest.nonce
@@ -1406,12 +1408,12 @@ export default function ProfileTwin({
       return
     }
     openedPostRequestRef.current = openPostRequest.nonce
-    viewerPostIdRef.current = profilePosts[index].id ?? profilePosts[index].video
-    setMode('media')
+    viewerPostIdRef.current = available[index].id ?? available[index].video
+    setMode(targetMode)
     setViewerIdx(index)
     setViewerCommentOpen(openPostRequest.comments)
     onPostRequestHandled?.()
-  }, [openPostRequest, profilePosts, onPostRequestHandled, authored.snapshot, flashNote])
+  }, [openPostRequest, allProfilePosts, onPostRequestHandled, authored.snapshot, flashNote])
 
   const openNotificationRef = useRef(openNotification)
   openNotificationRef.current = openNotification
@@ -2429,7 +2431,7 @@ export default function ProfileTwin({
   const canDeleteViewerPost = Boolean(
     viewerPost?.id
     && !visiting
-    && mode === 'media'
+    && mode !== 'liked'
     && uploadedPostsLoaded,
   )
   // ── The radius meter on the free rail ──
@@ -2439,7 +2441,7 @@ export default function ProfileTwin({
   // total; somebody else's profile has no account figure to read, so their
   // pops' reach combined stands in for it. The subject key is what the
   // striker climbs for — a new key is a fresh climb from the foot.
-  const visitedRadiusKm = liveRadius.radiusKm ?? profilePosts.reduce((sum, post) => sum + (post.reachKm ?? 0), 0)
+  const visitedRadiusKm = liveRadius.radiusKm ?? allProfilePosts.reduce((sum, post) => sum + (post.reachKm ?? 0), 0)
   const meterRadiusKm = viewerPost
     ? (viewerPost.reachKm ?? 0)
     : visiting ? visitedRadiusKm : accountRadiusKm
@@ -2454,7 +2456,7 @@ export default function ProfileTwin({
   // Declared here, below `visiting` and `visitedRadiusKm`: a dependency array
   // is evaluated during render, so reading either above its own declaration
   // would throw before the effect ever ran.
-  const visitedPostCount = authored.snapshot?.postCount ?? profilePosts.length
+  const visitedPostCount = authored.snapshot?.postCount ?? allProfilePosts.length
   useEffect(() => {
     onVisitedTotals?.(visiting || uploadedPostsLoaded ? { radiusKm: visiting ? visitedRadiusKm : accountRadiusKm, posts: visitedPostCount } : null)
   }, [visiting, uploadedPostsLoaded, visitedRadiusKm, accountRadiusKm, visitedPostCount, onVisitedTotals])
@@ -2822,7 +2824,7 @@ export default function ProfileTwin({
               key={m}
               type="button"
               className={mode === m ? styles.modeOn : styles.mode}
-              onClick={() => setMode(m)}
+              onClick={() => { setViewerIdx(null); setMode(m) }}
             >
               <span className={styles.modeLabel}>
                 {m[0].toUpperCase() + m.slice(1)}
@@ -2845,37 +2847,32 @@ export default function ProfileTwin({
         <div className={styles.pullInner} ref={pullRef}>
           {mode === 'messages' ? (
             <div className={styles.messages}>
-              {!MESSAGES.length && (
-                <div className={styles.profileEmpty}>No saved conversations yet. Your live DMs appear in Messages.</div>
+              {!posts.length && (
+                <div className={styles.profileEmpty}>No Pop Messages yet.</div>
               )}
-              {MESSAGES.map(m => (
-                <div
-                  key={m.who + m.when}
-                  className={litMessage === m.who ? `${styles.msgRow} ${styles.msgRowLit}` : styles.msgRow}
+              {posts.map((post, i) => (
+                <button
+                  key={postTileKey(post, i)}
+                  type="button"
+                  className={`${styles.msgRow} ${styles.popMessageRow}`}
+                  aria-label={`Open Pop Message: ${post.title}`}
+                  onClick={() => { playPop(); setViewerIdx(i) }}
                 >
-                  <div className={styles.msgAvatar}>{m.who[0].toUpperCase()}</div>
                   <div className={styles.msgBody}>
                     <div className={styles.msgTop}>
-                      <strong>{m.who}</strong>
-                      <span>{m.when}</span>
+                      <strong>{post.ch}</strong>
+                      <span>{post.createdAtMillis ? relativeWhen(post.createdAtMillis) : ''}</span>
                     </div>
-                    <p>{m.text}</p>
-                    {/* How far this one travelled to reach you. */}
-                    <span className={styles.msgRadius}>
-                      <i aria-hidden="true">◆</i>{m.radiusKm.toFixed(1)} km
-                    </span>
-                    {m.who !== 'Poplur AI' && (
-                      <span className={styles.msgActions}>
-                        <button type="button" aria-label={`Call ${m.who}`} onClick={() => { playPop(); setActiveCall({ who: m.who, video: false }) }}>
-                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3l3 5-2 2c1.5 3 3 4.5 6 6l2-2 5 3-1 4c-8 1-16-7-17-15z" /></svg>
-                        </button>
-                        <button type="button" aria-label={`Video call ${m.who}`} onClick={() => { playPop(); setActiveCall({ who: m.who, video: true }) }}>
-                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h12v12H3zM15 10l6-3v10l-6-3z" /></svg>
-                        </button>
-                      </span>
-                    )}
+                    <p>{post.title}</p>
+                    {post.reachKm != null && <span className={styles.msgRadius}>
+                      <i aria-hidden="true">◆</i>{post.reachKm.toFixed(1)} km
+                    </span>}
                   </div>
-                </div>
+                  {!post.messageCard && <span className={styles.messageAttachment}>
+                    <ProfilePostPreview src={postPoster(post)} />
+                    {post.mediaType === 'video' && <span>Video</span>}
+                  </span>}
+                </button>
               ))}
             </div>
           ) : (

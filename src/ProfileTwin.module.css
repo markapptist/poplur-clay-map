@@ -2080,3 +2080,27 @@
 
 .radiusSyncStatus { margin: 8px 0; text-align: center; font: 400 11px/1.4 system-ui, sans-serif; color: #765269; }
 .radiusSyncStatus button { font: inherit; color: #c0267e; border: 0; background: none; text-decoration: underline; cursor: pointer; }
+
+.popMessageRow {
+  width: 100%;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.popMessageRow .msgBody p {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.4;
+}
+.messageAttachment {
+  position: relative;
+  flex: 0 0 74px;
+  height: 74px;
+  overflow: hidden;
+  border-radius: 12px;
+}
+.messageAttachment img { width: 100%; height: 100%; object-fit: cover; }
+.messageAttachment > span:not([aria-hidden]) { position: absolute; bottom: 3px; right: 3px; font-size: 10px; background: #fff; border-radius: 3px; padding: 2px; }
