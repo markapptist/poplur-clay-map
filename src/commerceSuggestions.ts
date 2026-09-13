@@ -103,6 +103,29 @@ export interface MapPlaceSuggestionInput {
   channel: string
 }
 
+/**
+ * Amazon.ca — the same country every other destination here points at
+ * (yeti.ca, indigo.ca, nike.com/ca, ikea.com/ca). No affiliate tag: we do not
+ * have one, and inventing a stranger's would misattribute the revenue.
+ *
+ * A SEARCH, not a product page. The detector recognises an object CLASS
+ * ("chair"), never a specific listing, so a direct ASIN would be a fabricated
+ * identification — the same reason the copy below never claims the object in
+ * frame IS the brand's. A search lands on real, current inventory for the
+ * thing that was actually seen.
+ */
+function amazonSearch(query: string): string {
+  return `https://www.amazon.ca/s?k=${encodeURIComponent(query)}`
+}
+
+/** Where an offer sends you: Amazon when it sells the category, otherwise the
+ *  destination that does. Cars are the standing example — AutoTrader is a real
+ *  answer for a scanned vehicle and an Amazon search is not. */
+export function offerDestination(offer: { amazonQuery?: string; url?: string }): string | null {
+  if (offer.amazonQuery) return amazonSearch(offer.amazonQuery)
+  return offer.url ?? null
+}
+
 function webSearch(query: string, shopping = false): string {
   const section = shopping ? '&tbm=shop' : ''
   return `https://www.google.com/search?igu=1${section}&q=${encodeURIComponent(query)}`
@@ -207,7 +230,11 @@ type ItemOffer = {
   name: string
   sponsor: string
   channel: string
-  url: string
+  /** What to look for on Amazon. Present for anything Amazon actually sells;
+   *  absent means this category needs its own destination. */
+  amazonQuery?: string
+  /** Used only when there is no Amazon answer. */
+  url?: string
   badge: string
   /** Which advertiser owns this category, keyed into BRAND_LOOK. */
   brand?: string
@@ -218,17 +245,22 @@ type ItemOffer = {
 // These are destinations, not invented live prices. A production resolver can
 // replace this table with licensed, attributed inventory without changing UI.
 const ITEM_OFFERS: ItemOffer[] = [
-  { match: /cell phone|phone|mobile/i, name: 'phones', sponsor: 'Apple', brand: 'Apple', product: 'iPhone', channel: 'shopping', url: 'https://www.apple.com/iphone/', badge: 'SHOP NOW' },
-  { match: /laptop|computer/i, name: 'laptops', sponsor: 'Apple', brand: 'Apple', product: 'MacBook Air', channel: 'shopping', url: 'https://www.apple.com/macbook-air/', badge: 'COMPARE!' },
-  { match: /screen|television|\btv\b/i, name: 'screens', sponsor: 'Best Buy', brand: 'Best Buy', product: 'TVs', channel: 'shopping', url: 'https://www.bestbuy.ca/en-ca/category/televisions/21344', badge: 'BIG SCREEN!' },
-  { match: /keyboard/i, name: 'keyboards', sponsor: 'Logitech', brand: 'Logitech', product: 'keyboards', channel: 'shopping', url: 'https://www.logitech.com/en-ca/products/keyboards.html', badge: 'TYPE THIS!' },
-  { match: /bottle|cup|mug/i, name: 'drinkware', sponsor: 'YETI', brand: 'YETI', product: 'Rambler', channel: 'food', url: 'https://www.yeti.ca/drinkware', badge: 'HOT PICK' },
-  { match: /chair|couch|sofa/i, name: 'seating', sponsor: 'IKEA', brand: 'IKEA', product: 'chairs', channel: 'shopping', url: 'https://www.ikea.com/ca/en/cat/chairs-fu002/', badge: 'ROOM DEAL' },
-  { match: /book/i, name: 'books', sponsor: 'Indigo', brand: 'Indigo', product: 'books', channel: 'cartoon', url: 'https://www.indigo.ca/en-ca/books/', badge: 'READ THIS!' },
-  { match: /backpack|bag/i, name: 'backpacks', sponsor: 'Nike', brand: 'Nike', product: 'backpacks', channel: 'sports', url: 'https://www.nike.com/ca/w?q=backpack', badge: 'GEAR UP!' },
-  { match: /bicycle|bike/i, name: 'bikes', sponsor: 'Trek', brand: 'Trek', product: 'bikes', channel: 'sports', url: 'https://www.trekbikes.com/ca/en_CA/bikes/c/B100/', badge: 'RIDE!' },
+  { match: /cell phone|phone|mobile/i, name: 'phones', sponsor: 'Apple', brand: 'Apple', product: 'iPhone', channel: 'shopping', amazonQuery: 'Apple iPhone', badge: 'FOUND IT!' },
+  { match: /laptop|computer/i, name: 'laptops', sponsor: 'Apple', brand: 'Apple', product: 'MacBook Air', channel: 'shopping', amazonQuery: 'Apple MacBook Air', badge: 'FOUND IT!' },
+  { match: /screen|television|\btv\b/i, name: 'screens', sponsor: 'Best Buy', brand: 'Best Buy', product: 'TVs', channel: 'shopping', amazonQuery: 'television', badge: 'FOUND IT!' },
+  { match: /keyboard/i, name: 'keyboards', sponsor: 'Logitech', brand: 'Logitech', product: 'keyboards', channel: 'shopping', amazonQuery: 'Logitech keyboard', badge: 'FOUND IT!' },
+  { match: /bottle|cup|mug/i, name: 'drinkware', sponsor: 'YETI', brand: 'YETI', product: 'Rambler', channel: 'food', amazonQuery: 'YETI Rambler', badge: 'FOUND IT!' },
+  { match: /chair|couch|sofa/i, name: 'seating', sponsor: 'IKEA', brand: 'IKEA', product: 'chairs', channel: 'shopping', amazonQuery: 'desk chair', badge: 'FOUND IT!' },
+  { match: /book/i, name: 'books', sponsor: 'Indigo', brand: 'Indigo', product: 'books', channel: 'cartoon', amazonQuery: 'books', badge: 'FOUND IT!' },
+  { match: /backpack|bag/i, name: 'backpacks', sponsor: 'Nike', brand: 'Nike', product: 'backpacks', channel: 'sports', amazonQuery: 'Nike backpack', badge: 'FOUND IT!' },
+  { match: /bicycle|bike/i, name: 'bikes', sponsor: 'Trek', brand: 'Trek', product: 'bikes', channel: 'sports', amazonQuery: 'bicycle', badge: 'FOUND IT!' },
+  // Amazon does not sell cars. A scanned vehicle keeps the destination that
+  // actually answers it rather than being forced through a search that cannot.
   { match: /car|vehicle/i, name: 'cars', sponsor: 'AutoTrader', channel: 'sports', url: 'https://www.autotrader.ca/', badge: 'FOUND IT!' },
-  { match: /barcode|qr code/i, name: 'this item', sponsor: 'Shopping results', channel: 'shopping', url: 'https://www.google.com/search?igu=1&tbm=shop&q=barcode+product', badge: 'SCAN & SHOP' },
+  // Deliberately NO barcode/QR entry. The detector reports only the symbology
+  // NAME ("QR", "EAN13") — VisionBoxDetector never reads the payload — so there
+  // is nothing to look up. It used to open a generic "barcode product" search,
+  // which is how a scan ended up somewhere unrelated to whatever was in frame.
 ]
 
 export function purchaseSuggestionForDetection(detection: Detection): SmartCard | null {
@@ -238,6 +270,10 @@ export function purchaseSuggestionForDetection(detection: Detection): SmartCard 
 
   const look = offer.brand ? BRAND_LOOK[offer.brand] : undefined
   const item = detection.label.toLowerCase()
+  // A button says exactly where it goes. Anything Amazon stocks goes to Amazon;
+  // the rest name their own destination instead of pretending to be a shop.
+  const destination = offerDestination(offer)
+  const linkLabel = offer.amazonQuery ? 'FIND ON AMAZON' : `SHOP ${offer.sponsor.toUpperCase()}`
 
   // No brand owns this category yet: keep the house look.
   if (!look || !offer.brand) {
@@ -250,7 +286,7 @@ export function purchaseSuggestionForDetection(detection: Detection): SmartCard 
         { label: 'RESULTS', value: `from ${offer.sponsor}` },
       ],
       line: `I found shopping results for ${offer.name}.`,
-      link: { label: `SHOP ${offer.name}`, url: offer.url },
+      ...(destination ? { link: { label: linkLabel, url: destination } } : {}),
       ...creative(offer.channel, {
         sponsor: `Sponsored · ${offer.sponsor}`,
         badge: offer.badge,
@@ -279,7 +315,7 @@ export function purchaseSuggestionForDetection(detection: Detection): SmartCard 
       { label: 'IN RANGE', value: `${offer.brand} ${offer.name}` },
     ],
     line: look.voice(product),
-    link: { label: `SHOP ${offer.brand.toUpperCase()}`, url: offer.url },
+    ...(destination ? { link: { label: linkLabel, url: destination } } : {}),
     // No `media`: a branded slot renders as the brand's own frame and waits
     // for licensed creative rather than borrowing an unrelated channel clip.
     // See BRAND_LOOK — nothing here invents a logo or a product photo.
