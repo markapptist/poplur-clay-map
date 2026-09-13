@@ -4686,13 +4686,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   /** Which point that traversal landed on — an arrow press or a tap onto a
    *  pin. The RADIUS counter re-tallies whenever this changes. */
   const [traversedPinKey, setTraversedPinKey] = useState<string | null>(null)
-  // What the RADIUS card is actually reporting, in km. Three cases, in order:
-  //   a recognised user in the camera — their reach
-  //   travelling the map            — the CURRENT POP's takeover
-  //   otherwise                     — your own radius
-  // One derivation so the number, the aria-label and the ceiling can never
-  // disagree about which radius is on screen.
-  const shownRadiusKm = seenUser
+  // One derivation keeps the number, aria-label and ceiling on the same
+  // radius, following the foreground content before the account fallback.
+  // News covers the underlying tab. Its centered/open Pop owns the card,
+  // including an empty timeline, which has no post radius to report.
+  const shownRadiusKm = cubeScreen === 'feed-news'
+    ? newsReachKm ?? 0
+    : seenUser
     ? seenUser.radiusKm
     : activeTab === 'map' && traversedPinRadiusKm != null
       ? traversedPinRadiusKm
@@ -4709,8 +4709,6 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           // but told by the counter that owns radius numbers.
           : activeTab === 'feed' && feedReachKm != null
             ? feedReachKm
-            : cubeScreen === 'feed-news' && newsReachKm != null
-              ? newsReachKm
             // An open pop on the profile speaks for itself, exactly as on the
             // feed. Closing it reports null and the card falls back below.
             : activeTab === 'profile' && profileReachKm != null

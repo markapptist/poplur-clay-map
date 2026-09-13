@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import styles from './NewsPaper.module.css'
 import pullStyles from './PullToRefresh.module.css'
 import { usePullToRefresh } from './usePullToRefresh'
+import { useNewsRadiusFocus } from './useNewsRadiusFocus'
 import { playPop } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
 import { requestProfileMode } from './profileMode'
@@ -412,19 +413,6 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
     setDetail(match)
   }, [entries, requestedEventId])
 
-  // The persistent RADIUS card follows a story only after the reader opens
-  // that story. The edition itself stays visually and computationally quiet:
-  // no scroll observer, focus-band highlighting, or radius churn while a
-  // reader is simply moving through the headlines.
-  useEffect(() => {
-    window.dispatchEvent(new CustomEvent('poplur-news-active-entry', {
-      detail: { radiusKm: detail?.radiusKm ?? null },
-    }))
-  }, [detail])
-  useEffect(() => () => {
-    window.dispatchEvent(new CustomEvent('poplur-news-active-entry', { detail: { radiusKm: null } }))
-  }, [])
-
   // Innermost first: the drawer lays over the story, the story lays over the
   // edition. Returning false at the edition means "nothing left here" and the
   // cube falls through to whatever it does on the paper itself.
@@ -458,12 +446,17 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   // Search filters the EDITION, not just the visible rows: an empty result says
   // so instead of leaving a masthead over nothing.
   const needle = query.trim().toLowerCase()
-  const matches = (e: Entry) => scope === 'users'
+  const matches = useCallback((e: Entry) => scope === 'users'
     ? e.who.toLowerCase().includes(needle) || e.handle.toLowerCase().includes(needle)
-    : `${e.headline ?? ''} ${e.body}`.toLowerCase().includes(needle)
-  const tagged = entries.filter(e => (!selectedTag || e.liveEvent?.hashtags?.some(tag => tag.toLocaleLowerCase() === selectedTag.toLocaleLowerCase()) || (e.body.match(/#[\p{L}\p{N}_]+/gu) ?? []).some(tag => tag.slice(1).toLocaleLowerCase() === selectedTag.toLocaleLowerCase())) && (feedTab !== 'video' || e.media?.some(m => m.kind === 'video')))
-  const narrowed = byHandle ? tagged.filter(e => e.handle === byHandle) : tagged
-  const shown = needle ? narrowed.filter(matches) : narrowed
+    : `${e.headline ?? ''} ${e.body}`.toLowerCase().includes(needle), [scope, needle])
+  const shown = useMemo(() => {
+    const tagged = entries.filter(e => (!selectedTag || e.liveEvent?.hashtags?.some(tag => tag.toLocaleLowerCase() === selectedTag.toLocaleLowerCase()) || (e.body.match(/#[\p{L}\p{N}_]+/gu) ?? []).some(tag => tag.slice(1).toLocaleLowerCase() === selectedTag.toLocaleLowerCase())) && (feedTab !== 'video' || e.media?.some(m => m.kind === 'video')))
+    const narrowed = byHandle ? tagged.filter(e => e.handle === byHandle) : tagged
+    return needle ? narrowed.filter(matches) : narrowed
+  }, [entries, selectedTag, feedTab, byHandle, needle, matches])
+  useNewsRadiusFocus(scrollHost, shown,
+    detail ? entries.find(entry => entry.id === detail.id) ?? detail : null,
+    menuMounted || composingMessage)
   const filtering = Boolean(needle) || Boolean(byHandle) || Boolean(selectedTag) || feedTab === 'video'
   const sourceProfile = entries.find(e => e.handle === byHandle)?.liveEvent?.author
 
@@ -635,6 +628,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
           {rest.map(entry => (
             <article
               key={entry.id}
+              data-news-entry-id={entry.id}
               className={entry.kind === 'dispatch' || entry.kind === 'liveNews' ? `${styles.entry} ${styles.entryAi}` : styles.entry}
               role="button"
               tabIndex={0}
