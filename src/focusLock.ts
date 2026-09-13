@@ -27,7 +27,8 @@ export function focusLockFor(detection: Detection): FocusLock | null {
   if (!label || UNSEARCHABLE_LABELS.has(label.toLowerCase())) {
     return { kind: 'object', action: '' }
   }
-  return { kind: 'object', action: `Look up ${label} in the browser` }
+  if (UNBUYABLE_LABELS.has(label.toLowerCase())) return { kind: 'object', action: '' }
+  return { kind: 'object', action: `Find ${label} on Amazon` }
 }
 
 /** "cell_phone" → "cell phone". The model's class names use underscores. */
@@ -35,19 +36,43 @@ export function presentableLabel(raw: string): string {
   return raw.replace(/_/g, ' ').trim()
 }
 
+/** Things the detector names that nobody is shopping for. A press on one of
+ *  these has nowhere to go, so it declines rather than guessing. */
+const UNBUYABLE_LABELS = new Set([
+  'sky', 'tree', 'grass', 'plant', 'cloud', 'water', 'sea', 'sand', 'snow',
+  'building', 'house', 'wall', 'floor', 'ceiling', 'window', 'door', 'road',
+  'street', 'sidewalk', 'traffic light', 'stop sign', 'fire hydrant', 'bench',
+  'mountain', 'hill', 'field', 'river', 'sun', 'moon', 'fog', 'rain',
+  'cat', 'dog', 'bird', 'horse', 'sheep', 'cow', 'bear', 'zebra', 'giraffe',
+  // A code is not a product, and the detector reports only the symbology NAME
+  // ("QR", "EAN13") — VisionBoxDetector never reads the payload — so there is
+  // nothing here to look up.
+  'barcode', 'qr code', 'qr', 'text', 'sign',
+])
+
 /**
- * Google, and the FIRST result rather than the results page.
+ * The scanned thing, on Amazon.
  *
- * `btnI=1` is Google's own "I'm Feeling Lucky": the request resolves to the
- * top hit instead of the list. `igu=1` is what every other Google link in the
- * app carries so the page loads without the sign-in interstitial. The query is
- * the model's class name — the detector knows "tv", not "LG C4 65-inch" — so
- * the search is only ever as specific as the recognition was.
+ * A SEARCH, deliberately. The detector recognises a class — "tv", not "LG C4
+ * 65-inch" — so a direct listing would be a fabricated identification of
+ * whatever is actually in frame. A search lands on real, current inventory for
+ * the class that was recognised, and lets the person pick.
+ *
+ * This replaced Google with `btnI=1` ("I'm Feeling Lucky"), which resolved a
+ * one-word class name to whatever happened to rank first. For a generic label
+ * that is unpredictable by construction — it is how scanning an object opened
+ * an unrelated page, including documents nobody could load.
+ *
+ * amazon.ca: the same country every other shopping destination here points at.
+ * No affiliate tag — we do not have one, and inventing one would misattribute
+ * the revenue.
  */
 export function objectLookupUrl(rawLabel: string): string | null {
   const label = presentableLabel(rawLabel)
-  if (!label || UNSEARCHABLE_LABELS.has(label.toLowerCase())) return null
-  return `https://www.google.com/search?igu=1&btnI=1&q=${encodeURIComponent(label)}`
+  if (!label) return null
+  const key = label.toLowerCase()
+  if (UNSEARCHABLE_LABELS.has(key) || UNBUYABLE_LABELS.has(key)) return null
+  return `https://www.amazon.ca/s?k=${encodeURIComponent(label)}`
 }
 
 /** Prefer the object under the focus point, then the nearest located result.

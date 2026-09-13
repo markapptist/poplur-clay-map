@@ -28,9 +28,17 @@ describe('what the square locks onto', () => {
     expect(lock?.action).toBe('Open your profile')
   })
 
-  it('an object the app does not know is red and looks itself up', () => {
-    expect(focusLockFor(box({ label: 'tv' }))).toEqual({ kind: 'object', action: 'Look up tv in the browser' })
-    expect(focusLockFor(box({ label: 'cell_phone' }))?.action).toBe('Look up cell phone in the browser')
+  it('an object the app does not know is red and offers to shop it', () => {
+    expect(focusLockFor(box({ label: 'tv' }))).toEqual({ kind: 'object', action: 'Find tv on Amazon' })
+    expect(focusLockFor(box({ label: 'cell_phone' }))?.action).toBe('Find cell phone on Amazon')
+  })
+
+  it('says nothing for a thing nobody shops for', () => {
+    // The square still reads "not in the app"; it just is not a button, the
+    // same rule an unrecognised person already follows.
+    for (const label of ['sky', 'tree', 'dog', 'traffic light', 'barcode', 'qr code']) {
+      expect(focusLockFor(box({ label }))?.action, label).toBe('')
+    }
   })
 
   it('an unrecognised person is red but has nothing to look up', () => {
@@ -48,14 +56,28 @@ describe('what the square locks onto', () => {
 })
 
 describe('the lookup goes to the first result, not the results page', () => {
-  it('is Google, feeling lucky, without the sign-in wall', () => {
-    const url = objectLookupUrl('tv')
-    expect(url).toBe('https://www.google.com/search?igu=1&btnI=1&q=tv')
+  it('is an Amazon search for the class that was recognised', () => {
+    expect(objectLookupUrl('tv')).toBe('https://www.amazon.ca/s?k=tv')
+  })
+
+  it('never resolves to a single lucky result', () => {
+    // btnI=1 sent a one-word class name to whatever ranked first, which is
+    // unpredictable by construction — the reason a scan could open an
+    // unrelated page. A search shows inventory and lets the person choose.
+    const url = objectLookupUrl('tv') ?? ''
+    expect(url).not.toContain('btnI')
+    expect(url).not.toContain('google.com')
   })
 
   it('encodes the class name and reads underscores as spaces', () => {
-    expect(objectLookupUrl('cell_phone')).toBe('https://www.google.com/search?igu=1&btnI=1&q=cell%20phone')
+    expect(objectLookupUrl('cell_phone')).toBe('https://www.amazon.ca/s?k=cell%20phone')
     expect(presentableLabel('  cell_phone ')).toBe('cell phone')
+  })
+
+  it('declines a label that is not a thing to buy', () => {
+    for (const label of ['sky', 'tree', 'dog', 'barcode', 'qr code', 'traffic light']) {
+      expect(objectLookupUrl(label), label).toBeNull()
+    }
   })
 
   it('is HTTPS, so the in-app browser boundary accepts it', () => {
