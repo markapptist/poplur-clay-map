@@ -1,22 +1,22 @@
-.screen { position: absolute; inset: 0; pointer-events: auto; display: flex; flex-direction: column; color: #fff4f9; background: #1a101b; padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px); font-family: system-ui, sans-serif; }
-.screen header { display: flex; align-items: center; gap: 24px; padding: 20px; border-bottom: 1px solid #63324d; }
-.screen header button, .attachment button { background: transparent; color: #ff77b8; border: 0; font: inherit; padding: 10px; }
-.screen main { overflow: auto; flex: 1; padding: 24px; }
-.screen h1 { font-size: 28px; margin: 0 0 12px; }
-.screen p, .screen small { color: #cbbcc6; line-height: 1.5; }
-.label { display: grid; gap: 10px; font-weight: 700; margin-top: 24px; }
-.label textarea { box-sizing: border-box; width: 100%; background: #291925; border: 1px solid #ba5085; border-radius: 18px; color: #fff4f9; padding: 16px; font: 18px/1.5 system-ui; resize: vertical; }
-.count { display: block; text-align: right; margin: 8px 0 20px; }
-.attach { display: block; padding: 16px; border: 1px solid #d95a99; border-radius: 18px; color: #ff99cb; margin: 12px 0; text-align: center; font-weight: 700; cursor: pointer; }
-.attach input { display: block; width: 100%; margin-top: 12px; }
-.attachment { display: grid; gap: 10px; margin-top: 18px; }
-.attachment img, .attachment video { width: 100%; max-height: 260px; object-fit: contain; border-radius: 16px; }
-.attachment span { overflow-wrap: anywhere; }
-.screen footer { padding: 14px 24px 24px; border-top: 1px solid #63324d; }
-.screen footer p { font-size: 13px; margin: 0 0 12px; }
-.screen footer button { width: 100%; padding: 17px; background: #ff4fa5; color: #260c1d; border: 0; border-radius: 24px; font: 800 17px system-ui; }
-.screen button:disabled { opacity: .4; }
-.screen .error { color: #ffb0c6; }
-.attach { position: relative; }
+/* Share the map’s Drop a Pop clay frame and controls; keep the timeline
+   visible around the message dialog. */
+.overlay {
+  position: absolute;
+  left: 0;
+  top: var(--news-compose-top, 0px);
+  width: 100%;
+  height: var(--news-compose-height, 100%);
+  pointer-events: none;
+}
+.dialog.dialog {
+  max-height: min(76dvh, 640px, calc(var(--news-compose-height, 100dvh) - 32px));
+}
+.message.message { font-size: 16px; }
+.attach { position: relative; margin-bottom: 14px; }
 .attach input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-.attach:focus-within { outline: 2px solid #fff4f9; outline-offset: 3px; }
+.attach:focus-within { outline: 3px solid #38cfff; outline-offset: 3px; }
+.attachment { display: grid; gap: 8px; margin-bottom: 14px; color: #48132e; font-size: 11px; font-weight: 750; }
+.attachment img, .attachment video { width: 100%; max-height: 160px; object-fit: contain; border-radius: 14px; background: #26101e; }
+.attachment span { overflow-wrap: anywhere; }
+.next { margin: 0 0 10px; color: #48132e; font-size: 11px; font-weight: 800; }
+.error { color: #8a123e; font-size: 12px; font-weight: 750; }
