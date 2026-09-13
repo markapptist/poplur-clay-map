@@ -254,6 +254,12 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
       binding below stays stable and the Escape handler above can reach it. */
   const stepBackRef = useRef<() => boolean>(() => false)
   // The edition clock is the real clock, ticking, in AM/PM.
+  const [composingMessage, setComposingMessage] = useState(false)
+  useEffect(() => {
+    const update = (event: Event) => setComposingMessage((event as CustomEvent<boolean>).detail === true)
+    window.addEventListener('poplur-news-composing', update)
+    return () => window.removeEventListener('poplur-news-composing', update)
+  }, [])
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -668,7 +674,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                 {entry.headline && <h3 className={styles.entryHeadline}>{entry.headline}</h3>}
                 <p className={styles.body}>{entry.body.split(/(#[\p{L}\p{N}_]+)/u).map((part,index) => part.startsWith('#') ? <button key={index} className={styles.inlineTag} onClick={() => { setSelectedTag(part.slice(1)); setByHandle(null); scrollHost.current?.scrollTo({ top: 0 }) }}>{part}</button> : part)}</p>
                 {!!entry.liveEvent?.hashtags?.length && <div className={styles.hashtags}>{entry.liveEvent.hashtags.map(tag => <button key={tag} onClick={() => { setSelectedTag(tag); setByHandle(null); scrollHost.current?.scrollTo({ top: 0 }) }}>#{tag}</button>)}</div>}
-                {entry.media?.length ? <EntryMedia media={entry.media} active={!detail} /> : null}
+                {entry.media?.length ? <EntryMedia media={entry.media} active={!detail && !composingMessage} /> : null}
                 {(entry.kind === 'dispatch' || entry.kind === 'liveNews' || entry.mine) && snapshotFor(entry) && (
                   entry.liveEvent ? (
                     <button
@@ -801,7 +807,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
 
               <h2>{detail.headline}</h2>
               <p className={styles.detailBody}>{detail.body}</p>
-              {detail.media?.length ? <EntryMedia media={detail.media} large active /> : null}
+              {detail.media?.length ? <EntryMedia active={!composingMessage} media={detail.media} large /> : null}
               <p className={styles.detailWhen}>{detail.when === 'now' ? 'just now' : `${detail.when} ago`}</p>
 
               {detail.liveEvent && (

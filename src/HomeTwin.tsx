@@ -1,3 +1,4 @@
+import NewsMessageComposer from './NewsMessageComposer'
 import { useOnlinePeople } from './appPresence'
 import { nativeMapRendererEnabled } from './nativeMapMode'
 import { useNativeMapPresentation } from './nativeMapPresentation'
@@ -3457,6 +3458,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // event.source === the map iframe, which is exactly right for map traffic
     // and exactly wrong for the composer, which lives in this document.
     const onPickSpot = () => {
+      // A written pop can begin in News, whose hold-menu page must yield to Map.
+      setHoldOpen(false)
+      setResume(current => ({ screen: null, n: current.n + 1 }))
       pickingSpotRef.current = true
       const cached = (window as typeof window & {
         __poplurNativeLocation?: { latitude?: unknown; longitude?: unknown }
@@ -4648,6 +4652,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     setFeedReachKm(km); setFeedPinColor(color); setFeedCounterKey(postKey ?? null)
   }, [])
   /** The Times reports the story the reader is currently dwelling on. */
+  const [newsMessageOpen, setNewsMessageOpen] = useState(false)
   const [newsReachKm, setNewsReachKm] = useState<number | null>(null)
   useEffect(() => {
     const onNewsEntry = (event: Event) => {
@@ -5499,6 +5504,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       window.dispatchEvent(new CustomEvent('poplur-mail-back'))
       return
     }
+    if (newsMessageOpen) { setNewsMessageOpen(false); playPop(); return }
     // Back before anything else: if a subscreen or the hold menu is open, the
     // tap is the way out of it, not a favourite-action trigger.
     if (goBackRef.current?.()) {
@@ -5510,6 +5516,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       beginCubeScreenNavigationSound()
       return
     }
+    // News keeps its nested story/drawer back action; its main cube starts a message.
+    if (cubeScreen === 'feed-news') { setNewsMessageOpen(true); playPop(); return }
     // The capture preview is the same deal: with the composer up, the cube is
     // its back button (step back, then close) — never the shutter.
     if (composerOpen && cameraActionsRef.current?.composerBack()) {
@@ -6455,7 +6463,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
 
       {/* First-open coaching for the settled tab. Keyed by tab so each one
           teaches itself once; it removes itself after 15s or on first touch. */}
-      {mainSurfaceVisible && !overlayOpen && !holdOpen && (
+      {mainSurfaceVisible && committedTab !== 'post' && !overlayOpen && !holdOpen && (
         <ScreenCoach
           key={`coach-${committedTab}`}
           id={`tab-${committedTab}`}
@@ -6629,6 +6637,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           onDeclineCall={declineIncomingCall}
         />
       )}
+      {newsMessageOpen && <NewsMessageComposer channelId={CHANNELS[chanIndex]?.id ?? 'food'} onClose={() => setNewsMessageOpen(false)} />}
     </section>
   )
 }

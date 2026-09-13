@@ -207,6 +207,9 @@ export interface PendingEffectAsset {
 // comes back the camera resumes the SAME draft instead of demanding a new
 // capture. Module-level on purpose — the composer unmounts during the trip.
 export interface PendingMapPost {
+  /** Text-only News posts regenerate their card when edited during review. */
+  messageCard?: boolean
+  newsMessage?: boolean
   photoViewSeconds?: number | null
   media: { kind: 'photo' | 'video'; src: string; length?: string }
   /** Non-AI/manual-edit baseline retained separately so backing out of review

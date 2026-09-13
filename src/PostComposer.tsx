@@ -1,3 +1,4 @@
+import { renderMessageCard } from './newsMessageDraft'
 import React, { useEffect, useRef, useState } from 'react'
 import styles from './PostComposer.module.css'
 import { photoViewSeconds } from './mediaTiming'
@@ -196,6 +197,9 @@ export default function PostComposer({
   const [selectedAIMedia, setSelectedAIMedia] = useState<ComposerMedia | null>(
     () => draft?.usedAI ? incomingMedia : null,
   )
+  useEffect(() => {
+    if (draft?.messageCard) setBaselineMedia(renderMessageCard(caption))
+  }, [caption, draft?.messageCard])
   const media = selectedAIMedia ?? baselineMedia
   const [editorOpen, setEditorOpen] = useState(false)
   const [aiPrompt, setAiPrompt] = useState(draft?.aiPrompt ?? '')
@@ -320,6 +324,8 @@ export default function PostComposer({
     setPendingMapPost({
       media: selectedMedia,
       originalMedia: baselineMedia,
+      messageCard: draft?.messageCard,
+      newsMessage: draft?.newsMessage,
       caption,
       photoViewSeconds: media.kind === 'photo' ? photoSeconds : null,
       channelId,
@@ -340,7 +346,7 @@ export default function PostComposer({
     // starts the one location-picker detour for the parked draft.
     window.dispatchEvent(new CustomEvent('poplur-pick-spot'))
     onClose()
-  }, [aiPrompt, baselineMedia, caption, channelId, effectAsset, effectId, effectTiming, filterId, media, onClose, photoSeconds, pinColor, retirePreview, rightsAttested])
+  }, [aiPrompt, baselineMedia, caption, channelId, effectAsset, effectId, effectTiming, filterId, media, onClose, photoSeconds, pinColor, retirePreview, rightsAttested, draft?.messageCard, draft?.newsMessage])
 
   const continueAfterFinish = React.useCallback((
     selectedMedia: ComposerMedia = media,
@@ -605,6 +611,10 @@ export default function PostComposer({
 
   const publish = async () => {
     if (publishingRef.current || posted) return
+    if (draft?.newsMessage && !caption.trim()) {
+      setPublishError({ message: 'Write a message before posting.', retryable: false })
+      return
+    }
     playPop()
     const privacyError = validatePublishPrivacy({
       audience: 'public',
@@ -746,7 +756,7 @@ export default function PostComposer({
             lat: publicCoordinate(target.lat),
             lng: publicCoordinate(target.lng),
             radiusKm: publishedRadiusKm,
-            media: [attachment],
+            media: draft?.messageCard ? undefined : [attachment],
           })
         }
         onPosted?.(post)
@@ -1095,7 +1105,7 @@ export default function PostComposer({
         <div className={`${styles.panel} ${styles.channelPanel}`}>
           <header className={styles.publishHeader}>
             <img src="logo_icon.png" alt="" />
-            <span><b>READY TO POST</b><strong>One last check</strong><small>{usedAI ? 'AI version selected' : 'Original version selected'}</small></span>
+            <span><b>READY TO POST</b><strong>{draft?.newsMessage ? 'Review your Pop Message' : 'One last check'}</strong><small>{usedAI ? 'AI version selected' : 'Original version selected'}</small></span>
           </header>
 
           <section className={`${styles.fieldLabel} ${styles.viewTiming}`} aria-label="Media view time">
@@ -1117,7 +1127,7 @@ export default function PostComposer({
           </section>
 
           <label className={styles.fieldLabel}>
-            <span>CAPTION <small>OPTIONAL</small></span>
+            <span>{draft?.newsMessage ? 'MESSAGE' : <>CAPTION <small>OPTIONAL</small></>}</span>
             <textarea
               className={styles.caption}
               value={caption}
@@ -1242,13 +1252,13 @@ export default function PostComposer({
             // A pop is a picture or a message. Neither is not a pop, so the
             // button will not publish one — the same rule the map applies to
             // rows that arrive without either.
-            disabled={publishing || !rightsAttested || !target || (!media && !caption.trim())}
+            disabled={publishing || !rightsAttested || !target || (draft?.newsMessage && !caption.trim()) || (!media && !caption.trim())}
           >
             {publishing
               ? 'Uploading…'
               : publishError?.retryable
                 ? 'Retry upload'
-                : !media && !caption.trim() ? 'Add a photo or write a message' : target ? `Post to ${caption.trim() ? 'News Feed' : 'TV'}` : 'Choose a spot to post'}
+                : !media && !caption.trim() ? 'Add a photo or write a message' : target ? draft?.newsMessage ? locationVisibility === 'approximate' ? 'Post message to map' : 'Post message' : `Post to ${caption.trim() ? 'News Feed' : 'TV'}` : 'Choose a spot to post'}
           </button>
           {publishError && !publishing && (
             <div className={styles.publishError} role="alert">
