@@ -1,4 +1,4 @@
-import { useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import styles from './MessageTimeline.module.css'
 import ProfilePostPreview from './ProfilePostPreview'
 import { accountSnapshot, onAccountChange } from './accountStore'
@@ -50,7 +50,12 @@ export default function MessageTimeline({ onClose }: { onClose: () => void }) {
   const [request] = useState(() => takeMessageTimelineRequest())
   const viewUser = request?.handle ?? null
 
-  const account = useSyncExternalStore(onAccountChange, accountSnapshot, accountSnapshot)
+  // NOT useSyncExternalStore: accountSnapshot() builds a fresh object per call
+  // (a new identity every read = an infinite re-render), so subscribe the way
+  // ProfileTwin does — a state seeded from the store, kept current by its
+  // listener, which also fires once on subscribe with the latest value.
+  const [account, setAccount] = useState(accountSnapshot)
+  useEffect(() => onAccountChange(setAccount), [])
   const realtimePosts = useSyncExternalStore(onNativeFeedPosts, nativeFeedPostsSnapshot, nativeFeedPostsSnapshot)
 
   // Whose posts: the visited handle resolved to its stable uid off the shared
