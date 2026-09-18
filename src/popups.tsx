@@ -7,6 +7,7 @@ import type { SmartCard } from './tourSmarts'
 import CommerceSuggestionWindow, { type SuggestionPrimaryAction } from './CommerceSuggestionWindow'
 import PoplurDialog from './PoplurDialog'
 import FlatNotifIcon from './FlatNotifIcon'
+import type { BannerAnatomy } from './notificationBanner'
 import { playPop, playPopAmbient } from './pop'
 import { KM_TO_MI, shouldUseMiles } from './units'
 
@@ -45,6 +46,10 @@ export interface NotificationBannerContent {
   /** Renders in place of the icon slot when the flat icon for `kind` is
    *  missing — never a drawn look-alike, only nothing. */
   iconLabel?: string
+  /** The slab's four lines (notificationBanner.ts folds a row into them).
+   *  Absent for a caller that only has a title and a line: those become the
+   *  headline and the sentence. */
+  anatomy?: BannerAnatomy
 }
 
 export interface MapPopContent {
@@ -426,9 +431,11 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
 }
 
 /**
- * The banner itself. A tap is handled by the wrapper (it activates, then
- * dismisses); this component only adds the one gesture a phone banner has
- * that a chip does not — flick it up and it goes.
+ * The banner itself: the pink clay slab from the "Poplur Notification Banner"
+ * design (final artboard) — pack icon, eyebrow · headline · sentence, and a
+ * target chip naming where a tap goes. A tap is handled by the wrapper (it
+ * activates, then dismisses); this component only adds the one gesture a
+ * phone banner has that a chip does not — flick it up and it goes.
  */
 function NotificationBanner({
   banner,
@@ -439,9 +446,17 @@ function NotificationBanner({
 }) {
   const startY = React.useRef<number | null>(null)
   const swiped = React.useRef(false)
+  const anatomy: BannerAnatomy = banner.anatomy ?? {
+    eyebrow: banner.kind.toUpperCase(), headline: banner.title, sentence: banner.detail, tone: 'plain', targetLabel: 'OPEN',
+  }
+  const headlineClass = [
+    styles.bannerHeadline,
+    anatomy.unit ? '' : styles.bannerWord,
+    anatomy.tone === 'gain' ? styles.bannerGain : '',
+  ].filter(Boolean).join(' ')
   return (
     <div
-      className={`${styles.banner} ${surfaceStyles.surface}`}
+      className={styles.banner}
       role="status"
       data-poplur-native-hit-region=""
       onPointerDown={event => { startY.current = event.clientY; swiped.current = false }}
@@ -461,13 +476,27 @@ function NotificationBanner({
       }}
     >
       <span className={styles.bannerIcon} aria-hidden="true">
-        <FlatNotifIcon kind={banner.kind} size={30} />
+        <FlatNotifIcon kind={banner.kind} size={44} />
       </span>
       <span className={styles.bannerCopy}>
-        <strong>{banner.title}</strong>
-        <span>{banner.detail}</span>
+        <span className={styles.bannerEyebrow}>{anatomy.eyebrow}</span>
+        <span className={headlineClass}>
+          <b>{anatomy.headline}</b>
+          {anatomy.unit ? (
+            <span className={anatomy.unitIsWords ? styles.bannerUnitWords : styles.bannerUnit}>{anatomy.unit}</span>
+          ) : null}
+        </span>
+        <span className={styles.bannerSentence}>{anatomy.sentence}</span>
       </span>
-      <span className={styles.bannerGrip} aria-hidden="true" />
+      <span className={styles.bannerTarget} aria-hidden="true">
+        <span className={styles.bannerTargetBox}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 12h14" />
+            <path d="M13 6l6 6-6 6" />
+          </svg>
+        </span>
+        <span className={styles.bannerTargetLabel}>{anatomy.targetLabel}</span>
+      </span>
     </div>
   )
 }

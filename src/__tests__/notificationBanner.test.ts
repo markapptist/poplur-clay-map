@@ -21,7 +21,9 @@ vi.mock('../engagementLog', () => ({
 
 import {
   NOTIFICATION_FOCUS_PIN_EVENT,
+  bannerAnatomy,
   followNotification,
+  formatDeltaKm,
   radiusDeltaFromText,
   showNativeNotificationBanner,
   showNotificationBanner,
@@ -91,9 +93,50 @@ describe('showNotificationBanner', () => {
     expect(showNotificationBanner(n)).toBe(7)
     const item = popups.show.mock.calls[0][0] as { kind: string; banner: unknown; onActivate: () => void }
     expect(item.kind).toBe('banner')
-    expect(item.banner).toEqual({ title: 'Someone', detail: 'viewed your post', kind: 'view' })
+    expect(item.banner).toMatchObject({ title: 'Someone', detail: 'viewed your post', kind: 'view' })
     item.onActivate()
     expect(seen[0].type).toBe(NOTIFICATION_FOCUS_PIN_EVENT)
+  })
+})
+
+describe('bannerAnatomy — one slab, one anatomy', () => {
+  it('lifts a radius loss into a white signed headline and keeps the sentence', () => {
+    expect(bannerAnatomy({
+      who: 'Your radius is going down', text: 'Radius decreased 0.697 km. Post again to grow your reach.', when: 'now',
+      kind: 'decrease', key: 'r1', target: { mode: 'media', postId: 'p1' },
+    })).toEqual({
+      eyebrow: 'POST RADIUS', headline: '−0.697', unit: 'km', sentence: 'Post again to grow your reach.', tone: 'loss', targetLabel: 'MAP',
+    })
+  })
+  it('names the account when radius news is not about one post', () => {
+    const a = bannerAnatomy({ who: 'Your radius is climbing', text: 'AI check-in: you gained 9 km since the last scan.', when: '1m', kind: 'growth', key: 'd1' })
+    expect(a).toMatchObject({ eyebrow: 'TOTAL RADIUS', headline: '+9', unit: 'km', tone: 'gain', targetLabel: 'MAP' })
+  })
+  it('makes an engagement the eyebrow and its worth the headline, in cyan', () => {
+    expect(bannerAnatomy({
+      who: '@ari liked your post', text: 'Radius grew 0.031 km.', when: 'now', kind: 'like', key: 'l1', target: { mode: 'media', postId: 'p1' },
+    })).toEqual({ eyebrow: '@ari liked your post', headline: '+0.031', unit: 'km', sentence: 'Your radius grew.', tone: 'gain', targetLabel: 'MAP' })
+    expect(bannerAnatomy({
+      who: '@ari commented on your post', text: 'nice shot Radius grew 0.01 km.', when: 'now', kind: 'comment', key: 'c1', target: { mode: 'media', postId: 'p1' },
+    })).toMatchObject({ eyebrow: '@ari commented on your post', headline: '+0.01', sentence: 'nice shot', targetLabel: 'POST' })
+  })
+  it('never invents a number: a plain engagement keeps the handle as its headline', () => {
+    expect(bannerAnatomy({ who: 'Someone', text: 'viewed your post', when: 'now', kind: 'view', key: 'v1', target: { mode: 'media', postId: 'p' } }))
+      .toEqual({ eyebrow: 'VIEW', headline: 'Someone', sentence: 'viewed your post', tone: 'plain', targetLabel: 'MAP' })
+  })
+  it('shows a DM as MESSAGE · handle · preview, with REPLY as the target', () => {
+    expect(bannerAnatomy({ who: '@ari', text: 'are you still at the festival?', when: '1h', kind: 'message', key: 'dm:1', target: { mode: 'messages', who: '@ari', threadId: 't1' } }))
+      .toEqual({ eyebrow: 'MESSAGE', headline: '@ari', sentence: 'are you still at the festival?', tone: 'plain', targetLabel: 'REPLY' })
+  })
+  it('counts new pops in the headline when the digest states a number', () => {
+    expect(bannerAnatomy({ who: 'In your radius', text: '3 new pops. @ari and @bo just landed near you.', when: 'now', kind: 'pop', key: 'pop1' }))
+      .toMatchObject({ eyebrow: 'IN YOUR RADIUS', headline: '3', unit: 'new pops', unitIsWords: true, sentence: '@ari and @bo just landed near you.', tone: 'plain' })
+    expect(bannerAnatomy({ who: 'In your radius', text: '1 new pop near you.', when: 'now', kind: 'pop', key: 'pop2' }).unit).toBe('new pop')
+  })
+  it('formats a signed change with a real minus and sensible precision', () => {
+    expect(formatDeltaKm(-0.5)).toBe('−0.5')
+    expect(formatDeltaKm(12.34)).toBe('+12.3')
+    expect(formatDeltaKm(140.6)).toBe('+141')
   })
   it('accepts the native inbox row shape and drops junk', () => {
     expect(showNativeNotificationBanner({ id: 'n1', kind: 'like', title: '@a', detail: 'liked your post', postId: 'p1' })).toBe(7)

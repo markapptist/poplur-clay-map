@@ -103,11 +103,93 @@ export function followNotification(n: Notification): void {
   window.dispatchEvent(new CustomEvent('poplur-open-notification', { detail: n }))
 }
 
+/** The banner's tone: loss reads white, gain reads cyan, everything else
+ *  plain white (the "Poplur Notification Banner" design, final artboard). */
+export type BannerTone = 'gain' | 'loss' | 'plain'
+
+/** One slab, one anatomy: eyebrow · headline · sentence · target. Every row
+ *  is folded into these four lines here, once, so the banner never has to
+ *  know which sender wrote it. */
+export interface BannerAnatomy {
+  /** Small letter-spaced line above the headline ("POST RADIUS", "MESSAGE"). */
+  eyebrow: string
+  /** The one thing the row is about: a signed radius change, a handle, a count. */
+  headline: string
+  /** Trails the headline, smaller: "km" after a number, "new pops" after a count. */
+  unit?: string
+  /** True when the unit is words rather than a measure — it draws heavier. */
+  unitIsWords?: boolean
+  /** The plain sentence under the headline. */
+  sentence: string
+  tone: BannerTone
+  /** What a tap does, as the target chip's label: MAP, REPLY, POST or OPEN. */
+  targetLabel: string
+}
+
+// "Radius decreased 0.697 km." inside a body — lifted into the headline, so it
+// must not also sit in the sentence.
+const RADIUS_CLAUSE = /\s*Radius (?:grew|decreased) \d+(?:[.,]\d+)?\s*(?:km|m)\b\.?\s*/i
+
+const EYEBROW_BY_KIND: Record<string, string> = {
+  like: 'LIKE', view: 'VIEW', comment: 'COMMENT', growth: 'RADIUS', decrease: 'RADIUS',
+  pop: 'IN YOUR RADIUS', trend: 'RADIUS NEWS', message: 'MESSAGE',
+}
+
+/** −0.697 / +0.031 / +12.4 / +140 — the sign is part of the number and the
+ *  minus is a real minus, not a hyphen. */
+export function formatDeltaKm(deltaKm: number): string {
+  const abs = Math.abs(deltaKm)
+  const digits = abs >= 100 ? 0 : abs >= 10 ? 1 : 3
+  return `${deltaKm < 0 ? '−' : '+'}${Number(abs.toFixed(digits))}`
+}
+
+/** What a tap on this row does, named the way the target chip says it. */
+export function bannerTargetLabel(n: Notification): string {
+  const target = n.target
+  if (target?.mode === 'messages') return 'REPLY'
+  if (notifIconKind(n.kind) === 'comment' && target?.mode === 'media' && target.postId) return 'POST'
+  if (pinFocusRequest(n)) return 'MAP'
+  return 'OPEN'
+}
+
+/** Fold a notification row into the slab's four lines. */
+export function bannerAnatomy(n: Notification): BannerAnatomy {
+  const kind = notifIconKind(n.kind)
+  const targetLabel = bannerTargetLabel(n)
+  if (kind === 'message') {
+    return { eyebrow: 'MESSAGE', headline: n.who, sentence: n.text, tone: 'plain', targetLabel }
+  }
+  const deltaKm = radiusDeltaFromText(n.text, kind)
+  if (deltaKm != null && deltaKm !== 0) {
+    const tone: BannerTone = deltaKm < 0 ? 'loss' : 'gain'
+    // Radius news names the radius; an engagement names who did it, and the
+    // number under it is what their like or comment was worth.
+    const radiusNews = kind === 'decrease' || kind === 'growth'
+    const aboutPost = n.target?.mode === 'media' && !!n.target.postId
+    const eyebrow = radiusNews ? (aboutPost ? 'POST RADIUS' : 'TOTAL RADIUS') : n.who
+    const rest = n.text.replace(RADIUS_CLAUSE, ' ').replace(/\s+/g, ' ').trim()
+    const sentence = rest || (tone === 'loss' ? 'Your radius shrank.' : 'Your radius grew.')
+    return { eyebrow, headline: formatDeltaKm(deltaKm), unit: 'km', sentence, tone, targetLabel }
+  }
+  if (kind === 'pop') {
+    const count = /(\d+)\s+new pops?\b/i.exec(n.text)
+    if (count) {
+      // The count is the headline, so it leaves the sentence.
+      const rest = n.text.replace(/^\s*\d+\s+new pops?\b[.!:]?\s*/i, '').trim()
+      return {
+        eyebrow: 'IN YOUR RADIUS', headline: count[1], unit: Number(count[1]) === 1 ? 'new pop' : 'new pops',
+        unitIsWords: true, sentence: rest || n.text, tone: 'plain', targetLabel,
+      }
+    }
+  }
+  return { eyebrow: EYEBROW_BY_KIND[kind] ?? 'POPLUR', headline: n.who, sentence: n.text, tone: 'plain', targetLabel }
+}
+
 /** Draw the banner for a row, wired to follow it on tap. Returns the popup id. */
 export function showNotificationBanner(n: Notification): number {
   return showPopup({
     kind: 'banner',
-    banner: { title: n.who, detail: n.text, kind: notifIconKind(n.kind) },
+    banner: { title: n.who, detail: n.text, kind: notifIconKind(n.kind), anatomy: bannerAnatomy(n) },
     onActivate: () => followNotification(n),
   })
 }
