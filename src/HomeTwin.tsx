@@ -522,6 +522,9 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // — the object you press to get here is the object the navigator holds while
   // you are here.
   'profile-notifications': 'poplur_bell.glb',
+  // The timeline of your Pop Messages: the supplied @-sign cube — a handle is
+  // what a timeline is filed under.
+  'profile-timeline': 'poplur_cube_at_sign.glb',
   'profile-stats': 'poplur_cube_bargraph.glb',
   'profile-house': HOME_CUBE_MODEL,
   'profile-store': 'poplur_cube_shopping_bag.glb',
@@ -1521,6 +1524,19 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     }
     window.addEventListener('poplur-open-settings', onOpenSettings)
     return () => window.removeEventListener('poplur-open-settings', onOpenSettings)
+  }, [])
+  // News' Profile row, and a news author's name → a Pop Message timeline
+  // (MessageTimeline). The same subscreen route Settings takes. WHOSE
+  // timeline is parked module-side by the sender (messageTimelineRequest),
+  // because the screen mounts after this event has already fired.
+  useEffect(() => {
+    const onOpenTimeline = () => {
+      setActiveTab('profile')
+      setResume(current => ({ screen: 'profile-timeline', n: current.n + 1 }))
+      setHoldOpen(true)
+    }
+    window.addEventListener('poplur-open-message-timeline', onOpenTimeline)
+    return () => window.removeEventListener('poplur-open-message-timeline', onOpenTimeline)
   }, [])
   // The profile's store shortcut opens STORE — the same subscreen the hold
   // menu's tile does, reached without the wheel. App Review could not find the

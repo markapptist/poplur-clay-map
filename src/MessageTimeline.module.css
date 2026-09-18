@@ -1,0 +1,245 @@
+/* ── The Pop Message timeline ─────────────────────────────────────────────
+   A hold-menu subscreen in the same white-page shape Notifications takes:
+   this host is the one scroll surface, padded clear of the wordmark above
+   and the shared cube below. The rows borrow the profile's message row —
+   same card, same ◆ km — with the author on the left the way a timeline
+   reads, so a message looks like one thing across the app. */
+
+.screen {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding:
+    calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 14px)
+    16px
+    calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  color: #24141d;
+  /* Deliberately NOT var(--poplur-ground): the brief for these pages is a
+     white sheet over the themed stage, the same rule Notifications follows. */
+  background: #fff;
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+}
+
+/* ── Header: who this is, and two numbers ─────────────────────────────── */
+.head {
+  max-width: 460px;
+  width: 100%;
+  margin: 0 auto 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.who {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.avatar,
+.rowAvatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #ff8ac6, #f63b9a 52%, #5a1237);
+  color: #fff;
+  font-weight: 900;
+}
+
+.avatar { width: 64px; height: 64px; font-size: 26px; }
+.rowAvatar { width: 40px; height: 40px; font-size: 16px; }
+
+.avatar img,
+.rowAvatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avatar i,
+.rowAvatar i { font-style: normal; }
+
+.names {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.names strong {
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  color: #140a04;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.names span {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(20, 10, 4, 0.5);
+}
+
+.stats {
+  margin: 0;
+  display: flex;
+  gap: 22px;
+}
+
+.stats div { display: flex; flex-direction: column; }
+
+.stats dt {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(20, 10, 4, 0.45);
+}
+
+.stats dd {
+  margin: 2px 0 0;
+  font-size: 22px;
+  font-weight: 900;
+  color: #140a04;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats dd small { font-size: 12px; font-weight: 800; color: rgba(20, 10, 4, 0.5); }
+
+.line {
+  margin: 0;
+  color: rgba(36, 20, 29, 0.6);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* ── The timeline ─────────────────────────────────────────────────────── */
+.timeline {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  max-width: 460px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.row { min-width: 0; }
+
+.rowInner {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(60, 20, 44, 0.08);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.rowOpen { cursor: pointer; }
+.rowOpen:active { transform: scale(0.99); }
+
+.body { flex: 1; min-width: 0; }
+
+.top {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.top strong { font-size: 14px; color: #140a04; }
+.handle { font-size: 12px; color: rgba(20, 10, 4, 0.45); }
+.ch { font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: #c92e7d; }
+.when { margin-left: auto; font-size: 12px; color: rgba(20, 10, 4, 0.4); }
+
+/* The whole message. A timeline is where you READ, so nothing is clipped. */
+.text {
+  margin: 6px 0 0;
+  font-size: 15px;
+  line-height: 1.4;
+  color: rgba(20, 10, 4, 0.86);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.attachment {
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 300px;
+  aspect-ratio: 4 / 3;
+  margin-top: 10px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #f4ecf1;
+}
+
+.attachment img { width: 100%; height: 100%; object-fit: cover; }
+.attachment > span:not([aria-hidden]) {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+/* How far it travelled — the same ◆ + km the radius card and the profile
+   row use, so the number reads as the app's one radius idea. */
+.radius {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(246, 59, 154, 0.1);
+  color: #c92e7d;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.radius i { font-style: normal; font-size: 9px; opacity: 0.85; }
+
+.empty {
+  max-width: 460px;
+  width: 100%;
+  margin: 28px auto;
+  padding: 0 18px;
+  text-align: center;
+  color: rgba(52, 24, 39, 0.66);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+  letter-spacing: 0.035em;
+}
+
+.close {
+  align-self: center;
+  margin-top: 18px;
+  min-height: 40px;
+  padding: 0 22px;
+  border: 1px solid rgba(246, 59, 154, 0.22);
+  border-radius: 999px;
+  background: #fff1f7;
+  color: #e62d87;
+  box-shadow: 0 4px 10px rgba(198, 27, 102, 0.08);
+  font: 900 11px/1 inherit;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.close:active { transform: translateY(1px); }

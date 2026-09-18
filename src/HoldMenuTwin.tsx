@@ -18,6 +18,7 @@ import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
 import CharacterEditor from './CharacterEditor'
 import SettingsScreen from './SettingsScreen'
+import MessageTimeline from './MessageTimeline'
 import AvatarScreen from './AvatarScreen'
 import MailScreen from './MailScreen'
 import StatsScreen from './StatsScreen'
@@ -92,6 +93,11 @@ interface Item {
    *  the root needs an explicit door of its own — the camera always had one
    *  in PHOTO, these are that same door for the other three tabs. */
   home?: boolean
+  /** A page the shell can resume onto (see initialScreen) that the WHEEL does
+   *  not offer and the arrows do not cycle through. For screens reached from
+   *  somewhere specific — News' Profile row opens the Pop Message timeline —
+   *  where a tile would be a second, less obvious door to the same place. */
+  hidden?: boolean
 }
 
 /** Stable identity for the tile currently centered under the Hold-menu
@@ -158,6 +164,10 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // Wears the supplied mailbox render — the same object the screen's own
     // navigator cube wears at rest (poplur_cube_mailbox.glb).
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', native: true },
+    // Your Pop Messages as a timeline. Not on the wheel: News' drawer row is
+    // its door, and a news author's name opens theirs. `profile-messages` is
+    // MAIL (direct messages) — a different thing, hence a different id.
+    { icon: 'Mail', title: 'TIMELINE', screen: 'profile-timeline', native: true, hidden: true },
     { icon: HOLD_MENU_ICON_ASSETS.store, title: 'STORE', screen: 'profile-store' },
     // The account's money face: credit balance, the Store's cards, send and
     // cash-out. A window onto the poplurCredits ledger, never a second one.
@@ -281,7 +291,7 @@ export function isResumablePage(tab: CubeTab, screen: string): boolean {
 export function tabPageScreens(tab: CubeTab): string[] {
   return (TAB_MENUS[tab] ?? [])
     .filter(item => !isRetiredNavigationScreen(item.screen)
-      && !item.home && !item.action && !item.mapAction && !item.event)
+      && !item.home && !item.action && !item.mapAction && !item.event && !item.hidden)
     .map(item => item.screen)
 }
 
@@ -409,7 +419,7 @@ export default function HoldMenuTwin({
   )
   // The item set is fixed to the tab the menu was opened from.
   const items = (TAB_MENUS[tab] ?? TAB_MENUS.map).filter(item =>
-    !isRetiredNavigationScreen(item.screen)).map(item => {
+    !isRetiredNavigationScreen(item.screen) && !item.hidden).map(item => {
     // TOUR reads its label off the map's own state, so it says STOP TOUR for
     // as long as the tour is actually running — including a tour that started
     // itself at launch, which a local toggle would have got backwards.
@@ -1272,6 +1282,13 @@ export default function HoldMenuTwin({
             onAcceptCall={onAcceptCall}
             onDeclineCall={onDeclineCall}
           />
+        </div>
+      )
+    }
+    if (activeScreen.native && activeScreen.screen === 'profile-timeline') {
+      return (
+        <div className={styles.subscreenStage} role="dialog" aria-label="Pop Messages">
+          <MessageTimeline onClose={() => { playSubscreenNavigationPop(); onClose() }} />
         </div>
       )
     }

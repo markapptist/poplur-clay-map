@@ -1,5 +1,11 @@
 import type { ProfileMode } from './ProfileTwin'
 
+/** The pages the profile's mode switch offers. Messages is deliberately not
+ *  one of them: a Pop Message has its own timeline now (MessageTimeline,
+ *  reached from News), and the profile keeps the grid. Exported from this
+ *  small module so a test can pin the tab set without mounting ProfileTwin. */
+export const PROFILE_TABS: readonly ProfileMode[] = ['media', 'liked']
+
 // Which page Profile should open on, handed over from another screen.
 //
 // A window event alone cannot do this: the sender (News' hamburger) fires

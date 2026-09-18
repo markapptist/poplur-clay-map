@@ -5,7 +5,7 @@ import { usePullToRefresh } from './usePullToRefresh'
 import { useNewsRadiusFocus } from './useNewsRadiusFocus'
 import { playPop } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
-import { requestProfileMode } from './profileMode'
+import { requestMessageTimeline } from './messageTimelineRequest'
 import { localDaylight } from './skyCycle'
 import ScreenCoach from './ScreenCoach'
 import ClayCornerButton from './ClayCornerButton'
@@ -435,12 +435,12 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   const goToProfileMessages = () => {
     playCubeNavigationPop()
     setMenuOpen(false)
-    // Park the requested page BEFORE the event: Profile is unmounted right now
-    // and only mounts once the shell switches tabs, so a listener cannot catch
-    // this — it reads the parked value on mount instead. The event still fires
-    // for the shell (tab switch) and for an already-mounted Profile.
-    requestProfileMode('messages')
-    window.dispatchEvent(new CustomEvent('poplur-open-profile-mode', { detail: { mode: 'messages' } }))
+    // Your Pop Messages, as a timeline (MessageTimeline). Park WHOSE before
+    // the event: the screen is unmounted right now and mounts only after the
+    // shell opens the menu, so a listener cannot catch this — it reads the
+    // parked value on mount. null means you.
+    requestMessageTimeline(null)
+    window.dispatchEvent(new CustomEvent('poplur-open-message-timeline'))
   }
 
   // Search filters the EDITION, not just the visible rows: an empty result says
@@ -511,13 +511,11 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
     setMenuOpen(false)
     setDetail(null)
     if (entries.some(e => e.handle === handle && e.liveEvent)) { setByHandle(handle ?? null); setSelectedTag(null); setFeedTab('world'); scrollHost.current?.scrollTo({ top: 0 }); return }
-    // Their profile, on Messages — the same hand-off the drawer's own Profile
-    // row uses. (Whose profile is a live-service question; the shell opens the
-    // profile surface and the mode it was asked for.)
-    requestProfileMode('messages')
-    window.dispatchEvent(new CustomEvent('poplur-open-profile-mode', {
-      detail: { mode: 'messages', handle },
-    }))
+    // Their Pop Messages, as a timeline — the same hand-off the drawer's own
+    // Profile row uses, with their handle parked as whose. (Resolving a handle
+    // to an account is the timeline's job, off the shared post wire.)
+    requestMessageTimeline(handle ?? null)
+    window.dispatchEvent(new CustomEvent('poplur-open-message-timeline'))
   }
 
   const rest = shown

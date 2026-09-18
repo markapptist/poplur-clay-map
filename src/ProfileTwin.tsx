@@ -69,7 +69,7 @@ import {
   readSelectedProfileTheme,
   type ProfileTheme,
 } from './profileThemes'
-import { takeProfileMode } from './profileMode'
+import { PROFILE_TABS, takeProfileMode } from './profileMode'
 import {
   nativeProfilePhotoCandidates,
   nextProfilePhotoReloadRevision,
@@ -449,8 +449,14 @@ function NotificationIcon({ kind }: { kind: NotificationKind }) {
   )
 }
 
-export type ProfileMode = 'media' | 'messages' | 'liked'
-type Mode = ProfileMode
+export type ProfileMode = 'media' | 'liked'
+// `messages` is no longer a TAB — a Pop Message has its own timeline
+// (MessageTimeline, from News). It survives here as a viewer-only mode: a
+// tapped message, from that timeline or from a notification, still opens in
+// this component's viewer with its comments, delete and radius intact, and the
+// effect below the viewer state returns the page to the grid the moment that
+// viewer closes, so the mode is never on screen without a pop in front of it.
+type Mode = ProfileMode | 'messages'
 type CaptureFacing = 'user' | 'environment'
 type CaptureSource = 'camera' | 'library'
 
@@ -1443,7 +1449,7 @@ export default function ProfileTwin({
   useEffect(() => {
     const onMode = (event: Event) => {
       const wanted = (event as CustomEvent<{ mode?: Mode }>).detail?.mode
-      if (wanted === 'media' || wanted === 'messages' || wanted === 'liked') setMode(wanted)
+      if (wanted === 'media' || wanted === 'liked') setMode(wanted)
     }
     window.addEventListener('poplur-open-profile-mode', onMode)
     return () => window.removeEventListener('poplur-open-profile-mode', onMode)
@@ -2389,6 +2395,12 @@ export default function ProfileTwin({
   }, [viewerIdx])
 
   const posts = mode === 'liked' ? LIKED : profilePosts
+  // A message opens in the viewer under the tab-less `messages` mode (see
+  // Mode). When that viewer closes there is no page to fall back to — the
+  // list it used to sit over is MessageTimeline now — so return to the grid.
+  useEffect(() => {
+    if (mode === 'messages' && viewerIdx == null) setMode('media')
+  }, [mode, viewerIdx])
   const viewerPost = viewerIdx != null && posts.length ? posts[viewerIdx % posts.length] : null
   // The open post's tile in the grid: the flat index the inner arrows step from.
   const viewerSlot = viewerIdx != null && posts.length ? viewerIdx % posts.length : 0
@@ -2819,7 +2831,7 @@ export default function ProfileTwin({
           {authored.error && <button type="button" onClick={authored.retry}>Try again</button>}
         </p>}
         <div className={styles.modeSwitch}>
-          {(['media', 'messages', 'liked'] as Mode[]).map(m => (
+          {PROFILE_TABS.map(m => (
             <button
               key={m}
               type="button"
@@ -2845,37 +2857,8 @@ export default function ProfileTwin({
         </div>
 
         <div className={styles.pullInner} ref={pullRef}>
-          {mode === 'messages' ? (
-            <div className={styles.messages}>
-              {!posts.length && (
-                <div className={styles.profileEmpty}>No Pop Messages yet.</div>
-              )}
-              {posts.map((post, i) => (
-                <button
-                  key={postTileKey(post, i)}
-                  type="button"
-                  className={`${styles.msgRow} ${styles.popMessageRow}`}
-                  aria-label={`Open Pop Message: ${post.title}`}
-                  onClick={() => { playPop(); setViewerIdx(i) }}
-                >
-                  <div className={styles.msgBody}>
-                    <div className={styles.msgTop}>
-                      <strong>{post.ch}</strong>
-                      <span>{post.createdAtMillis ? relativeWhen(post.createdAtMillis) : ''}</span>
-                    </div>
-                    <p>{post.title}</p>
-                    {post.reachKm != null && <span className={styles.msgRadius}>
-                      <i aria-hidden="true">◆</i>{post.reachKm.toFixed(1)} km
-                    </span>}
-                  </div>
-                  {!post.messageCard && <span className={styles.messageAttachment}>
-                    <ProfilePostPreview src={postPoster(post)} />
-                    {post.mediaType === 'video' && <span>Video</span>}
-                  </span>}
-                </button>
-              ))}
-            </div>
-          ) : (
+          {/* The Messages list that lived here is MessageTimeline now. */}
+          {(
             <div className={styles.grid}>
               {!posts.length && (
                 <div className={styles.profileEmpty}>
