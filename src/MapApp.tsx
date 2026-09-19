@@ -3025,7 +3025,7 @@ export default function MapApp() {
     const known = knownRadiusRef.current
     const relayed = announcedByRelayRef.current
     const now = Date.now()
-    let best: { id: string; deltaKm: number; mine: boolean } | null = null
+    let best: { id: string; deltaKm: number; mine: boolean; beforeKm: number; afterKm: number } | null = null
     for (const pin of liveMapPosts) {
       const previous = known.get(pin.id)
       known.set(pin.id, pin.radiusKm)
@@ -3042,7 +3042,7 @@ export default function MapApp() {
       const better = best === null
         || (mine && !best.mine)
         || (mine === best.mine && Math.abs(deltaKm) > Math.abs(best.deltaKm))
-      if (better) best = { id: pin.id, deltaKm, mine }
+      if (better) best = { id: pin.id, deltaKm, mine, beforeKm: previous, afterKm: pin.radiusKm }
     }
     // Neither map may grow without bound as pops rotate off the board.
     if (known.size > liveMapPosts.length * 2 + 64) {
@@ -3061,12 +3061,23 @@ export default function MapApp() {
     // decay would otherwise fly a parked map once an hour. It badges instead,
     // as before. (The governor's 15s ambient lease is too short for this: a
     // person can stare at the map for a minute without touching it.)
+    //
+    // In the test build (live simulation on) a student's radius grows because
+    // the synthetic cohort answered their pop, and that growth IS the lesson:
+    // while the map is on screen, every gain flies to the pin and plays the
+    // whole moment — the count from the old number to the new one included —
+    // whether or not they touched the board recently. Losses keep the
+    // attention rule so the hourly decay never flies a parked map.
     const map = mapRef.current
     const ownPin = best.mine ? liveMapPosts.find(pin => pin.id === best.id) : undefined
-    const attended = typeof document !== 'undefined' && !document.hidden
-      && now - lastGestureRef.current < OWN_RADIUS_FOCUS_ATTENTION_MS
-    if (ownPin && map && attended && !tourOnRef.current && !map.isMoving() && focusPinCameraRef.current) {
-      focusPinCameraRef.current(ownPin, { postId: ownPin.id, deltaKm: best.deltaKm, pulse: best.deltaKm < 0 ? 'loss' : 'gain' })
+    const visible = typeof document !== 'undefined' && !document.hidden
+    const attended = visible && now - lastGestureRef.current < OWN_RADIUS_FOCUS_ATTENTION_MS
+    const lesson = visible && best.deltaKm > 0 && isLiveSimulationEnabled()
+    if (ownPin && map && (attended || lesson) && !tourOnRef.current && !map.isMoving() && focusPinCameraRef.current) {
+      focusPinCameraRef.current(ownPin, {
+        postId: ownPin.id, deltaKm: best.deltaKm, pulse: best.deltaKm < 0 ? 'loss' : 'gain',
+        beforeKm: best.beforeKm, afterKm: best.afterKm,
+      })
       return
     }
     showPinRadiusPulse(best.id, best.deltaKm)
