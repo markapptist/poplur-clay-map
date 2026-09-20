@@ -517,6 +517,27 @@ export default function Camera({
   const reviewingRef = useRef(false)
   composingRef.current = Boolean(composing)
   reviewingRef.current = reviewMedia != null
+  // A picked spot is picked for ONE capture, and the open composer is its only
+  // holder: when the composer goes, the spot goes with it. It can go two ways.
+  // It closes itself (closeComposer, below), or it is unmounted with this
+  // screen — a posted pop ends on the Map tab (HomeTwin's onPosted), which
+  // unmounts the camera before the composer's own close ever runs. That path
+  // left the target armed for the NEXT capture: its composer opened straight
+  // at the channel step on the previous post's "Selected spot" and never asked
+  // the map for ground (19 Sep: every second synthetic post failed this way).
+  // A target no composer holds is kept on purpose — a map "Post here" must
+  // survive the camera-permission card, which unmounts this screen before the
+  // first capture.
+  const onPostTargetUsedRef = useRef(onPostTargetUsed)
+  onPostTargetUsedRef.current = onPostTargetUsed
+  useEffect(() => () => {
+    if (composingRef.current) onPostTargetUsedRef.current?.()
+  }, [])
+  const closeComposer = useCallback(() => {
+    setComposing(null)
+    setComposerDraft(null)
+    onPostTargetUsedRef.current?.()
+  }, [])
   useLayoutEffect(() => {
     const open = Boolean(composing)
     onComposingChange?.(open)
@@ -1748,12 +1769,12 @@ export default function Camera({
         if (!composingRef.current) return false
         // The composer registered its own step-back; without one, close.
         if (composerBackRef.current) composerBackRef.current()
-        else setComposing(null)
+        else closeComposer()
         return true
       },
     })
     return () => bindActions?.(null)
-  }, [applyZoomStep, bindActions, capturePhoto, deferCameraAction, liveSurfaceVisible, nativeCameraBudget?.state, onOpenRoll, toggleVideo])
+  }, [applyZoomStep, bindActions, capturePhoto, closeComposer, deferCameraAction, liveSurfaceVisible, nativeCameraBudget?.state, onOpenRoll, toggleVideo])
 
   const [pos, setPos] = useState(page === 'live' ? 1 : 2)
   const [animated, setAnimated] = useState(true)
@@ -2324,7 +2345,7 @@ export default function Camera({
           target={postTarget ?? undefined}
           draft={composerDraft ?? undefined}
           onPosted={onPosted}
-          onClose={() => { setComposing(null); setComposerDraft(null); onPostTargetUsed?.() }}
+          onClose={closeComposer}
           bindArrows={fn => { composerArrowsRef.current = fn }}
           bindBack={fn => { composerBackRef.current = fn }}
         />
