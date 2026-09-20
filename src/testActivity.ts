@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { accountSnapshot, onAccountChange } from './accountStore'
 import { isNativeShell } from './nativeBridge'
 import { authToken, requestAuthToken } from './nativeAuth'
-import { setLiveSimulationEnabled } from './simulationControl'
+import { isLiveSimulationEnabled, setLiveSimulationEnabled } from './simulationControl'
 import {
   normalizeSimulationFeed,
   unseenSimulationEngagements,
@@ -27,6 +27,21 @@ const SIMULATION_SYNC_MS = 30_000
 const SIMULATION_PULSE_MS = 15_000
 export const SIMULATION_FEED_REFRESH_MS = 15_000
 const MAX_SEEN_SIMULATION_EVENTS = 256
+
+/**
+ * The synthetic cohort never takes part in closed-beta telemetry. Its
+ * accounts (`sim-…`, driven by the live runner; `synthetic-…`, the Radius Lab
+ * posters) are the pre-launch harness, not testers: a heartbeat would seat one
+ * on the desk's tester table, the simulation switch would widen what its feed
+ * discovers, and the simulation feed it would poll is its own output. Auth
+ * uids are random, so the prefix cannot collide with a person; postSpotGate
+ * and the runner's live ledger apply the same rule.
+ */
+export const SYNTHETIC_ACCOUNT_UID_PATTERN = /^(sim|synthetic)-/
+
+export function isSyntheticAccountUid(uid: string | null | undefined): boolean {
+  return typeof uid === 'string' && SYNTHETIC_ACCOUNT_UID_PATTERN.test(uid)
+}
 
 /**
  * The only surface names closed-beta activity may transmit. These are route
@@ -105,12 +120,21 @@ function consentUid(): string | null {
   return account.authenticated && account.uid ? account.uid : null
 }
 
+/**
+ * The signed-in person who may take part in closed-beta telemetry. Null for a
+ * synthetic account: the desk must never hear from the cohort it drives.
+ */
+function telemetryUid(): string | null {
+  const uid = consentUid()
+  return uid && !isSyntheticAccountUid(uid) ? uid : null
+}
+
 function consentStorageKey(uid: string): string {
   return `${CONSENT_KEY_PREFIX}${uid}`
 }
 
 function readConsent(): boolean {
-  const uid = consentUid()
+  const uid = telemetryUid()
   if (!uid) return false
   const persisted = storage()?.getItem(consentStorageKey(uid))
   return persisted == null ? memoryConsentByUid.get(uid) === true : persisted === 'on'
@@ -193,7 +217,7 @@ export async function setTestActivityConsent(enabled: boolean): Promise<boolean>
 
 /** Read the explicit server choice on launch; the app never assumes consent. */
 export async function loadTestActivityConsent(): Promise<boolean> {
-  const uid = consentUid()
+  const uid = telemetryUid()
   if (!uid) return rememberConsent(false)
   const result = await callTestActivity<{ enabled?: boolean }>({ action: 'getConsent' })
   return rememberConsent(result.enabled === true, uid)
@@ -201,6 +225,12 @@ export async function loadTestActivityConsent(): Promise<boolean> {
 
 /** The private desk owns synthetic activity, so every test device agrees. */
 export async function loadTestSimulation(): Promise<boolean> {
+  // The cohort never asks for its own desk switch: the answer would only widen
+  // what a synthetic actor's feed discovers and start ambient pulse writes.
+  // Gate on the account the store holds NOW, not on the caller's memory of it:
+  // a caller's effect can run after a null auth event emptied the store, and
+  // "no account" must read as "do not ask", never as "not synthetic".
+  if (!telemetryUid()) return isLiveSimulationEnabled()
   const result = await callTestActivity<{ enabled?: boolean }>({ action: 'simulation' })
   const enabled = result.enabled === true
   setLiveSimulationEnabled(enabled)
@@ -266,9 +296,9 @@ async function pollSimulationFeed(): Promise<void> {
   // The top-level shell owns notices and forwards their map destination into
   // the Map iframe. Polling inside that iframe too would display every event
   // twice and run a second network timer for no benefit.
-  if (window.parent !== window || document.hidden || !accountSnapshot().authenticated || simulationFeedInFlight) return
+  if (window.parent !== window || document.hidden || !telemetryUid() || simulationFeedInFlight) return
   simulationFeedInFlight = true
-  const uid = consentUid()
+  const uid = telemetryUid()
   if (!uid) {
     simulationFeedInFlight = false
     return
@@ -296,7 +326,7 @@ export async function setTestSimulationEnabled(enabled: boolean): Promise<boolea
 
 /** A real post reports a coarse map cell and its radius — never coordinates. */
 export function reportTestPost(postKey: string, latitude: number, longitude: number, radiusKm: number): void {
-  if (!isTestActivityConsentEnabled() || !accountSnapshot().authenticated) return
+  if (!telemetryUid() || !isTestActivityConsentEnabled()) return
   void callTestActivity({
     action: 'post',
     postKey,
@@ -307,7 +337,7 @@ export function reportTestPost(postKey: string, latitude: number, longitude: num
 
 /** The radius ledger sends deltas only; captions and media remain local. */
 export function reportTestRadius(postKey: string, radiusKm: number, deltaKm: number, signal: string): void {
-  if (!isTestActivityConsentEnabled() || !accountSnapshot().authenticated || !postKey) return
+  if (!telemetryUid() || !isTestActivityConsentEnabled() || !postKey) return
   void callTestActivity({
     action: 'radius',
     postKey,
@@ -319,7 +349,7 @@ export function reportTestRadius(postKey: string, radiusKm: number, deltaKm: num
 
 /** Simulator activity appears beside real tester activity, explicitly labelled. */
 export function reportSimulationPulse(input: { actor: string; kind: 'like' | 'view' | 'comment'; place?: string; radiusKm?: number }): void {
-  if (!accountSnapshot().authenticated || document.visibilityState === 'hidden') return
+  if (!telemetryUid() || document.visibilityState === 'hidden') return
   const key = `${input.actor}:${input.kind}`
   const now = Date.now()
   if (now - (lastPulseAt.get(key) ?? 0) < SIMULATION_PULSE_MS) return
@@ -379,7 +409,7 @@ export function testActivityHeartbeatIsDue(input: {
 
 /** A bounded foreground heartbeat. The dashboard must never turn into tracking. */
 export function reportTestActivity(screen: string, status: TestActivityStatus = 'foreground'): void {
-  if (!isTestActivityConsentEnabled() || !accountSnapshot().authenticated) return
+  if (!telemetryUid() || !isTestActivityConsentEnabled()) return
   const resolvedScreen = normalizeTestActivityScreen(screen)
   const key = `${resolvedScreen}:${status}`
   const now = Date.now()
@@ -409,14 +439,14 @@ export function useTestActivityReporter(screen: string): void {
   useEffect(() => {
     const send = () => reportTestActivity(screen, document.hidden ? 'background' : 'foreground')
     const syncConsent = () => {
-      if (!accountSnapshot().authenticated) {
+      if (!telemetryUid()) {
         rememberConsent(false)
         return
       }
       void loadTestActivityConsent().catch(() => rememberConsent(false))
     }
     const syncSimulation = () => {
-      if (!accountSnapshot().authenticated || document.hidden) return
+      if (!telemetryUid() || document.hidden) return
       const now = Date.now()
       if (now - lastSimulationSyncAt < SIMULATION_SYNC_MS) return
       lastSimulationSyncAt = now
@@ -426,7 +456,7 @@ export function useTestActivityReporter(screen: string): void {
     const syncSimulationFeedTimer = () => {
       window.clearInterval(simulationFeedTimer)
       simulationFeedTimer = 0
-      if (window.parent !== window || document.hidden || !accountSnapshot().authenticated) return
+      if (window.parent !== window || document.hidden || !telemetryUid()) return
       void pollSimulationFeed()
       // A single bounded poll belongs to the visible, authenticated shell.
       // Logging out, backgrounding, navigating into an iframe, or unmounting
