@@ -6,7 +6,7 @@ import ShellOverlayPortal from './ShellOverlayPortal'
 import { installCloseMapTimeout } from './closeMapTimeout'
 import { createMapCameraSettle } from './mapCameraSettle'
 import { minimumWorldZoom, normalizeWorldViewport, WORLD_VIEWPORT_ZOOM } from './mapWorldViewport'
-import { hasGlobeMapScreen, mapScreenPresentation } from './mapScreenPolicy'
+import { mapScreenPresentation } from './mapScreenPolicy'
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import mapboxgl, { type PointLike } from 'mapbox-gl'
 import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
@@ -2738,7 +2738,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     mapboxgl.accessToken = token
     setMapFailure(null)
     const screenPresentation = mapScreenPresentation(
-      hasGlobeMapScreen(), containerRef.current.clientHeight, MAP_MIN_ZOOM, MAP_2D,
+      containerRef.current.clientHeight, MAP_MIN_ZOOM,
     )
 
     // Live pop animations (building id → shared-clock unsubscribe) so unmount
@@ -2872,9 +2872,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         // removes that stale cross-source continuation without hiding labels.
         crossSourceCollisions: false,
         attributionControl: false,
-        // Phones keep the flat sheet; tablet/desktop screens get the globe
-        // at world zoom. GL JS smoothly flattens it as you approach the street,
-        // without swapping the live style or losing Poplur's clay layers.
+        // Use the same flat clay map on phones, tablets and desktop screens.
         projection: screenPresentation.projection,
       })
     } catch (error) {
