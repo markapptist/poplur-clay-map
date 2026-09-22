@@ -6,6 +6,7 @@ import ShellOverlayPortal from './ShellOverlayPortal'
 import { installCloseMapTimeout } from './closeMapTimeout'
 import { createMapCameraSettle } from './mapCameraSettle'
 import { minimumWorldZoom, normalizeWorldViewport, WORLD_VIEWPORT_ZOOM } from './mapWorldViewport'
+import { hasGlobeMapScreen, mapScreenPresentation } from './mapScreenPolicy'
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import mapboxgl, { type PointLike } from 'mapbox-gl'
 import { cancelManagedRenderingWake, isIOSNativeShell, isNativeShell, sustainManagedRendering, wakeManagedRendering } from './nativeBridge'
@@ -424,10 +425,8 @@ function applySky(map: mapboxgl.Map, shade: SkyShade) {
   // without a fog pass washing out the buildings or consuming fill rate.
   try { map.setFog(null) } catch { /* fog unsupported */ }
   if (MAP_2D || SHARED_ADAPTIVE_MAP) {
-    // A Mercator map is a finite sheet. Match every surface beneath it to the
-    // live sky palette so cold-start/transition gaps can never flash black;
-    // the viewport-aligned style backdrop installed below covers the same edge
-    // once the clay style is ready, without restoring fog or globe rendering.
+    // Match the surfaces beneath the sheet or globe to the live sky palette,
+    // so the space around Earth and cold-start gaps never flash black.
     map.getContainer().style.backgroundColor = shade.spaceColor
     map.getCanvasContainer().style.backgroundColor = shade.spaceColor
     map.getCanvas().style.backgroundColor = shade.spaceColor
@@ -1602,7 +1601,7 @@ const TOUR_SUBJECTS: Array<[number, number]> = [
   [-122.4783, 37.8199],// Golden Gate, SF
 ]
 
-// Wide views are flat, so the globe end of the rail can show substantially
+// The world end of the rail can show substantially
 // more than the former z3 continent view. Cross-country flights share this floor.
 export const MAP_MIN_ZOOM = 1
 const ZOOM_MIN = MAP_MIN_ZOOM
@@ -2738,6 +2737,9 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
 
     mapboxgl.accessToken = token
     setMapFailure(null)
+    const screenPresentation = mapScreenPresentation(
+      hasGlobeMapScreen(), containerRef.current.clientHeight, MAP_MIN_ZOOM, MAP_2D,
+    )
 
     // Live pop animations (building id → shared-clock unsubscribe) so unmount
     // cancels them without creating one display-rate rAF loop per building.
@@ -2844,7 +2846,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         maxZoom: ZOOM_MAX,
         // Unlike the old globe, Mercator has a real north/south edge. Clamp
         // gestures and programmatic cameras to the same safe regional floor.
-        minZoom: minimumWorldZoom(containerRef.current.clientHeight, MAP_MIN_ZOOM),
+        minZoom: screenPresentation.minZoom,
         // The world-scale view is meant to be explored laterally. Make the
         // interaction contract explicit rather than inheriting projection/
         // style defaults: repeated worlds let a drag cross the antimeridian,
@@ -2870,11 +2872,10 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         // removes that stale cross-source continuation without hiding labels.
         crossSourceCollisions: false,
         attributionControl: false,
-        // 2D means a genuinely flat renderer, not a top-down camera pointed at
-        // the still-expensive globe shader. Constructing in Mercator is stable
-        // in WebView (the historical blank-canvas bug came from switching an
-        // already-running classic style at runtime). 3D keeps the globe.
-        projection: MAP_2D || SHARED_ADAPTIVE_MAP ? 'mercator' : 'globe',
+        // Phones keep the flat sheet; tablet/desktop screens get the globe
+        // at world zoom. GL JS smoothly flattens it as you approach the street,
+        // without swapping the live style or losing Poplur's clay layers.
+        projection: screenPresentation.projection,
       })
     } catch (error) {
       cancelManagedRenderingWake()
@@ -4281,7 +4282,11 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       }
 
       const firstLayerId = map.getStyle()?.layers?.[0]?.id
-      if (!map.getLayer('clay-sky-backdrop')) {
+      // Globe terrain is draped before viewport-aligned backgrounds. An
+      // opaque viewport quad therefore covers Earth while its labels remain
+      // visible. The canvas/container sky colour already fills space outside
+      // the globe; only the flat Mercator sheet needs this extra edge cover.
+      if (map.getProjection().name === 'mercator' && !map.getLayer('clay-sky-backdrop')) {
         const backdropShade = skyRef.current ?? skyShadeAt()
         map.addLayer({
           id: 'clay-sky-backdrop',
