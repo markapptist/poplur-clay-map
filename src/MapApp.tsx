@@ -320,7 +320,7 @@ import ConquerGlance from './ConquerGlance'
 import ConquerScreen from './ConquerScreen'
 import type { MapConquerSnapshot } from './mapConquer'
 import { KM_TO_MI, shouldUseMiles } from './units'
-import { currentViewerCoords, normalizeViewerFix, publishViewerFix } from './viewerFix'
+import { currentViewerCoords, mayAskBrowserForLocation, normalizeViewerFix, publishViewerFix, requestViewerFix } from './viewerFix'
 import { playClaimDecay, playClaimGrowth } from './motionEffectsAudio'
 import styles from './App.module.css'
 import dropStyles from './ClayMap.module.css'
@@ -2183,6 +2183,22 @@ export default function MapApp() {
   }, [clearTourTimers, streetView])
 
   const handleGoToCurrentLocation = useCallback(() => {
+    // Inside the app the shell owns the permission: it asks with Poplur's own
+    // wording and publishes the fix here. Asking the WebView instead raises a
+    // second, generic OS sheet — the one titled "app" — over the map.
+    if (!mayAskBrowserForLocation() && !currentViewerCoords()) {
+      clearTourTimers()
+      setTourLine('Finding your current location...')
+      void requestViewerFix().then(fix => {
+        if (!fix) { setTourLine('Poplur does not have your location yet. Allow location for Poplur in Settings.'); return }
+        const center: [number, number] = [fix.longitude, fix.latitude]
+        acceptCurrentLocation(center)
+        setCurrentPlace('Current location')
+        setTourLine('Current location selected - checking nearby 3D buildings.')
+        flyToCenter(center, 4600)
+      })
+      return
+    }
     if (!navigator.geolocation) {
       setTourLine('Current location is not available in this browser.')
       return
@@ -4775,11 +4791,11 @@ export default function MapApp() {
             playPop(0.25)
             const map = mapRef.current as unknown as { __locateMe?: () => void } | null
             if (map?.__locateMe) { map.__locateMe(); return }
-            navigator.geolocation?.getCurrentPosition(
-              pos => flyToPlace([pos.coords.longitude, pos.coords.latitude], 'Current location'),
-              () => { /* permission refused — nothing to fly to */ },
-              { enableHighAccuracy: true, timeout: 8000 },
-            )
+            // Native-first: the shell's fix, or the browser's own only in a
+            // plain browser (see viewerFix.requestViewerFix).
+            void requestViewerFix().then(fix => {
+              if (fix) flyToPlace([fix.longitude, fix.latitude], 'Current location')
+            })
           }}
         />
         <SideControlIconButton

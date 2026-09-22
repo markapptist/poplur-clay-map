@@ -1,7 +1,7 @@
 import { createMapRenderer, createMapMarker, nativeMapRendererEnabled } from './nativeMapRenderer'
 import { buildingDayMaterial } from './buildingDayStyle'
 import { MAP_BUILDING_EXPERIMENT_ENABLED } from './mapBuildingExperiment'
-import { normalizeViewerFix } from './viewerFix'
+import { mayAskBrowserForLocation, normalizeViewerFix, requestViewerFix } from './viewerFix'
 import ShellOverlayPortal from './ShellOverlayPortal'
 import { installCloseMapTimeout } from './closeMapTimeout'
 import { createMapCameraSettle } from './mapCameraSettle'
@@ -4531,24 +4531,23 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         MAP_2D || adaptiveIOSLaunch ? 120 : 1400,
       )
       if (!focusedPostLaunch) {
-        if (!deferInitialGeolocation && !nativeLocationRef.current && navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            pos => {
-              landingCenter = [pos.coords.longitude, pos.coords.latitude]
-              nativeLocationRef.current = landingCenter
-              setCurrentLocationPoint(landingCenter)
-              onCurrentLocationChangeRef.current?.(landingCenter)
-              // The direct 2D launch may already have painted its cached fallback
-              // before Core Location answers. Recenter once, without animating
-              // through another set of intermediate tiles.
-              // Only recentre on the fix if there was no claim to land on —
-              // otherwise a slow Core Location answer would yank the camera off
-              // your biggest pop moments after it arrived there.
-              if ((MAP_2D || adaptiveIOSLaunch) && introDone && !largestOwnClaim()) landOn(landingCenter)
-            },
-            () => { /* fallback already scheduled */ },
-            { timeout: 1200, maximumAge: 300000 },
-          )
+        // In the app the shell owns the prompt and publishes the fix; asking
+        // the WebView here raised a second, generic OS sheet at launch.
+        if (!deferInitialGeolocation && !nativeLocationRef.current) {
+          void requestViewerFix({ ask: mayAskBrowserForLocation(), timeoutMs: 1200 }).then(fix => {
+            if (!fix) return
+            landingCenter = [fix.longitude, fix.latitude]
+            nativeLocationRef.current = landingCenter
+            setCurrentLocationPoint(landingCenter)
+            onCurrentLocationChangeRef.current?.(landingCenter)
+            // The direct 2D launch may already have painted its cached fallback
+            // before Core Location answers. Recenter once, without animating
+            // through another set of intermediate tiles.
+            // Only recentre on the fix if there was no claim to land on —
+            // otherwise a slow Core Location answer would yank the camera off
+            // your biggest pop moments after it arrived there.
+            if ((MAP_2D || adaptiveIOSLaunch) && introDone && !largestOwnClaim()) landOn(landingCenter)
+          })
         }
         startIntro()
       }
@@ -6243,28 +6242,26 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         // Keep the normal readiness/context plumbing, but App treats this query
         // as a focused picker and skips radio, speech, ads and tour setup.
         onIntroComplete?.(center)
-        if (!nativeLocationRef.current && !deferInitialGeolocation && navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            pos => {
-              if (disposed
-                || focusedPostManualSelectionRef.current
-                || focusedPostResolvedLocationRef.current) return
-              const located: [number, number] = [pos.coords.longitude, pos.coords.latitude]
-              focusedPostResolvedLocationRef.current = true
-              setFocusedPostLocationStatus('ready')
-              nativeLocationRef.current = located
-              onCurrentLocationChangeRef.current?.(located)
-              positionFocusedPostComposer(located)
-            },
-            () => {
+        if (!nativeLocationRef.current && !deferInitialGeolocation) {
+          void requestViewerFix({ ask: mayAskBrowserForLocation() }).then(fix => {
+            if (!fix) {
               if (!disposed
                 && !focusedPostResolvedLocationRef.current
                 && !focusedPostManualSelectionRef.current) {
                 setFocusedPostLocationStatus('unavailable')
               }
-            },
-            { timeout: 1200, maximumAge: 300000 },
-          )
+              return
+            }
+            if (disposed
+              || focusedPostManualSelectionRef.current
+              || focusedPostResolvedLocationRef.current) return
+            const located: [number, number] = [fix.longitude, fix.latitude]
+            focusedPostResolvedLocationRef.current = true
+            setFocusedPostLocationStatus('ready')
+            nativeLocationRef.current = located
+            onCurrentLocationChangeRef.current?.(located)
+            positionFocusedPostComposer(located)
+          })
         } else if (!nativeLocationRef.current) {
           setFocusedPostLocationStatus('unavailable')
         }

@@ -88,3 +88,91 @@ export function publishViewerFix(fix: { latitude: unknown; longitude: unknown },
   w.dispatchEvent(new CustomEvent('poplur-location', { detail: location }))
   return true
 }
+
+/**
+ * Who may raise an OS location prompt. The native shells (and the RN web
+ * preview, which sets `managedLocation=1`) own permission presentation: they
+ * have already asked with Poplur's own wording, and a second ask from inside
+ * the WebView is WKWebView's generic sheet — the one titled "app" — over the
+ * app's own UI. A plain browser build legitimately asks for itself.
+ */
+export function mayAskBrowserForLocation(search = typeof window === 'undefined' ? '' : window.location.search): boolean {
+  const w = fixWindow()
+  if (!w) return false
+  if (nativeShell(w)) return false
+  try { if (new URLSearchParams(search).get('managedLocation') === '1') return false } catch { /* a malformed query is not a permission */ }
+  return typeof navigator !== 'undefined' && Boolean(navigator.geolocation)
+}
+
+/**
+ * The viewer's position, asked for the way this surface is allowed to ask:
+ * the fix already published, else the shell (which answers by publishing one),
+ * else — in a plain browser only — the browser's own geolocation. Resolves
+ * null when nothing answers inside `timeoutMs`, so a caller can say so rather
+ * than hang. Never raises a second OS prompt inside a native shell.
+ */
+export function requestViewerFix({ timeoutMs = 8000, ask = true }: { timeoutMs?: number; ask?: boolean } = {}): Promise<ViewerFix | null> {
+  const w = fixWindow()
+  if (!w) return Promise.resolve(null)
+  const existing = readViewerFix()
+  if (existing) return Promise.resolve(existing)
+  return new Promise<ViewerFix | null>(resolve => {
+    let settled = false
+    const finish = (fix: ViewerFix | null) => {
+      if (settled) return
+      settled = true
+      w.clearTimeout(timer)
+      w.removeEventListener('poplur-location', onEvent)
+      w.removeEventListener('poplur-native-location', onEvent)
+      w.removeEventListener('message', onMessage)
+      resolve(fix)
+    }
+    const accept = (value: unknown): boolean => {
+      const fix = normalizeViewerFix(value)
+      if (!fix) return false
+      finish(fix)
+      return true
+    }
+    const onEvent = (event: Event) => { accept((event as CustomEvent).detail) }
+    const onMessage = (event: Event) => {
+      const data = (event as MessageEvent).data as Record<string, unknown> | null
+      if (data && data.type === 'poplur-location') accept(data)
+    }
+    w.addEventListener('poplur-location', onEvent)
+    w.addEventListener('poplur-native-location', onEvent)
+    // The Map runs in an iframe: the shell relays its fix in by postMessage.
+    w.addEventListener('message', onMessage)
+    const timer = w.setTimeout(() => finish(readViewerFix()), timeoutMs)
+
+    if (accept(w.__poplurNativeLocation)) return
+    if (!ask) return
+    if (nativeShell(w)) {
+      // The shell answers by publishing a fix, which the listeners above hear.
+      postNativeLocationRequest(w)
+      return
+    }
+    if (mayAskBrowserForLocation()) {
+      navigator.geolocation.getCurrentPosition(
+        position => {
+          const fix = { latitude: position.coords.latitude, longitude: position.coords.longitude }
+          publishViewerFix(fix, 'browser')
+          finish(normalizeViewerFix(fix))
+        },
+        () => finish(null),
+        { enableHighAccuracy: true, timeout: Math.min(timeoutMs, 10000), maximumAge: 300000 },
+      )
+    }
+  })
+}
+
+/** `postNativeEvent` lives in nativeBridge, which imports nothing from here;
+ *  this keeps viewerFix free of that import cycle. */
+function postNativeLocationRequest(w: FixWindow): void {
+  const message = { type: 'requestLocation' }
+  try {
+    const webkit = w.webkit as { messageHandlers?: { poplur?: { postMessage?: (value: unknown) => void } } } | undefined
+    if (webkit?.messageHandlers?.poplur?.postMessage) { webkit.messageHandlers.poplur.postMessage(message); return }
+    const android = w.PoplurNative as { onEvent?: (value: string) => void } | undefined
+    if (android?.onEvent) android.onEvent(JSON.stringify(message))
+  } catch { /* a shell that cannot be asked will publish on its own schedule */ }
+}
