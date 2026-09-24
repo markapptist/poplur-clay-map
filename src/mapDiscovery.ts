@@ -43,6 +43,16 @@ export function normalizeDiscoveryPage(value: unknown, ownUid: string | null): D
   return { notificationFocus, enabled, mode, pins: [...new Map(pins.map(p => [p.id,p])).values()], cells,
     nextCursor: typeof data.nextCursor === 'string' && data.nextCursor.length <= 1500 ? data.nextCursor : null }
 }
+/**
+ * The list the Map board draws: a page's pins only while discovery is actually
+ * serving one, otherwise the pool the shell forwarded (null until one arrives).
+ * Pending, refused (queryMapDiscovery 503/500) and disabled all fall back — a
+ * failed first load used to leave the board with neither, which is how a phone
+ * opened the Map on zero pins on 24 Sep while the shell held ~490 live pops.
+ */
+export function mapBoardPosts(page: DiscoveryPage | null, forwarded: LiveMapPostPin[] | null): LiveMapPostPin[] | null {
+  return page?.enabled === true ? page.pins : forwarded
+}
 /** A generation is invalidated at movement START, not just on the next fetch. */
 export class MapRequestGeneration {
   private version = 0

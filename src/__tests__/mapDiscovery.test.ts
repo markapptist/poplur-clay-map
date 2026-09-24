@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { MapRequestGeneration, normalizeDiscoveryPage } from '../mapDiscovery'
+import { MapRequestGeneration, mapBoardPosts, normalizeDiscoveryPage } from '../mapDiscovery'
 const row = {userID:'owner',username:'owner',caption:'Hi',radiusMeters:5000,latitude:43.65,longitude:-79.38,locationVisibility:'approximate'}
 describe('bounded map discovery',()=>{
  it('caps and deduplicates data before handing it to the renderer',()=>{
@@ -28,5 +28,17 @@ describe('bounded map discovery',()=>{
   expect(previous.signal.aborted).toBe(true)
   expect(requests.accepts(previous.version)).toBe(false)
   expect(requests.accepts(next.version)).toBe(true)
+ })
+ it('draws a served page, and the forwarded pool whenever discovery is not serving',()=>{
+  const served=normalizeDiscoveryPage({schema:1,enabled:true,mode:'regions',posts:[{id:'d1',row}]},'viewer')
+  const forwarded=normalizeDiscoveryPage({schema:1,enabled:true,mode:'posts',posts:[{id:'f1',row},{id:'f2',row}]},'viewer').pins
+  // Healthy discovery: its pins, not the pool.
+  expect(mapBoardPosts(served,forwarded)).toBe(served.pins)
+  // Pending or refused first load (no page): the pool, never nothing.
+  expect(mapBoardPosts(null,forwarded)).toBe(forwarded)
+  // Disabled: the pool.
+  expect(mapBoardPosts(normalizeDiscoveryPage({schema:1,enabled:false},null),forwarded)).toBe(forwarded)
+  // Nothing forwarded yet: leave the board to whoever fills it next.
+  expect(mapBoardPosts(null,null)).toBeNull()
  })
 })

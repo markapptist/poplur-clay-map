@@ -4537,7 +4537,15 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         // In the app the shell owns the prompt and publishes the fix; asking
         // the WebView here raised a second, generic OS sheet at launch.
         if (!deferInitialGeolocation && !nativeLocationRef.current) {
-          void requestViewerFix({ ask: mayAskBrowserForLocation(), timeoutMs: 1200 }).then(fix => {
+          // Ask, don't just listen. Inside the app nothing else asks at launch
+          // any more, and the shell's one-shot CoreLocation fix can land before
+          // Home is live (a first launch after an install spends seconds
+          // migrating its web cache): the Map then had no YOU pin and opened on
+          // HOME_CENTER. In a shell requestViewerFix only messages the shell,
+          // which owns the prompt; a plain browser still asks only where it may.
+          // The longer wait covers a cold CoreLocation answer; landOn keeps the
+          // launch zoom and yields to any camera the viewer has already moved.
+          void requestViewerFix({ ask: true, timeoutMs: mayAskBrowserForLocation() ? 1200 : 8000 }).then(fix => {
             if (!fix) return
             landingCenter = [fix.longitude, fix.latitude]
             nativeLocationRef.current = landingCenter

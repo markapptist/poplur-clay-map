@@ -3,6 +3,7 @@ import { onFrame } from './frameGovernor'
 import { cutMapCamera } from './cutMapCamera'
 import { useImmersiveControls } from './useImmersiveControls'
 import { useMapDiscovery } from './useMapDiscovery'
+import { mapBoardPosts } from './mapDiscovery'
 import { MapDiscoveryLayers } from './MapDiscoveryLayers'
 import React, { useRef, useState, useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 import mapboxgl from 'mapbox-gl'
@@ -2824,9 +2825,21 @@ export default function MapApp() {
   const [discoveryFocusPostId, setDiscoveryFocusPostId] = useState<string | null>(null)
   const discovery = useMapDiscovery(mapRef, mapLive, ownUid, true, mapFrontRef, rnWebShellRoute, discoveryFocusPostId, notificationFocusId)
   const discoveryEnabled = discovery.page?.enabled ?? null
+  // Discovery draws the board only while it is actually serving a page (a page
+  // that loaded stays up through a refused refresh, see useMapDiscovery).
+  // Pending, refused or disabled, the board is the pool the shell forwarded,
+  // through the reach rule: a failed first load used to leave this null, which
+  // drew neither list — the zero-pin map on Mark's phone at 10:03 on 24 Sep.
+  const discoveryServing = discoveryEnabled === true
+  // A plain browser pays for its own Firestore read, so it falls back only once
+  // discovery is disabled or has been refused, not while it is still loading.
+  const browserMapFallback = discoveryEnabled === false || (!discoveryServing && discovery.error !== null)
+  const forwardedMapPostsRef = useRef<LiveMapPostPin[] | null>(null)
   const [accountMapPosts, setAccountMapPosts] = useState<LiveMapPostPin[]>([])
   useEffect(() => {
-    if (discovery.page?.enabled) { setLiveMapPosts(discovery.page.pins); setLiveMapPostsReady(true) }
+    const board = mapBoardPosts(discovery.page, forwardedMapPostsRef.current)
+    if (board) setLiveMapPosts(board)
+    if (discovery.page?.enabled) setLiveMapPostsReady(true)
   }, [discovery.page])
   const [liveMapPosts, setLiveMapPosts] = useState<LiveMapPostPin[]>([])
   const liveMapPostsRef = useRef(liveMapPosts)
@@ -2881,14 +2894,15 @@ export default function MapApp() {
           }
           : null)
         const forwarded = nativeFeedPostsToMapPins(posts, nextUid, { syntheticOnly: rnWebShellRoute })
+        forwardedMapPostsRef.current = forwarded
         setAccountMapPosts(forwarded.filter(p => p.mine))
-        if (discoveryEnabled === false || rnWebShellRoute) setLiveMapPosts(forwarded)
+        if (!discoveryServing || rnWebShellRoute) setLiveMapPosts(forwarded)
         setLiveMapPostsReady(true)
       }
       window.addEventListener('message', receiveForwardedPosts)
       return () => window.removeEventListener('message', receiveForwardedPosts)
     }
-    if (discoveryEnabled !== false) return undefined
+    if (!browserMapFallback) return undefined
     return subscribeLiveMapPosts(
       pins => {
         setLiveMapPosts(pins)
@@ -2897,7 +2911,7 @@ export default function MapApp() {
       () => setLiveMapPostsReady(true),
       ownUid,
     )
-  }, [nativeShell, ownUid, rnWebShellRoute, discoveryEnabled])
+  }, [nativeShell, ownUid, rnWebShellRoute, discoveryServing, browserMapFallback])
   // Sum the pins the shell forwarded in. This ran ONLY on the local Expo web
   // route, so on an actual phone it never ran at all and the total fell
   // through to the web Firestore subscription below — which, on a device,
