@@ -805,6 +805,8 @@ type PostLoginPermission = 'location' | 'photos' | 'notifications' | 'motion'
  * `permissions=1` is the browser/RCL verification switch.
  */
 function initialPostLoginPermissions(): PostLoginPermission[] {
+  // The installed app uses system dialogs when a feature is opened.
+  if (isNativeShell()) return []
   if (typeof window === 'undefined') return []
   const params = new URLSearchParams(window.location.search)
   const force = params.get('permissions') === '1'
