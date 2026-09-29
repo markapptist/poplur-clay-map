@@ -226,6 +226,8 @@ export default function CameraRoll({
   const forceAlert = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('permission') === '1'
   const [granted, setGranted] = useState(() => {
+    // Opening the installed camera roll goes directly to Photos authorization.
+    if (isNativeShell()) return true
     if (forceAlert) return false
     try { return window.localStorage.getItem('poplur.rollPermission') === 'granted' } catch { return false }
   })

@@ -6,7 +6,7 @@ import {
 } from './cubeTransitions'
 import styles from './SettingsScreen.module.css'
 import { blockUser, blockedUserEntries, onBlockedUsersChange, unblockUser } from './blockedUsers'
-import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { isIOSNativeShell, isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
 import {
@@ -497,6 +497,17 @@ export default function SettingsScreen({ bindBack }: {
         {page === null && (
           <>
             <div className={styles.list}>
+              {isIOSNativeShell() && (
+                <button type="button" className={styles.row} onClick={() => {
+                  if (!postNativeEvent({ type: 'deleteAccount' })) say('Account deletion is unavailable. Please reopen the app and try again.')
+                }}>
+                  <span className={styles.rowText}>
+                    <b>Delete account</b>
+                    <i>Permanently remove your account and personal data.</i>
+                  </span>
+                  <span className={styles.rowValue}>›</span>
+                </button>
+              )}
               {/* Transitions are taste, not correctness — the original and the
                   alternatives are all defensible, so they are chosen here
                   rather than settled in code. Both apply immediately. */}
