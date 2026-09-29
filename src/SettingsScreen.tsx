@@ -6,7 +6,7 @@ import {
 } from './cubeTransitions'
 import styles from './SettingsScreen.module.css'
 import { blockUser, blockedUserEntries, onBlockedUsersChange, unblockUser } from './blockedUsers'
-import { isIOSNativeShell, isNativeShell, postNativeEvent } from './nativeBridge'
+import { isAndroidNativeShell, isIOSNativeShell, isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
 import {
@@ -497,7 +497,10 @@ export default function SettingsScreen({ bindBack }: {
         {page === null && (
           <>
             <div className={styles.list}>
-              {isIOSNativeShell() && (
+              {/* Both shells confirm and delete natively (iOS PoplurAccountDeletion.swift,
+                  Android PoplurAccountDeletion.kt). A plain browser has no handler, so it
+                  never shows an action that cannot work. */}
+              {(isIOSNativeShell() || isAndroidNativeShell()) && (
                 <button type="button" className={styles.row} onClick={() => {
                   if (!postNativeEvent({ type: 'deleteAccount' })) say('Account deletion is unavailable. Please reopen the app and try again.')
                 }}>

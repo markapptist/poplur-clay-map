@@ -4,11 +4,12 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import SettingsScreen from '../SettingsScreen'
 import CameraRoll from '../CameraRoll'
-const bridge = vi.hoisted(() => ({ ios: true, send: vi.fn(() => true) }))
+const bridge = vi.hoisted(() => ({ ios: true, android: false, send: vi.fn(() => true) }))
 vi.mock('../nativeBridge', async importOriginal => ({
   ...await importOriginal<typeof import('../nativeBridge')>(),
   isIOSNativeShell: () => bridge.ios,
-  isNativeShell: () => bridge.ios,
+  isAndroidNativeShell: () => bridge.android,
+  isNativeShell: () => bridge.ios || bridge.android,
   postNativeEvent: bridge.send,
 }))
 vi.mock('../notificationPrefs', () => ({ readNotificationPrefs: async () => null, writeNotificationPref: vi.fn() }))
@@ -17,7 +18,7 @@ vi.mock('../testActivity', async importOriginal => ({
   loadTestActivityConsent: async () => false,
 }))
 vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-afterEach(() => { bridge.send.mockClear(); bridge.ios = true; window.localStorage?.clear() })
+afterEach(() => { bridge.send.mockClear(); bridge.ios = true; bridge.android = false; window.localStorage?.clear() })
 async function mounted(element: React.ReactElement, check: (container: HTMLDivElement) => Promise<void>) {
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)
@@ -29,6 +30,16 @@ it('exposes deletion directly in Settings and delegates confirmation to native',
     const button = [...container.querySelectorAll('button')].find(b => b.textContent?.includes('Delete account'))
     expect(button).toBeDefined()
     expect(bridge.send).not.toHaveBeenCalledWith({ type: 'deleteAccount' })
+    await act(async () => button!.click())
+    expect(bridge.send).toHaveBeenCalledWith({ type: 'deleteAccount' })
+    expect(container.querySelector('input[type=password]')).toBeNull()
+  })
+})
+it('the Android shell exposes the same deletion row and delegates confirmation to native', async () => {
+  bridge.ios = false; bridge.android = true
+  await mounted(<SettingsScreen />, async container => {
+    const button = [...container.querySelectorAll('button')].find(b => b.textContent?.includes('Delete account'))
+    expect(button).toBeDefined()
     await act(async () => button!.click())
     expect(bridge.send).toHaveBeenCalledWith({ type: 'deleteAccount' })
     expect(container.querySelector('input[type=password]')).toBeNull()

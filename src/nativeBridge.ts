@@ -203,6 +203,18 @@ export function isIOSNativeShell(): boolean {
   }
 }
 
+// The Android shell exposes the `PoplurNative` JavascriptInterface. The RN web
+// harness installs an object of the same name on its localhost route, so that
+// route is excluded: it is a browser, and it has no native handlers of its own.
+export function isAndroidNativeShell(): boolean {
+  try {
+    const w = window as NativeWindow
+    return Boolean(w.PoplurNative) && !isRNWebParentBridgeRoute()
+  } catch {
+    return false
+  }
+}
+
 export function postNativeEvent(message: Record<string, unknown>): boolean {
   try {
     const w = window as NativeWindow
