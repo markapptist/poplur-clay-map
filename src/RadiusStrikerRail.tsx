@@ -174,7 +174,7 @@ export default function RadiusStrikerRail({
       // The bell: one pop per trophy, a beat apart because the easing is hard
       // at the start and the tiers sit a decade apart.
       if (rang) {
-        playPop(0.55)
+        playPop(0.55, 'radius')
         setShown({ tier, running: true, level })
       }
       if (raw < 1) {

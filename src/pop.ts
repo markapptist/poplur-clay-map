@@ -1,5 +1,6 @@
 import { postNativeEvent } from './nativeBridge'
 import { isGateMuted } from './audioGate'
+import { shouldPlayPop, type PopSoundEvent } from './popSoundPolicy'
 import { ambientAllowed, onAmbientSleepChange } from './frameGovernor'
 
 // The "Poplur pop": the exact pop.mp3 the iOS feed plays, decoded once for
@@ -120,11 +121,13 @@ export function popHaptic() {
     // Android/Chrome. iOS Safari ignores this, hence the native bridge below.
     navigator.vibrate?.(12)
   } catch { /* unsupported */ }
+  // This bridge event is vibration only; the web player owns UI sound.
   postNativeEvent({ type: 'pop' })
 }
 
 /** Plays the pop sound and fires the haptic. Silent until the first gesture. */
-export function playPop(volume = 0.6) {
+export function playPop(volume = 0.6, event: PopSoundEvent = 'action') {
+  if (!shouldPlayPop(event)) return
   // Interactive pops are governed by actual visibility/audio ownership, not by
   // an inactivity timer. Autonomous effects use playPopAmbient below; making
   // this path depend on ambientAllowed() silenced the hold menu after the old
@@ -262,7 +265,9 @@ function hasRecentUserInput(): boolean {
  * No haptic either: an ambient notice buzzing the phone in your pocket is a
  * notification, not a pop.
  */
-export function playPopAmbient(volume = 0.5) {
+export function playPopAmbient(volume = 0.5, event: 'ambient' | 'notification' = 'ambient') {
+  // Automatic notices stay visual. Notification banners keep their own sound.
+  if (!shouldPlayPop(event)) return
   if (isGateMuted() || !ambientAllowed()) return
   // Nobody has touched the screen yet (or in a while): show, don't chirp.
   // This keeps background demo/engagement events visual-only until a person

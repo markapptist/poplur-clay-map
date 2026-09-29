@@ -1038,7 +1038,7 @@ export default function HoldMenuTwin({
     if (notch !== lastNotchRef.current) {
       lastNotchRef.current = notch
       setSelected(notch)
-      playPop()
+      // Browsing the wheel is silent; activateItem owns the selection pop.
     }
   }
 

@@ -244,7 +244,7 @@ export function showPopup(item: Omit<PopupItem, 'id' | 'ttl'> & { ttl?: number }
   // because these fire on a cadence with nobody touching the screen and the
   // ordinary pop's 8s volley-nap kept the audio thread running at idle (the
   // exact thing the thermal gate fails builds for). Muted app stays silent.
-  playPopAmbient()
+  playPopAmbient(0.5, item.kind === 'banner' ? 'notification' : 'ambient')
   expiryTimers.set(id, window.setTimeout(() => dismissPopup(id), ttl))
   return id
 }

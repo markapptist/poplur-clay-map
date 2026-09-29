@@ -88,7 +88,6 @@ import {
 import {
   createCubeNavigationSoundClaimTracker,
   cubeSwapShouldPlaySound,
-  isMapCubeReturnTransition,
   pendingCubeSwapSound,
 } from './cubeSwapSoundPolicy'
 import { CUBE_NAVIGATION_POP_EVENT, playCubeNavigationPop } from './cubeNavigationSound'
@@ -1333,7 +1332,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // back: out of a page to what was under it, and back across a tab jump
   // (VIEW PROFILE from News returns to News rather than to the feed root).
   const switchTabByGesture = useCallback((tab: CubeTab) => {
+    if (tab === activeTabLiveRef.current) return
     cancelCubeScreenNavigationSoundRef.current()
+    playPop(0.6, 'navigation')
     gestureSwitchRef.current = tab
     setActiveTab(tab)
   }, [])
@@ -5153,12 +5154,6 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                   ? 'music'
                   : 'none'
   const previousCubeEventSignalRef = useRef(cubeEventSignal)
-  const cubeReturnSoundLatchRef = useRef(false)
-  const mapCubeReturnTransition = isMapCubeReturnTransition(
-    activeTab,
-    previousCubeEventSignalRef.current,
-    cubeEventSignal,
-  )
   const cubeSwapWithSound = cubeSwapShouldPlaySound({
     wheelFocused: wheelFocus !== null,
     activeTab,
@@ -5167,9 +5162,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     navigationSoundClaimed: cubeNavigationSoundClaimRef.current.claimed(),
   })
   useEffect(() => {
-    if (mapCubeReturnTransition) cubeReturnSoundLatchRef.current = true
     previousCubeEventSignalRef.current = cubeEventSignal
-  }, [cubeEventSignal, mapCubeReturnTransition])
+  }, [cubeEventSignal])
   const wheelPreviewModel = holdCubePreviewMode === '3d'
     && wheelFocus
     ? holdFocusNavigatorModel(
@@ -5362,7 +5356,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // first (and suppressed legitimate non-wheel swaps in the reverse race).
     const existingPendingCubeSwap = pendingCubeSwap.current
     const nextSwapWithSound = !navigationSoundClaimed
-      && (cubeSwapWithSound || cubeReturnSoundLatchRef.current)
+      && cubeSwapWithSound
     pendingCubeSwap.current = alreadyApplied ? null : {
       model: requestedCubeModel,
       // Keep the return sound latched across the exit-phase re-render. Without
@@ -5376,7 +5370,6 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       ),
     }
     if (alreadyApplied) {
-      cubeReturnSoundLatchRef.current = false
       return
     }
     // Reduced motion skips both transforms, but still waits for the prepared

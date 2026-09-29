@@ -67,7 +67,7 @@ describe('cube swap sound policy', () => {
     expect(tracker.consume()).toBe(true)
   })
 
-  it('leaves an unowned horizontal screen lifecycle change with exactly one model-swap pop', () => {
+  it('keeps lifecycle-only model swaps silent; navigation controls own the sound', () => {
     const tracker = createCubeNavigationSoundClaimTracker()
     let pops = 0
 
@@ -82,7 +82,7 @@ describe('cube swap sound policy', () => {
       navigationSoundClaimed: tracker.consume(),
     })) pops += 1
 
-    expect(pops).toBe(1)
+    expect(pops).toBe(0)
   })
 
   it('keeps immediate screen navigation at one pop when its lifecycle report causes the swap', () => {
@@ -149,7 +149,7 @@ describe('cube swap sound policy', () => {
     expect(tracker.screenChanged()).toBeNull()
   })
 
-  it('does not let a stale same-model claim steal a later horizontal tab pop', () => {
+  it('keeps cube animation silent even after an expired navigation claim', () => {
     const tracker = createCubeNavigationSoundClaimTracker()
     tracker.beginScreenNavigation()
     // The initiating render kept the same model and consumed its transient
@@ -164,16 +164,16 @@ describe('cube swap sound policy', () => {
       previousEventSignal: 'none',
       nextEventSignal: 'none',
       navigationSoundClaimed: tracker.consume(),
-    })).toBe(true)
+    })).toBe(false)
   })
 
-  it('keeps the normal pop for every ordinary non-wheel model swap', () => {
+  it('keeps ordinary automatic model swaps silent', () => {
     expect(cubeSwapShouldPlaySound({
       wheelFocused: false,
       activeTab: 'feed',
       previousEventSignal: 'none',
       nextEventSignal: 'music',
-    })).toBe(true)
+    })).toBe(false)
   })
 
   it('does not add a model-swap pop when navigation already owns the sound', () => {
@@ -195,13 +195,13 @@ describe('cube swap sound policy', () => {
     ['map-reward:dice:1720000000000', 'none'],
     ['snow', 'none'],
     ['map-hover:water:boat', 'map-hover:water:globe'],
-  ])('pops a Map return from %s to %s even while the wheel is focused', (previous, next) => {
+  ])('silences automatic Map return from %s to %s', (previous, next) => {
     expect(cubeSwapShouldPlaySound({
       wheelFocused: true,
       activeTab: 'map',
       previousEventSignal: previous,
       nextEventSignal: next,
-    })).toBe(true)
+    })).toBe(false)
   })
 
   it('does not add a second sound to an ordinary focused-wheel preview', () => {

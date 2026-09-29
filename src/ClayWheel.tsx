@@ -67,8 +67,7 @@ export default function ClayWheel({
   slotSpacing?: number
   /** How many slots either side of the notch stay on screen (fractional). */
   visibleRadius?: number
-  /** Play the detent pop per notch. Turn off when the owner's onSelect
-   *  already pops (the feed's goToChannel does), or every notch sounds twice. */
+  /** Play once when a user selection settles, never while browsing notches. */
   notchSound?: boolean
   /** How far neighbours bow sideways, px at distance 1. A narrow rail wants
    *  less, or its outer tiles land past its own edge. */
@@ -109,6 +108,7 @@ export default function ClayWheel({
   const movedRef = useRef(0)
   const onSelectRef = useRef(onSelect)
   onSelectRef.current = onSelect
+  const selectionStartRef = useRef<number | null>(null)
   const notchSoundRef = useRef(notchSound)
   notchSoundRef.current = notchSound
 
@@ -142,7 +142,6 @@ export default function ClayWheel({
     if (notch !== lastNotchRef.current) {
       lastNotchRef.current = notch
       setSelected(notch)
-      if (notchSoundRef.current) playPop()
       const item = itemsRef.current[notch]
       if (item) onSelectRef.current(item.id)
     }
@@ -150,6 +149,7 @@ export default function ClayWheel({
 
   const scrub = (deltaY: number) => {
     if (countRef.current <= 1 || Math.abs(deltaY) < 0.25) return
+    if (selectionStartRef.current === null) selectionStartRef.current = lastNotchRef.current
     snapIndexRef.current = null
     glideRef.current = false
     const now = performance.now() / 1000
@@ -165,6 +165,7 @@ export default function ClayWheel({
   const spinTo = (index: number) => {
     const n = countRef.current
     if (n === 0) return
+    if (selectionStartRef.current === null) selectionStartRef.current = lastNotchRef.current
     velocityRef.current = 0
     snapIndexRef.current = ((index % n) + n) % n
     ensureLoop()
@@ -181,6 +182,7 @@ export default function ClayWheel({
   useEffect(() => {
     const index = items.findIndex(item => item.id === selectedId)
     if (index < 0 || index === lastNotchRef.current) return
+    selectionStartRef.current = null // programmatic selection is not a user commit
     velocityRef.current = 0
     const reduceMotion = typeof window !== 'undefined'
       && typeof window.matchMedia === 'function'
@@ -248,7 +250,7 @@ export default function ClayWheel({
             glideRef.current = false
             setSelected(lastNotchRef.current)
           }
-          stopLoop()
+          stopLoop(true)
         }
         else applyOffsetDelta(d * ease)
         return
@@ -270,14 +272,19 @@ export default function ClayWheel({
           if (Math.abs(remaining) >= 0.001) boostFrames(160)
           applyOffsetDelta(Math.abs(remaining) < 0.001 ? remaining : remaining * ease)
         } else {
-          stopLoop()
+          stopLoop(true)
         }
       }
     }, 'interactive')
   }
-  const stopLoop = () => {
+  const stopLoop = (committed = false) => {
     stopLoopRef.current?.()
     stopLoopRef.current = null
+    const started = selectionStartRef.current
+    selectionStartRef.current = null
+    if (committed && started !== null && started !== lastNotchRef.current && notchSoundRef.current) {
+      playPop(0.6, 'navigation')
+    }
   }
   useEffect(() => () => stopLoop(), [])
 
@@ -313,7 +320,7 @@ export default function ClayWheel({
       if (btn && Number.isInteger(index) && itemsRef.current[index]) spinTo(index)
     }
   }
-  const onPointerCancel = () => { draggingRef.current = false }
+  const onPointerCancel = () => { draggingRef.current = false; selectionStartRef.current = null }
   const onWheel = (e: React.WheelEvent) => { scrub(e.deltaY * 0.6 * axisRef.current) }
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') { spinTo(selected + 1); e.preventDefault() }

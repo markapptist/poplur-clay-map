@@ -439,7 +439,7 @@ export function createClayBuildingsLayer(map: mapboxgl.Map): mapboxgl.CustomLaye
     mesh.castShadow = false
     mesh.receiveShadow = false
     buildingsGroup.add(mesh)
-    playPop() // in sync: sound + haptic on the frame the bulge starts
+    playPop(0.6, 'decoration') // building animation stays silent
     activePops.set(id, { mesh, started: performance.now() })
     if (!stopPopFrames) stopPopFrames = onFrame(updatePops, 'interactive')
   }

@@ -1,3 +1,5 @@
+import { shouldPlayPop } from './popSoundPolicy'
+
 export interface CubeSwapSoundInput {
   wheelFocused: boolean
   activeTab: string
@@ -86,11 +88,7 @@ export function isMapCubeReturnTransition(
     && isAmbientMapSignal(nextEventSignal)
 }
 
-/** A bounded event cube returning to the current Map navigator is itself a
- * real pop, not silent cleanup. This explicit branch protects airplane,
- * country, news, weather and boat returns even if the tab wheel happens to be
- * open while their timers clear. All ordinary non-wheel swaps keep the same
- * normal pop behavior they already had. */
+/** Model changes are visual effects. The committing control owns navigation audio. */
 export function cubeSwapShouldPlaySound({
   wheelFocused,
   activeTab,
@@ -98,7 +96,7 @@ export function cubeSwapShouldPlaySound({
   nextEventSignal,
   navigationSoundClaimed = false,
 }: CubeSwapSoundInput): boolean {
+  if (!shouldPlayPop('decoration')) return false
   if (navigationSoundClaimed) return false
-  const mapReturn = isMapCubeReturnTransition(activeTab, previousEventSignal, nextEventSignal)
-  return !wheelFocused || mapReturn
+  return !wheelFocused
 }

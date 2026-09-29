@@ -246,7 +246,6 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
       // The pop belongs to the character cresting the curtain, once per pull.
       if (!crested && pull >= CREST) {
         crested = true
-        playPop()
         // Every pull gets the pet, not just a committed one: it crests with
         // the sound, runs while you decide, and leaves with the curtain.
         startRun()
@@ -261,7 +260,7 @@ export function usePullToRefresh({ scrollRef, innerRef, panelRef, headRef, busyC
         return
       }
       busy = true
-      playPop()
+      playPop(0.6, 'refresh')
       pull = HOLD
       // Hold the band; the peeker keeps the spot it earned on its edge and
       // its inner img takes over with the bob — inline transform and

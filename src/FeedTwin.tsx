@@ -789,7 +789,7 @@ export default function FeedTwin({
   // pick off the channel rail. Both must retire the playing video, release the
   // audio focus and record the skip — a jump that skipped that bookkeeping left
   // the previous channel's clip decoding behind the new one.
-  const goToChannel = useCallback((next: number) => {
+  const goToChannel = useCallback((next: number, fromWheel = false) => {
     if (next === index || next < 0 || next > CHANNELS.length - 1) return
     const currentPosts = rankedPostsFor(
       ch,
@@ -802,10 +802,8 @@ export default function FeedTwin({
     const currentVideo = adVideoRef.current
     if (currentVideo) retireFeedVideo(currentVideo)
     releaseAudioFocus('feed')
-    // The pop IS the detent. Horizontal (changeContent) always had one;
-    // vertical went silent because the sound lived in the arrows component
-    // and a swipe never touches the arrows.
-    playPop()
+    // Wheel previews stay silent; a deliberate channel step gets one pop.
+    playPop(0.6, fromWheel ? 'wheel' : 'navigation')
     if (onIndexChange) onIndexChange(next)
     else setOwnIndex(next)
   }, [ch, focusedContent, index, onIndexChange, publishedPosts])
@@ -2385,7 +2383,7 @@ export default function FeedTwin({
         )}
         <FeedChannelRail
           activeIndex={index}
-          onPick={goToChannel}
+          onPick={next => goToChannel(next, true)}
           side={controlSide === 'left' ? 'right' : 'left'}
           hidden={playerMode}
           newChannelIds={newChannelIds}

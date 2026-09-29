@@ -4,11 +4,12 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 const clock = vi.hoisted(() => ({ tick: null as null | ((dt: number, now: number) => void), mode: '', stops: 0 }))
 vi.mock('../frameGovernor', () => ({ boostFrames: () => {}, onFrame: (tick: typeof clock.tick, mode: string) => { clock.tick = tick; clock.mode = mode; return () => { clock.tick = null; clock.stops++ } } }))
-vi.mock('../pop', () => ({ playPop: () => {}, primePopAudio: () => {} }))
+const sound = vi.hoisted(() => vi.fn())
+vi.mock('../pop', () => ({ playPop: sound, primePopAudio: () => {} }))
 import ClayWheel from '../ClayWheel'
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 let cleanup = () => {}
-afterEach(() => { cleanup(); vi.useRealTimers() })
+afterEach(() => { cleanup(); vi.useRealTimers(); sound.mockClear() })
 it('moves the Feed/Camera dial after an idle key selection and stops its interaction clock', () => {
   vi.useFakeTimers()
   const host = document.createElement('div'), root = createRoot(host), onSelect = vi.fn()
@@ -19,9 +20,12 @@ it('moves the Feed/Camera dial after an idle key selection and stops its interac
   expect(clock.tick).toBeNull()
   act(() => host.querySelector('[role=listbox]')!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowDown' })))
   expect(clock.mode).toBe('interactive')
+  expect(sound).not.toHaveBeenCalled()
   for (let frame = 1; frame < 120 && clock.tick; frame++) act(() => { clock.tick?.(16.67, frame * 16.67); vi.advanceTimersByTime(17) })
   expect(onSelect).toHaveBeenCalledWith('two')
   expect(host.querySelector('[aria-selected=true]')?.textContent).toContain('two')
   expect(clock.tick).toBeNull()
   expect(clock.stops).toBeGreaterThan(0)
+  expect(sound).toHaveBeenCalledTimes(1)
+  expect(sound).toHaveBeenCalledWith(0.6, 'navigation')
 })

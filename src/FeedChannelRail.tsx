@@ -98,8 +98,7 @@ export default function FeedChannelRail({
         // Not flipped: the list runs UPWARD, 101 at the bottom, so up on the
         // dial, up on the stepper opposite and ArrowUp all mean the same thing
         // — a higher channel, the way a television counts.
-        // goToChannel already pops; a second detent from the wheel doubled it.
-        notchSound={false}
+        // The wheel owns one commit pop. Feed previews each notch silently.
       />
       </div>
     </div>

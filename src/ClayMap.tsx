@@ -2130,7 +2130,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       // The bell: one pop per trophy the puck rings, a beat apart because the
       // easing is hard at the start and the tiers sit a decade apart.
       if (rang) {
-        playPop(0.55)
+        playPop(0.55, 'radius')
         setStriker({ key: strikerKey, targetLevel, tier, done: false })
       }
       if (raw < 1) {
@@ -2717,7 +2717,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
     if (notch === lastNotchRef.current) return
     lastNotchRef.current = notch
     if (mapRef.current?.isEasing()) return
-    playPop()
+    playPop(0.6, 'wheel')
   }, [zoomValue, mapRef])
 
   useEffect(() => {
@@ -5287,7 +5287,7 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
             popBuilding(f.id)
             if (now - lastBuildingPopSoundAt > BUILDING_POP_SOUND_COOLDOWN_MS && Math.random() < 0.35) {
               lastBuildingPopSoundAt = now
-              playPop()
+              playPop(0.6, 'decoration')
             }
             break
           }
@@ -6132,8 +6132,8 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
           })
           await settle()
 
-          // arrival beat — the shot lands with the feed's pop
-          playPop()
+          // Arrival is a visual effect, not another navigation gesture.
+          playPop(0.6, 'decoration')
 
           if (grammar === 'dolly') {
             // push in, flattening the tilt as the subject fills the frame
