@@ -1,3 +1,4 @@
+import { HIDE_BETA_PLACEHOLDERS } from './betaFeatures'
 // Poplur Mini-Apps — the schema and the seed catalogue.
 //
 // The contract (from the Mini-App Builder spec): AI or a user authors a
@@ -164,6 +165,7 @@ export function listMiniApps(): MiniAppDefinition[] {
 }
 
 export function saveMiniApp(def: MiniAppDefinition): string | null {
+  if (HIDE_BETA_PLACEHOLDERS) return 'Mini-app creation is unavailable during the beta.'
   const problem = validateMiniApp(def)
   if (problem) return problem
   try {

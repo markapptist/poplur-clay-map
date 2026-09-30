@@ -1,3 +1,4 @@
+import { HIDE_BETA_PLACEHOLDERS } from './betaFeatures'
 import React, { useEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { CAPTION_CUES } from './captionCues'
@@ -128,7 +129,7 @@ function usesMiles(): boolean {
 }
 
 /** "◆ reached you from 12.4 km away" — renders a post's current reach. */
-export const CHANNELS: Channel[] = [
+const ALL_CHANNELS: Channel[] = [
   { id: 'food', number: 101, name: 'Food', emoji: '🍔', icon: 'poplur_channel_101_food', flag: '🇨🇦', user: '@sauceboss', caption: 'late-night poutine run downtown', lang: 'EN', theme: ['#3a1206', '#c2410c', '#f59e0b'], videos: [feedUrl('ad-food.mp4')] },
   // LIVE is not a genre — it is whoever is broadcasting into your radius right
   // now. Its posts come from liveStore, not from a bundled clip list.
@@ -147,6 +148,9 @@ export const CHANNELS: Channel[] = [
   { id: 'kids', number: 114, name: 'Kids', emoji: '🧸', icon: 'poplur_channel_114_kids', flag: '🇨🇦', user: '@playtime', caption: 'building the biggest blanket fort', lang: 'EN', theme: ['#1a1030', '#7c3aed', '#fbcfe8'], videos: [feedUrl('ad-kids.mp4')] },
   { id: 'comedy', number: 115, name: 'Comedy', emoji: '😂', icon: 'poplur_channel_115_comedy', flag: '🇦🇺', user: '@bitmerchant', caption: 'when the barista spells your name wrong', lang: 'EN', theme: ['#2a2404', '#ca8a04', '#fde047'], videos: [feedUrl('ad-comedy.mp4')] },
 ]
+
+export const CHANNELS: Channel[] = ALL_CHANNELS.filter(channel =>
+  !HIDE_BETA_PLACEHOLDERS || channel.id !== 'live')
 
 // The feed renders pure channel CONTENT — the channel changer and the
 // RADIUS⇄TRENDING label live in the home HUD (HomeTwin), which controls the

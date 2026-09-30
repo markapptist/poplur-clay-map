@@ -1,3 +1,4 @@
+import { HIDE_BETA_PLACEHOLDERS } from './betaFeatures'
 import { useAuthoredPosts } from './useAuthoredPosts'
 import { useLiveRadiusEstimate } from './useLiveRadiusEstimate'
 import { useFeedPostComments } from './feedPostComments'
@@ -1473,7 +1474,9 @@ export default function ProfileTwin({
   useEffect(() => {
     const onMode = (event: Event) => {
       const wanted = (event as CustomEvent<{ mode?: Mode }>).detail?.mode
-      if (wanted === 'media' || wanted === 'liked') setMode(wanted)
+      if (wanted === 'media' || wanted === 'liked') {
+        setMode(HIDE_BETA_PLACEHOLDERS && wanted === 'liked' ? 'media' : wanted)
+      }
     }
     window.addEventListener('poplur-open-profile-mode', onMode)
     return () => window.removeEventListener('poplur-open-profile-mode', onMode)
@@ -2289,7 +2292,7 @@ export default function ProfileTwin({
   }
 
   const dmFriend = (friend: typeof FRIENDS[number]) => {
-    if (!viewerPost) return
+    if (HIDE_BETA_PLACEHOLDERS || !viewerPost) return
     const link = postLink(viewerPost)
     if (!link) {
       setShareOpen(false)
@@ -3230,9 +3233,9 @@ export default function ProfileTwin({
                   <div className={styles.shareIcon} aria-hidden="true" />
                   <h2 className={`${styles.shareTitle} ${styles.shareShader}`}>Send this pop</h2>
                   <p className={`${styles.shareCopy} ${styles.shareShaderSoft}`}>
-                    DM a friend inside your radius, or share it anywhere.
+                    {HIDE_BETA_PLACEHOLDERS ? 'Copy this pop’s link, or share it anywhere.' : 'DM a friend inside your radius, or share it anywhere.'}
                   </p>
-                  <div className={styles.shareFriends}>
+                  {!HIDE_BETA_PLACEHOLDERS && <div className={styles.shareFriends}>
                     {!FRIENDS.length && <div className={styles.profileEmpty}>No recent DM contacts yet.</div>}
                     {FRIENDS.map(friend => (
                       <button
@@ -3245,7 +3248,7 @@ export default function ProfileTwin({
                         <span className={styles.shareFriendName}>{friend.name}</span>
                       </button>
                     ))}
-                  </div>
+                  </div>}
                   {/* the same clay objects as the viewer's controls, labelled */}
                   <div className={styles.shareActions}>
                     <div className={styles.shareTool}>

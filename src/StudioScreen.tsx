@@ -1,3 +1,4 @@
+import { HIDE_BETA_PLACEHOLDERS } from './betaFeatures'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import styles from './StudioScreen.module.css'
 import { playPop } from './pop'
@@ -158,7 +159,8 @@ export default function StudioScreen({
   const [podcastMapSpot] = useState(() => restoredMapPick
     ? { lat: restoredMapPick.lat, lng: restoredMapPick.lng, radiusKm: restoredMapPick.radiusKm }
     : null)
-  const [podcastMapKind] = useState<PodcastMapPickKind | null>(() => restoredMapPick?.kind ?? null)
+  const [podcastMapKind] = useState<PodcastMapPickKind | null>(() =>
+    HIDE_BETA_PLACEHOLDERS && restoredMapPick?.kind === 'live' ? null : restoredMapPick?.kind ?? null)
   const [dropping, setDropping] = useState(false)
   const [goingLive, setGoingLive] = useState(false)
   const [songUrl, setSongUrl] = useState<string | null>(null)
@@ -308,9 +310,10 @@ export default function StudioScreen({
       .sort((a, b) => a.distanceKm - b.distanceKm)
   }, [])
   const [invited, setInvited] = useState<ReadonlySet<string>>(
-    () => new Set<string>(restoredMapPick?.invitedIds ?? []),
+    () => new Set<string>(HIDE_BETA_PLACEHOLDERS ? [] : (restoredMapPick?.invitedIds ?? [])),
   )
   const toggleInvite = (id: string) => {
+    if (HIDE_BETA_PLACEHOLDERS) return
     playPop()
     const next = new Set(invited)
     if (next.has(id)) next.delete(id); else next.add(id)
@@ -594,6 +597,7 @@ export default function StudioScreen({
   }
 
   const goLive = (pickedSpot?: { lat: number; lng: number }) => {
+    if (HIDE_BETA_PLACEHOLDERS) return
     playPop()
     setGoingLive(true)
     const spot = pickedSpot ?? here()
@@ -979,6 +983,7 @@ export default function StudioScreen({
   }
 
   const pickPodcastArea = (kind: PodcastMapPickKind) => {
+    if (HIDE_BETA_PLACEHOLDERS && kind === 'live') return
     const name = title.trim()
     if (!name) { setPublishNote('Name your podcast before choosing its area.'); return }
     if (kind === 'recorded' && !takeUrl) {
@@ -1245,7 +1250,7 @@ export default function StudioScreen({
           <h1 className={styles.roomTitle}>{title || 'Untitled podcast'}</h1>
           <p className={styles.roomCopy}>
             {micDenied ? 'Microphone refused — allow access in settings.'
-              : recording ? 'Recording everyone in your room.' : 'Record first, then choose exactly where it lives on the map.'}
+              : recording ? (HIDE_BETA_PLACEHOLDERS ? 'Recording your episode.' : 'Recording everyone in your room.') : 'Record first, then choose exactly where it lives on the map.'}
           </p>
           <div className={styles.roomRecordControls}>
             <div className={styles.micTime}>{mmssms(recMs)} <span>/ {mmssms(MAX_PODCAST_MS)}</span></div>
@@ -1287,7 +1292,7 @@ export default function StudioScreen({
               <span className={styles.roomMicMark} aria-hidden="true"><img src="sprites/poplur_mic_lite_y0_p0_s512.png" alt="" /></span>
               <div>
                 <h1 className={styles.roomTitle}>Build your room</h1>
-                <p className={styles.roomCopy}>Invite your people, then take your show live or drop an episode.</p>
+                <p className={styles.roomCopy}>{HIDE_BETA_PLACEHOLDERS ? 'Record your show, then drop an episode on the map.' : 'Invite your people, then take your show live or drop an episode.'}</p>
               </div>
             </div>
           </header>
@@ -1334,7 +1339,7 @@ export default function StudioScreen({
               </button>
             </section>
           )}
-          {nearbyPops.length > 0 && (
+          {!HIDE_BETA_PLACEHOLDERS && nearbyPops.length > 0 && (
             <div className={styles.invitePanel}>
               <div className={styles.inviteHead}>
                 <span>PEOPLE IN YOUR RADIUS</span>
@@ -1360,14 +1365,14 @@ export default function StudioScreen({
           )}
           {publishNote && <div className={styles.publishNote} role="status" aria-live="polite">{publishNote}</div>}
           {published ? (
-            <div className={styles.roomDone}>{publishNote}{invited.size > 0 && <div className={styles.inviteCount}>{invited.size} people invited</div>}</div>
+            <div className={styles.roomDone}>{publishNote}{!HIDE_BETA_PLACEHOLDERS && invited.size > 0 && <div className={styles.inviteCount}>{invited.size} people invited</div>}</div>
           ) : chosenArea ? (
             <div className={styles.roomActions}>
-              {podcastMapKind === 'live' ? (
+              {podcastMapKind === 'live' ? (!HIDE_BETA_PLACEHOLDERS && (
                 <button className={styles.styleGo} type="button" onClick={() => goLive(podcastMapSpot)} disabled={goingLive}>
                   {goingLive ? 'STARTING…' : '🔴 START LIVE HERE'}
                 </button>
-              ) : (
+              )) : (
                 <button className={styles.styleGo} type="button" onClick={() => void dropPodcast(podcastMapSpot)} disabled={dropping || !takeUrl}>
                   {dropping ? 'DROPPING…' : '📍 DROP EPISODE HERE'}
                 </button>
@@ -1375,10 +1380,10 @@ export default function StudioScreen({
             </div>
           ) : (
             <div className={styles.roomActions}>
-              <button className={styles.roomLive} type="button" onClick={() => pickPodcastArea('live')}>
+              {!HIDE_BETA_PLACEHOLDERS && <button className={styles.roomLive} type="button" onClick={() => pickPodcastArea('live')}>
                 <span><i aria-hidden="true" /> LIVE PODCAST</span>
                 <small>Choose an area</small>
-              </button>
+              </button>}
               <button className={styles.roomRecorded} type="button" onClick={() => {
                 if (takeUrl) pickPodcastArea('recorded')
                 else { playPop(); setStage('podcast-record') }

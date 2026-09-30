@@ -53,7 +53,7 @@ describe('whose timeline to open', () => {
 
 describe('the profile page', () => {
   it('no longer offers a Messages tab — the timeline is where messages live', () => {
-    expect(PROFILE_TABS).toEqual(['media', 'liked'])
+    expect(PROFILE_TABS).toEqual(['media'])
     expect(PROFILE_TABS).not.toContain('messages')
   })
 })

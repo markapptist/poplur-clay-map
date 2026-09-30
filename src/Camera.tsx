@@ -1,3 +1,4 @@
+import { HIDE_BETA_PLACEHOLDERS } from './betaFeatures'
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import CameraRoll from './CameraRoll'
 import { cameraParkPlan, readNativeCameraBudget, type NativeCameraBudget } from './CameraAvailability'
@@ -347,6 +348,7 @@ export default function Camera({
   // Disable LIVE until the native preview can supply a broadcast stream.
   const canGoLive = !NATIVE_CAMERA_PREVIEW
   const toggleLive = useCallback(() => {
+    if (HIDE_BETA_PLACEHOLDERS) return
     if (NATIVE_CAMERA_PREVIEW) return
     if (isLive()) { stopBroadcast(); return }
     const source = streamRef.current
@@ -2190,7 +2192,7 @@ export default function Camera({
         {/* Video only, under the timer: the word rather than an icon,
             because LIVE has no supplied art and the feed already says
             it exactly this way — a blinking dot beside the word. */}
-        <button
+        {!HIDE_BETA_PLACEHOLDERS && <button
           type="button"
           className={onAir ? `${styles.cameraLive} ${styles.cameraLiveOn}` : styles.cameraLive}
           aria-label={onAir
@@ -2206,7 +2208,7 @@ export default function Camera({
         >
           <span className={styles.cameraLiveDot} aria-hidden="true" />
           <span aria-hidden="true">LIVE</span>
-        </button>
+        </button>}
       </TabControlRail>
       {/* The SAME four-way cluster the map and the feed wear, in the same
           place, doing the camera's two stepping jobs. ▲ ▼ step the AR filter

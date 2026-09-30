@@ -1,3 +1,4 @@
+import { HIDE_BETA_PLACEHOLDERS } from './betaFeatures'
 import { attachCallVideo } from './callVideoPlayback'
 import { canSendIntoThread, dmThrottleNotice } from './dmThrottle'
 import { accountSnapshot, onAccountChange } from './accountStore'
@@ -1444,6 +1445,7 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
   }, [sendText])
 
   const sendAIGameInvite = useCallback((game: PoplurGameDraft) => {
+    if (HIDE_BETA_PLACEHOLDERS) return
     const invitation = `🎮 Poplur AI made “${game.title}” for us. ${game.detail} Want to play?`
     if (sendText(invitation, 'game_invite')) setComposerTab('chat')
   }, [sendText])
@@ -1735,7 +1737,7 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
             >
               <span aria-hidden="true">P</span> Stickers
             </button>
-            <button
+            {!HIDE_BETA_PLACEHOLDERS && <button
               type="button"
               role="tab"
               aria-selected={composerTab === 'games'}
@@ -1744,7 +1746,7 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
               onClick={() => { playPop(); setComposerTab('games') }}
             >
               <span aria-hidden="true">⌘</span> AI game
-            </button>
+            </button>}
             <button
               type="button"
               role="tab"
@@ -1816,7 +1818,7 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
             />
           </section>
         )}
-          {composerTab === 'games' && (
+          {!HIDE_BETA_PLACEHOLDERS && composerTab === 'games' && (
             <section className={styles.gameTray} aria-label="AI game invitations">
               <div className={styles.gameTrayHeading}>
                 <span>POPLUR AI GAME MAKER</span>

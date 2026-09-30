@@ -1,3 +1,4 @@
+import { HIDE_BETA_PLACEHOLDERS } from './betaFeatures'
 import React, { useCallback, useEffect, useState } from 'react'
 import { readCharacter, onCharacterChange, defaultCharacter, type PoplurCharacter } from './characterStore'
 import ClayCharacter from './ClayCharacter'
@@ -46,6 +47,7 @@ export default function PodcastRoom() {
   }, [])
 
   const toggleLive = useCallback(() => {
+    if (HIDE_BETA_PLACEHOLDERS) return
     playPop()
     if (live) {
       stopBroadcast()
@@ -56,6 +58,7 @@ export default function PodcastRoom() {
   }, [live])
 
   const inviteFromRadius = useCallback(() => {
+    if (HIDE_BETA_PLACEHOLDERS) return
     playPop()
     window.dispatchEvent(new CustomEvent('poplur-podcast-invite'))
   }, [])
@@ -65,7 +68,7 @@ export default function PodcastRoom() {
       {/* Header */}
       <div className={styles.header}>
         <div className={styles.headerLeft}>
-          {live && (
+          {!HIDE_BETA_PLACEHOLDERS && live && (
             <>
               <span className={styles.liveDot} />
               <span className={styles.liveLabel}>Live</span>
@@ -75,20 +78,20 @@ export default function PodcastRoom() {
             {allParticipants.length} in room
           </span>
         </div>
-        <button
+        {!HIDE_BETA_PLACEHOLDERS && <button
           type="button"
           className={live ? styles.liveToggleOn : styles.liveToggle}
           onClick={toggleLive}
         >
           {live ? 'End live' : 'Go live'}
-        </button>
+        </button>}
       </div>
 
       {/* Location */}
-      <div className={styles.location}>
+      {!HIDE_BETA_PLACEHOLDERS && <div className={styles.location}>
         <span className={styles.locationPin}>📍</span>
         <span>Broadcasting from your location</span>
-      </div>
+      </div>}
 
       {/* Character stage */}
       <div className={styles.stage}>
@@ -125,10 +128,10 @@ export default function PodcastRoom() {
         <div className={styles.centerMic}>🎙️</div>
 
         {/* Invite button */}
-        <button type="button" className={styles.inviteSlot} onClick={inviteFromRadius}>
+        {!HIDE_BETA_PLACEHOLDERS && <button type="button" className={styles.inviteSlot} onClick={inviteFromRadius}>
           <div className={styles.invitePlus}>+</div>
           <span className={styles.inviteLabel}>Add from radius</span>
-        </button>
+        </button>}
       </div>
 
       {/* Controls */}
@@ -140,9 +143,9 @@ export default function PodcastRoom() {
         >
           <div className={styles.recordDot} />
         </button>
-        <button type="button" className={styles.inviteBtn} onClick={inviteFromRadius}>
+        {!HIDE_BETA_PLACEHOLDERS && <button type="button" className={styles.inviteBtn} onClick={inviteFromRadius}>
           <span>👤+</span>
-        </button>
+        </button>}
       </div>
       <p className={styles.cubeHint}>Cube = mic</p>
     </div>

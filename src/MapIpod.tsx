@@ -1,3 +1,4 @@
+import { HIDE_BETA_PLACEHOLDERS } from './betaFeatures'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import styles from './MapIpod.module.css'
 import { OTHER_POPS, POIS } from './data'
@@ -310,7 +311,7 @@ export default function MapIpod({
   // SoundCloud credentials in this bundle: Poplur/native returns only opted-in,
   // attributed artist cards.
   useEffect(() => {
-    if (!location) return
+    if (HIDE_BETA_PLACEHOLDERS || !location) return
     const discoveryRadius = Math.max(25, Math.min(250, reach))
     const queryKey = `${location.lat.toFixed(2)},${location.lng.toFixed(2)}:${Math.round(discoveryRadius)}`
     const pendingKey = `pending:${queryKey}`
@@ -456,12 +457,12 @@ export default function MapIpod({
       case 'music':
         return [
           { key: 'poplur', label: 'Poplur Studio', meta: String(inReach.length), go: { id: 'poplur' } },
-          {
+          ...(!HIDE_BETA_PLACEHOLDERS ? [{
             key: 'soundcloud',
             label: 'SoundCloud Nearby',
             meta: soundCloudState === 'loading' ? '…' : nearbySoundCloud.length ? String(nearbySoundCloud.length) : '↗',
-            go: { id: 'soundcloud' },
-          },
+            go: { id: 'soundcloud' as const },
+          }] : []),
         ]
       case 'poplur':
         return [
@@ -510,6 +511,7 @@ export default function MapIpod({
   const cursor = Math.min(indexes[indexes.length - 1] ?? 0, Math.max(0, rows.length - 1))
 
   const push = useCallback((next: Frame) => {
+    if (HIDE_BETA_PLACEHOLDERS && next.id === 'soundcloud') return
     setStack(list => [...list, next])
     setIndexes(list => [...list, 0])
     setStatus('')

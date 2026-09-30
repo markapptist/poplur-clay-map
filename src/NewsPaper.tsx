@@ -1,3 +1,4 @@
+import { HIDE_BETA_PLACEHOLDERS } from './betaFeatures'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import styles from './NewsPaper.module.css'
 import pullStyles from './PullToRefresh.module.css'
@@ -324,6 +325,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   }
 
   const beginReply = (entry: Entry) => {
+    if (HIDE_BETA_PLACEHOLDERS) return
     playPop()
     setReplyDraft('')
     setReplyingTo(current => current === entry.id ? null : entry.id)
@@ -349,6 +351,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   }, [])
 
   const submitReply = (entry: Entry) => {
+    if (HIDE_BETA_PLACEHOLDERS) return
     const body = replyDraft.trim()
     if (!body) return
     playPop()
@@ -359,6 +362,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   }
 
   const repop = (entry: Entry) => {
+    if (HIDE_BETA_PLACEHOLDERS) return
     playPop()
     showEngagementFailure('repop', entry.id)
   }
@@ -709,6 +713,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                   <button onClick={() => openInPoplurBrowser(entry.liveEvent!.sources[0].url)}>Read original ↗</button>
                   <button onClick={() => openProfileFor(entry.handle)}>Source profile</button>
                 </div> : <div className={styles.actions}>
+                  {!HIDE_BETA_PLACEHOLDERS && <>
                   <button
                     className={replyingTo === entry.id ? `${styles.action} ${styles.actionOn}` : styles.action}
                     onClick={() => beginReply(entry)}
@@ -723,6 +728,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                   >
                     <span aria-hidden="true">⇄</span> {entry.repops}
                   </button>
+                  </>}
                   <button
                     className={liked.has(entry.id) ? `${styles.action} ${styles.actionOn}` : styles.action}
                     onClick={() => toggleLike(entry.id)}
@@ -730,7 +736,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                     <span aria-hidden="true">♥</span> {entry.likes + (liked.has(entry.id) ? 1 : 0)}
                   </button>
                 </div>}
-                {replyingTo === entry.id && (
+                {!HIDE_BETA_PLACEHOLDERS && replyingTo === entry.id && (
                   <form
                     className={styles.replyComposer}
                     aria-label={`Reply to ${entry.who}`}
@@ -843,8 +849,10 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
               )}
 
               {!detail.liveEvent && <div className={styles.detailStats}>
-                <span>✎ {detail.replies}</span>
-                <span>⇄ {detail.repops}</span>
+                {!HIDE_BETA_PLACEHOLDERS && <>
+                  <span>✎ {detail.replies}</span>
+                  <span>⇄ {detail.repops}</span>
+                </>}
                 <span>♥ {detail.likes + (liked.has(detail.id) ? 1 : 0)}</span>
               </div>}
 

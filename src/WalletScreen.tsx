@@ -1,3 +1,4 @@
+import { HIDE_BETA_PLACEHOLDERS } from './betaFeatures'
 import React, { useEffect, useRef, useState } from 'react'
 import styles from './WalletScreen.module.css'
 import { playPop } from './pop'
@@ -209,7 +210,7 @@ export default function WalletScreen({ bindBack }: {
     say('Opening credits in the Store.')
   }
 
-  if (page === 'send') {
+  if (!HIDE_BETA_PLACEHOLDERS && page === 'send') {
     return (
       <section className={styles.screen} aria-label="Send credits" data-clay-scroll>
         <div className={styles.body}>
@@ -247,7 +248,7 @@ export default function WalletScreen({ bindBack }: {
     )
   }
 
-  if (page === 'cashout') {
+  if (!HIDE_BETA_PLACEHOLDERS && page === 'cashout') {
     const amount = Math.floor(Number(cashAmount)) || 0
     return (
       <section className={styles.screen} aria-label="Cash out" data-clay-scroll>
@@ -293,8 +294,8 @@ export default function WalletScreen({ bindBack }: {
         </div>
 
         <div className={styles.actions}>
-          <button type="button" onClick={buyCredits}>Buy</button>
-          <button type="button" onClick={() => { playCubeNavigationPop(); setPage('send') }}>Send</button>
+          {!HIDE_BETA_PLACEHOLDERS && <button type="button" onClick={buyCredits}>Buy</button>}
+          {!HIDE_BETA_PLACEHOLDERS && <button type="button" onClick={() => { playCubeNavigationPop(); setPage('send') }}>Send</button>}
           <button
             type="button"
             onClick={() => {
@@ -304,7 +305,7 @@ export default function WalletScreen({ bindBack }: {
               say('Share your @handle to receive credits.')
             }}
           >Receive</button>
-          <button type="button" onClick={() => { playCubeNavigationPop(); setPage('cashout') }}>Cash Out</button>
+          {!HIDE_BETA_PLACEHOLDERS && <button type="button" onClick={() => { playCubeNavigationPop(); setPage('cashout') }}>Cash Out</button>}
         </div>
 
         {/* A new account's first 14 days: a friend's code pays you both. */}

@@ -1,3 +1,4 @@
+import { HIDE_BETA_PLACEHOLDERS } from './betaFeatures'
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import styles from './PhoneScreen.module.css'
 import { RADIUS_CHANGE_EVENT, radiusKm } from './radiusLedger'
@@ -80,7 +81,7 @@ interface Contact {
 
 type PhoneMenuPage = 'main' | 'contacts' | 'calls' | 'messages' | 'camera' | 'gallery' | 'radio' | 'games' | 'settings' | 'about'
 
-const PHONE_MENU_ITEMS: Array<{ id: Exclude<PhoneMenuPage, 'main'> | 'exit'; title: string; detail: string; glyph: string }> = [
+const ALL_PHONE_MENU_ITEMS: Array<{ id: Exclude<PhoneMenuPage, 'main'> | 'exit'; title: string; detail: string; glyph: string }> = [
   { id: 'messages', title: 'Messages', detail: 'Poplur Mail inbox', glyph: '01' },
   { id: 'contacts', title: 'Contacts', detail: 'people in your radius', glyph: '02' },
   { id: 'calls', title: 'Call log', detail: 'recent and missed calls', glyph: '03' },
@@ -92,6 +93,9 @@ const PHONE_MENU_ITEMS: Array<{ id: Exclude<PhoneMenuPage, 'main'> | 'exit'; tit
   { id: 'about', title: 'About Poplur', detail: 'phone information', glyph: '09' },
   { id: 'exit', title: 'Exit', detail: 'close phone', glyph: '00' },
 ]
+
+const PHONE_MENU_ITEMS = ALL_PHONE_MENU_ITEMS.filter(item =>
+  !HIDE_BETA_PLACEHOLDERS || !['messages', 'camera', 'gallery', 'radio', 'games'].includes(item.id))
 
 function km(value: number): string {
   return value >= 100 ? `${Math.round(value)}KM` : `${value.toFixed(1)}KM`

@@ -1,10 +1,13 @@
+import { HIDE_BETA_PLACEHOLDERS } from './betaFeatures'
 import type { ProfileMode } from './ProfileTwin'
 
 /** The pages the profile's mode switch offers. Messages is deliberately not
  *  one of them: a Pop Message has its own timeline now (MessageTimeline,
  *  reached from News), and the profile keeps the grid. Exported from this
  *  small module so a test can pin the tab set without mounting ProfileTwin. */
-export const PROFILE_TABS: readonly ProfileMode[] = ['media', 'liked']
+export const PROFILE_TABS: readonly ProfileMode[] = HIDE_BETA_PLACEHOLDERS
+  ? ['media']
+  : ['media', 'liked']
 
 // Which page Profile should open on, handed over from another screen.
 //
@@ -16,7 +19,7 @@ export const PROFILE_TABS: readonly ProfileMode[] = ['media', 'liked']
 let pending: ProfileMode | null = null
 
 export function requestProfileMode(mode: ProfileMode): void {
-  pending = mode
+  pending = HIDE_BETA_PLACEHOLDERS && mode === 'liked' ? 'media' : mode
 }
 
 /** Read once and clear: a mode request is consumed by the first mount that

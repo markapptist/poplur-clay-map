@@ -137,15 +137,17 @@ describe('the Wallet shows the account', () => {
     })
   })
 
-  it('moves nothing from Send or Cash Out', async () => {
+  it('hides unfinished Buy, Send and Cash Out during the beta without a server mutation', async () => {
     const { default: WalletScreen } = await import('../WalletScreen')
     fetchMock.mockResolvedValueOnce(answer({ wallet: wallet() }))
     await mounted(<WalletScreen />, async container => {
-      await act(async () => button(container, 'Send').click())
-      await act(async () => typeInto(container.querySelector('input[placeholder="@username"]') as HTMLInputElement, 'friend'))
-      await act(async () => typeInto(container.querySelector('input[placeholder="500"]') as HTMLInputElement, '20'))
-      await act(async () => [...container.querySelectorAll('button')].find(b => b.textContent?.startsWith('Send 20'))!.click())
-      expect(container.textContent).toContain('Sending credits is not available yet. Nothing was sent.')
+      expect(button(container, 'Buy')).toBeUndefined()
+      expect(button(container, 'Send')).toBeUndefined()
+      expect(button(container, 'Cash Out')).toBeUndefined()
+      expect(container.querySelector('[aria-label="Send credits"]')).toBeNull()
+      expect(container.querySelector('[aria-label="Cash out"]')).toBeNull()
+      expect(container.textContent).toContain('55 Credits')
+      expect(container.textContent).toContain('Swoosh Card')
       expect(actions()).toEqual(['wallet'])
     })
   })

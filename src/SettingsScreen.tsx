@@ -1,3 +1,4 @@
+import { HIDE_BETA_PLACEHOLDERS } from './betaFeatures'
 import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   cubeTransition, holdPreviewMode, screenTransition, setCubeTransition,
@@ -270,6 +271,7 @@ export default function SettingsScreen({ bindBack }: {
   }
 
   const openPage = (next: Page) => {
+    if (HIDE_BETA_PLACEHOLDERS && next === 'verify') return
     // Most Settings pages keep the gear. Claim sound ownership only when the
     // destination really changes the persistent navigator object.
     if (settingsCubeFace(page) !== settingsCubeFace(next)) playCubeNavigationPop()
@@ -675,14 +677,14 @@ export default function SettingsScreen({ bindBack }: {
                 <span className={styles.chev} aria-hidden="true">›</span>
               </button>
 
-              <button type="button" className={styles.row} onClick={() => openPage('verify')}>
+              {!HIDE_BETA_PLACEHOLDERS && <button type="button" className={styles.row} onClick={() => openPage('verify')}>
                 <span className={styles.rowText}>
                   <b>Verification</b>
                   <i>Ask for the badge that marks this profile as the real one.</i>
                 </span>
                 <span className={styles.rowValue}>{VERIFICATION_LABEL[verification.status]}</span>
                 <span className={styles.chev} aria-hidden="true">›</span>
-              </button>
+              </button>}
             </div>
             {/* No DONE: every control here commits the moment you touch it, so
                 there is nothing to confirm. The cube closes the screen. */}
@@ -1110,7 +1112,7 @@ export default function SettingsScreen({ bindBack }: {
           </article>
         )}
 
-        {page === 'verify' && (
+        {!HIDE_BETA_PLACEHOLDERS && page === 'verify' && (
           <article className={styles.themeGroup} aria-label="Profile verification">
             <div className={styles.themeHeading}>
               <div>

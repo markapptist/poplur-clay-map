@@ -15,7 +15,7 @@ const read = (f: string) => readFileSync(new URL(`../${f}`, import.meta.url), 'u
 
 function canonicalChannels(): Map<string, number> {
   const list = read('FeedTwin.tsx')
-  const start = list.indexOf('export const CHANNELS')
+  const start = list.indexOf('const ALL_CHANNELS')
   expect(start).toBeGreaterThan(-1)
   const body = list.slice(start, list.indexOf('\n]', start))
   const found = new Map<string, number>()
