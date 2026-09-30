@@ -199,6 +199,14 @@ describe('the page mirrors the account\'s credits', () => {
   })
 })
 
+describe('the invite', () => {
+  it('links to poplur.ca, where the beta starts, with the code', async () => {
+    const { referralLink } = await import('../referral')
+    // poplur.com does not resolve; every invite sent before 30 Sep was a dead link.
+    expect(referralLink('ABC234')).toBe('https://www.poplur.ca/?ref=ABC234')
+  })
+})
+
 describe('the screens print what the server pays', () => {
   // Vitest runs from the clay-map root; the functions live in the iOS repo beside it.
   const server = readFileSync(resolve(process.cwd(), '../Poplur2025-iOS/functions/src/credits.ts'), 'utf8')

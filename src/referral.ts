@@ -26,9 +26,11 @@ export function referralCode(): string | null {
   return creditsWallet()?.referral.code ?? null
 }
 
-/** The invitation itself — what gets shared. */
+/** The invitation itself — what gets shared. poplur.ca is where the beta
+    starts; poplur.com does not resolve, so every earlier invite was a dead
+    link. The code rides along for the site to use. */
 export function referralLink(code: string): string {
-  return `https://poplur.com/i/${code}`
+  return `https://www.poplur.ca/?ref=${encodeURIComponent(code)}`
 }
 
 /** Epoch ms the world radius runs out; 0 when it is not running. */
