@@ -22,14 +22,13 @@ import {
 import {
   WORLD_RADIUS_HOURS,
   formatRemaining,
-  grantWorldRadius,
   isWorldRadiusActive,
   onReferralChange,
   referralCode,
   referralLink,
   worldRadiusRemainingMs,
 } from './referral'
-import { grantReferralCredits, REFERRAL_CREDIT_REWARD } from './poplurCredits'
+import { REFERRAL_CREDIT_REWARD, refreshCredits } from './poplurCredits'
 import { readRadioScope, setRadioScope, type RadioScope } from './mapRadio'
 import { readControlSide, setControlSide, type ControlSide } from './controlPlacement'
 import { readProfileGender, writeProfileGender, type ProfileGender } from './profileGender'
@@ -137,8 +136,8 @@ export default function SettingsScreen({ bindBack }: {
   bindBack?: (fn: (() => boolean) | null) => void
 } = {}) {
   const stepBackRef = useRef<() => boolean>(() => false)
-  const code = referralCode()
-  const link = referralLink(code)
+  // The account's code comes from the server; null until it has answered.
+  const [code, setCode] = useState(referralCode)
   const [active, setActive] = useState(isWorldRadiusActive)
   const [remaining, setRemaining] = useState(worldRadiusRemainingMs)
   const [note, setNote] = useState<string | null>(null)
@@ -299,10 +298,16 @@ export default function SettingsScreen({ bindBack }: {
   // running under an idle screen for the sake of a digit nobody is watching,
   // which is exactly what the thermal budget exists to stop.
   useEffect(() => {
-    const sync = () => { setActive(isWorldRadiusActive()); setRemaining(worldRadiusRemainingMs()) }
+    const sync = () => {
+      setCode(referralCode())
+      setActive(isWorldRadiusActive())
+      setRemaining(worldRadiusRemainingMs())
+    }
     sync()
     const off = onReferralChange(sync)
     const timer = window.setInterval(sync, 30_000)
+    // The code and the worldwide radius live on the account.
+    void refreshCredits().catch(() => { /* the last known state stays up */ })
     return () => { off(); window.clearInterval(timer) }
   }, [])
 
@@ -444,22 +449,23 @@ export default function SettingsScreen({ bindBack }: {
    * Send the invitation. The OS sheet where there is one, the app's own share
    * where the shell owns it, the clipboard where there is neither.
    *
-   * The grant lands on ACCEPTANCE, not on sending — an invite shouted into the
-   * void must not pay. With no referral service yet, a completed share is
-   * treated as the acceptance; that single line is what the live service takes
-   * over (referral.ts, `poplur-referral-accepted`).
+   * Sending pays nothing. The grant lands on ACCEPTANCE — when the friend's new
+   * account enters this code in its Wallet, the server pays both sides
+   * (referral.ts). An invite shouted into the void must not pay.
    */
   const invite = async () => {
     playPop()
+    if (!code) { say('Your code is still loading. Try again in a moment.'); return }
+    const link = referralLink(code)
     const payload = {
       title: 'Poplur',
-      text: `Join me on Poplur — use my code ${code} and we both get credits and the whole map.`,
+      text: `Join me on Poplur. After you sign up, enter my code ${code} in your Wallet and we both get ${REFERRAL_CREDIT_REWARD} credits and the whole map for a day.`,
       url: link,
     }
     let sent = false
     try {
       if (isNativeShell()) {
-        postNativeEvent({ type: 'shareReferral', code, link })
+        postNativeEvent({ type: 'shareReferral', code, link, text: payload.text })
         sent = true
       } else if (navigator.share) {
         await navigator.share(payload)
@@ -474,15 +480,12 @@ export default function SettingsScreen({ bindBack }: {
       return
     }
     if (!sent) return
-    const until = grantWorldRadius()
-    grantReferralCredits()
-    setActive(true)
-    setRemaining(until - Date.now())
-    say(`+${REFERRAL_CREDIT_REWARD} credits — worldwide radius on for ${WORLD_RADIUS_HOURS} hours.`)
+    say(`You both get ${REFERRAL_CREDIT_REWARD} credits when your friend enters your code.`)
   }
 
   const copyCode = async () => {
     playPop()
+    if (!code) { say('Your code is still loading. Try again in a moment.'); return }
     try {
       await navigator.clipboard.writeText(code)
       say('Code copied.')
@@ -726,9 +729,9 @@ export default function SettingsScreen({ bindBack }: {
               : `Bring someone in and earn ${REFERRAL_CREDIT_REWARD} credits plus 24 hours of worldwide radius.`}
           </p>
 
-          <button type="button" className={styles.code} onClick={copyCode} aria-label={`Copy your code, ${code.split('').join(' ')}`}>
+          <button type="button" className={styles.code} onClick={copyCode} aria-label={code ? `Copy your code, ${code.split('').join(' ')}` : 'Your code is loading'}>
             <span className={styles.codeLabel}>YOUR CODE</span>
-            <span className={styles.codeValue}>{code}</span>
+            <span className={styles.codeValue}>{code ?? '······'}</span>
             <span className={styles.codeHint}>tap to copy</span>
           </button>
 

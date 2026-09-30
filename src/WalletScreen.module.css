@@ -233,3 +233,5 @@
   color: #ffe9f4;
   font: 700 12.5px/1.3 system-ui, -apple-system, sans-serif;
 }
+
+.primary:disabled { opacity: 0.55; cursor: default; }

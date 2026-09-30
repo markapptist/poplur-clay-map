@@ -11,19 +11,27 @@ import {
   playCasinoSpin,
   playCasinoWin,
 } from './casinoAudio'
-import { creditBalance, grantCasinoWin, onCreditsChange } from './poplurCredits'
+import {
+  CreditsRefused,
+  casinoSpunToday,
+  creditBalance,
+  creditsWallet,
+  onCreditsChange,
+  refreshCredits,
+  spinDailyCasino,
+  type CasinoClaim,
+} from './poplurCredits'
 import { useNearbyLocation } from './nearbyLocation'
 
 // POPLUR CASINO — the feed's daily slots channel. One free spin a day; the
-// middle line pays, and wins land in the poplurCredits ledger (the same one
+// middle line pays, and wins land on the account's credits (the same balance
 // the avatar cube spends from and the wallet windows onto — never a second
 // balance).
 //
-// This pass is deliberately client-side: the outcome is rolled on-device and
-// the daily gate is device-local storage. The casino spec's server-
-// authoritative economy (server-rolled outcomes, per-account gating,
-// anti-cheat) replaces both when the wallet backend lands — until then the
-// most a clock-tamperer can mint is a few credits on their own screen.
+// The SERVER plays the machine (functions/src/credits.ts, `casinoSpin`): it
+// owns the one-spin-a-day gate per account, rolls the line, applies Friday's
+// double and pays the win before it answers. The reels only draw the answer,
+// so clearing storage or moving the clock buys nothing.
 //
 // Idle discipline (this codebase has burned phones before): the reels move
 // ONLY during a spin, driven by one-shot CSS transitions — no rAF loop, no
@@ -74,9 +82,9 @@ const REEL_DUR_STEP = 260
 const REEL_STOPS_MS = Array.from({ length: REELS }, (_, i) => REEL_DUR_BASE + i * REEL_DUR_STEP)
 
 // ── daily gate ───────────────────────────────────────────────────────────────
-// Device-local, keyed like the app's other persisted prefs. SERVER-SIDE
-// ENFORCEMENT COMES LATER (see the note at the top of this file); this is
-// honest-player plumbing, not security.
+// The server owns the gate (its day turns over at Toronto midnight). This
+// device-local stamp is only a hint for the first paint, before the server's
+// wallet has answered; it can never grant a spin the server refuses.
 // v2 intentionally resets the old auto-open gate. Before this version the
 // casino spun on mount, so simply visiting the screen could incorrectly use
 // today's free spin.
@@ -222,8 +230,8 @@ function useNearbyCasinoAdvertiser(): CasinoAdvertiser {
 }
 
 function todayStamp(): string {
-  // LOCAL date on purpose: "one a day" should reset at the player's midnight,
-  // not UTC's.
+  // LOCAL date: the hint only has to agree with the server for people near
+  // Toronto, where the beta is.
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
@@ -238,26 +246,16 @@ function markSpinUsed(): void {
   catch { /* private mode — component state still gates this visit */ }
 }
 
-/** Friday is a real, applied house promotion — it never advertises a bonus
-    that the credit ledger does not actually award. Local time matches the
-    daily-spin reset above, so the offer flips with the same calendar day. */
-function isDoubleCreditDay(): boolean {
-  return new Date().getDay() === 5
-}
-
 // ── outcome ──────────────────────────────────────────────────────────────────
 const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)]
 
 type Outcome = { count: 0 } | { count: 3 | 4 | 5; symbol: SlotSymbol }
 
-/** Client-rolled for this pass (Math.random, like the ledger's entry ids).
-    Mostly small wins, rare bigger hits — a daily freebie should feel warm. */
-function rollOutcome(): Outcome {
-  const r = Math.random()
-  if (r < 0.25) return { count: 0 }
-  if (r < 0.75) return { count: 3, symbol: pick(SYMBOLS) }
-  if (r < 0.94) return { count: 4, symbol: pick(SYMBOLS) }
-  return { count: 5, symbol: pick(SYMBOLS) }
+/** The line the server rolled (mostly small wins, rare bigger hits; Friday
+    pays double). Everything else on the reels is cosmetic dressing. */
+function outcomeFromServer(spin: CasinoClaim): Outcome {
+  const symbol = SYMBOLS.find(candidate => candidate.id === spin.symbolId)
+  return spin.count === 0 || !symbol ? { count: 0 } : { count: spin.count, symbol }
 }
 
 /** The middle line, left-anchored like every slot in history. Fillers never
@@ -341,9 +339,14 @@ const fmtWell = (n: number) =>
 export default function CasinoScreen({ onClose }: { onClose: () => void }) {
   const [faces, setFaces] = useState<Faces>(ATTRACT_FACES)
   const [strips, setStrips] = useState<Faces | null>(null)
-  const [phase, setPhase] = useState<'idle' | 'armed' | 'rolling'>('idle')
-  const [used, setUsed] = useState(() => spinUsedToday())
+  // 'pulling' waits for the server's line; the reels only move once it is known.
+  const [phase, setPhase] = useState<'idle' | 'pulling' | 'armed' | 'rolling'>('idle')
+  const [used, setUsed] = useState(() => {
+    const wallet = creditsWallet()
+    return wallet ? casinoSpunToday(wallet) : spinUsedToday()
+  })
   const [credits, setCredits] = useState(() => creditBalance())
+  const [statusNote, setStatusNote] = useState<string | null>(null)
   const [result, setResult] = useState<SpinResult | null>(null)
   const [paysOpen, setPaysOpen] = useState(false)
   const [promoOpen, setPromoOpen] = useState(false)
@@ -371,8 +374,25 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
   const ceilingRef = useRef<number | null>(null)
   const finalFacesRef = useRef<Faces | null>(null)
   const pendingRef = useRef<SpinResult | null>(null)
+  const phaseRef = useRef(phase)
+  phaseRef.current = phase
+  const mountedRef = useRef(true)
+  useEffect(() => () => { mountedRef.current = false }, [])
 
-  useEffect(() => onCreditsChange(() => setCredits(creditBalance())), [])
+  // The server pays a win before the reels start; the CREDITS readout waits
+  // for them to stop, so the machine still gets to tell you first.
+  useEffect(() => onCreditsChange(() => {
+    if (phaseRef.current === 'idle') setCredits(creditBalance())
+  }), [])
+
+  // The account's balance and today's spin, from the server.
+  useEffect(() => {
+    refreshCredits().then(wallet => {
+      if (!mountedRef.current || phaseRef.current !== 'idle') return
+      setCredits(wallet.balance)
+      setUsed(casinoSpunToday(wallet))
+    }, () => { /* the hint and the last known balance stay up */ })
+  }, [])
 
   // The cabinet's voice exists only while the cabinet is on screen: this opens
   // the casino's AudioContext lazily and CLOSES it on unmount, stopping
@@ -413,14 +433,6 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  /** Grant exactly once — whether the reels settle on screen or the screen is
-      closed mid-spin, the outcome was decided at press time. */
-  const settleGrant = () => {
-    const pending = pendingRef.current
-    pendingRef.current = null
-    if (pending && pending.amount > 0) grantCasinoWin(pending.amount, pending.line)
-  }
-
   const finish = () => {
     if (!finalFacesRef.current) return // already finished (ceiling vs transitionend)
     if (ceilingRef.current) { window.clearTimeout(ceilingRef.current); ceilingRef.current = null }
@@ -429,7 +441,9 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
     setStrips(null)
     setPhase('idle')
     const shown = pendingRef.current ?? { amount: 0, line: '', count: 0 as const }
-    settleGrant()
+    pendingRef.current = null
+    // Already paid on the server; the readout catches up as the reels stop.
+    setCredits(creditBalance())
     setResult(shown)
     // The machine tells you before the readout does.
     if (shown.amount > 0 && shown.count !== 0) playCasinoWin(shown.amount, shown.count)
@@ -438,34 +452,49 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
   const finishRef = useRef(finish)
   finishRef.current = finish
 
+  // A win closed mid-spin is not lost: the server paid it before the reels moved.
   useEffect(() => () => {
     if (ceilingRef.current) window.clearTimeout(ceilingRef.current)
-    settleGrant() // a win must not evaporate because the cube closed the screen
   }, [])
 
-  const spin = () => {
+  const spin = async () => {
     if (phase !== 'idle' || used) return
     playCasinoLever() // the arm, not the app's UI pop — and it carries the haptic
     setResult(null)
     setPaysOpen(false)
-    const outcome = rollOutcome()
+    setStatusNote(null)
+    setPhase('pulling')
+    let answer: Awaited<ReturnType<typeof spinDailyCasino>>
+    try {
+      answer = await spinDailyCasino()
+    } catch (error) {
+      if (!mountedRef.current) return
+      setPhase('idle')
+      setStatusNote(error instanceof CreditsRefused
+        ? error.message.toUpperCase()
+        : 'COULDN’T REACH POPLUR — YOUR SPIN IS STILL HERE, TRY AGAIN')
+      return
+    }
+    if (!mountedRef.current) return
+    // The spin is SPENT once the server has answered — closing the screen
+    // mid-spin must not re-arm today's spin, and the server would refuse it.
+    markSpinUsed()
+    setUsed(true)
+    if (answer.alreadySpun) {
+      // Spun earlier today, on this phone or another: nothing new to draw.
+      setPhase('idle')
+      setCredits(creditBalance())
+      return
+    }
+    const outcome = outcomeFromServer(answer)
     const line = buildPayline(outcome)
     const top = buildDressingRow()
     const bottom = buildDressingRow()
     const final: Faces = Array.from({ length: REELS }, (_, i) => [top[i], line[i], bottom[i]])
     finalFacesRef.current = final
-    const multiplier = isDoubleCreditDay() ? 2 : 1
-    pendingRef.current = outcome.count === 0
-      ? null
-      : {
-          amount: outcome.symbol.pays[outcome.count - 3] * multiplier,
-          line: `Slots ${outcome.count}× ${outcome.symbol.name}${multiplier > 1 ? ' · Friday 2× credits' : ''}`,
-          count: outcome.count,
-        }
-    // The spin is SPENT when the reels are committed, not when they stop —
-    // closing the screen mid-spin must not re-arm today's spin.
-    markSpinUsed()
-    setUsed(true)
+    pendingRef.current = answer.amount > 0
+      ? { amount: answer.amount, line: answer.line, count: answer.count }
+      : null
     landedRef.current = 0
     setStrips(buildStrips(faces, final))
     setPhase('armed')
@@ -508,9 +537,10 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
   const spinning = phase !== 'idle'
   const status = spinning
     ? 'GOOD LUCK…'
-    : used
-      ? 'COME BACK TOMORROW — ONE FREE SPIN A DAY'
-      : 'YOUR FREE DAILY SPIN IS READY'
+    : statusNote
+      ?? (used
+        ? 'COME BACK TOMORROW — ONE FREE SPIN A DAY'
+        : 'YOUR FREE DAILY SPIN IS READY')
   return (
     <div className={styles.stage} data-win={result && result.amount > 0 ? 'true' : undefined}>
       <div className={styles.ambient} aria-hidden="true" />
@@ -623,7 +653,7 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
         <button
           type="button"
           className={styles.spinPanel}
-          onClick={spin}
+          onClick={() => { void spin() }}
           disabled={used || spinning}
           aria-label={used ? 'Free spin used — come back tomorrow' : 'Spin'}
         >
@@ -672,7 +702,7 @@ export default function CasinoScreen({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             className={styles.spinBtn}
-            onClick={spin}
+            onClick={() => { void spin() }}
             disabled={used || spinning}
             aria-label={used ? 'Free spin used — come back tomorrow' : 'Spin'}
           >

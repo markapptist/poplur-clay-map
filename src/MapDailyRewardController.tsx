@@ -1,14 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import PoplurStatusToast from './PoplurStatusToast'
-import { grantDailyMapReward } from './poplurCredits'
-import {
-  RADIUS_REWARD_STORAGE_KEY,
-  parseRadiusRewardClaim,
-  radiusRewardDayKey,
-  selectRadiusRewardOutcome,
-  serializeRadiusRewardClaim,
-  type RadiusRewardOutcome,
-} from './radiusRewardRoll'
+import { CreditsRefused, claimDailyMapRoll } from './poplurCredits'
 import {
   RADIUS_REWARD_DICE_READY_EVENT,
   RADIUS_REWARD_NAVIGATOR_EVENT,
@@ -27,26 +19,12 @@ interface RewardToast {
   detail: string
 }
 
-function secureRewardRandomUnit(): number {
-  const sample = new Uint32Array(1)
-  if (typeof globalThis.crypto?.getRandomValues !== 'function') return Math.random()
-  globalThis.crypto.getRandomValues(sample)
-  return sample[0] / 0x1_0000_0000
-}
-
-export function readDailyMapReward(nowMs = Date.now()): RadiusRewardOutcome | null {
-  try {
-    const raw = window.localStorage.getItem(RADIUS_REWARD_STORAGE_KEY)
-    return parseRadiusRewardClaim(raw, nowMs)
-  } catch {
-    return null
-  }
-}
-
 /** Owns the production free-roll handshake. The navigator/model renderer stays
  * in HomeTwin; this controller contributes no renderer or idle loop. It only
- * reacts to a user-started session, runs one finite tumble, writes one stable
- * daily Credit entry, shows a bounded toast, then returns the normal Map cube.
+ * reacts to a user-started session, asks the server for today's roll (the
+ * server rolls once per UTC day, pays it, and answers with the same face for
+ * the rest of the day), runs one finite tumble to that face, shows a bounded
+ * toast, then returns the normal Map cube.
  */
 export default function MapDailyRewardController({ enabled }: { enabled: boolean }) {
   const [toast, setToast] = useState<RewardToast | null>(null)
@@ -63,6 +41,12 @@ export default function MapDailyRewardController({ enabled }: { enabled: boolean
       settleTimerRef.current = null
       closeTimerRef.current = null
     }
+    const closeSoon = (session: number) => {
+      closeTimerRef.current = window.setTimeout(() => {
+        closeTimerRef.current = null
+        if (sessionRef.current === session) announceRadiusRewardNavigator(false)
+      }, 2_400)
+    }
     const onNavigator = (event: Event) => {
       const signal = radiusRewardNavigatorSignalFromEvent(event)
       if (!signal) return
@@ -77,41 +61,33 @@ export default function MapDailyRewardController({ enabled }: { enabled: boolean
       if (startedSessionRef.current === signal.session) return
       startedSessionRef.current = signal.session
 
-      const existing = readDailyMapReward()
-      const outcome = existing ?? selectRadiusRewardOutcome(secureRewardRandomUnit())
-      if (!announceRadiusRewardDiceRoll(signal.session, outcome.face)) return
-
-      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      const tumbleMs = reducedMotion
-        ? RADIUS_REWARD_DICE_REDUCED_TUMBLE_MS
-        : RADIUS_REWARD_DICE_TUMBLE_MS
-      settleTimerRef.current = window.setTimeout(() => {
-        settleTimerRef.current = null
+      claimDailyMapRoll().then(roll => {
         if (sessionRef.current !== signal.session) return
+        if (!announceRadiusRewardDiceRoll(signal.session, roll.face)) return
 
-        const claimedAtMs = Date.now()
-        const day = radiusRewardDayKey(claimedAtMs)
-        const granted = !existing && grantDailyMapReward(
-          outcome.credits,
-          day,
-          `${outcome.title} — daily Map roll`,
-        )
-        try {
-          window.localStorage.setItem(
-            RADIUS_REWARD_STORAGE_KEY,
-            serializeRadiusRewardClaim(outcome, claimedAtMs),
-          )
-        } catch { /* private storage: the ledger still guards this session */ }
-
-        setToast(granted
-          ? { title: `+${outcome.credits} Credits`, detail: `${outcome.title}. Free daily Map roll claimed.` }
-          : { title: 'Daily roll complete', detail: `Today's ${outcome.title} reward was already claimed.` })
-
-        closeTimerRef.current = window.setTimeout(() => {
-          closeTimerRef.current = null
-          if (sessionRef.current === signal.session) announceRadiusRewardNavigator(false)
-        }, 2_400)
-      }, tumbleMs + (reducedMotion ? 40 : 80))
+        const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        const tumbleMs = reducedMotion
+          ? RADIUS_REWARD_DICE_REDUCED_TUMBLE_MS
+          : RADIUS_REWARD_DICE_TUMBLE_MS
+        settleTimerRef.current = window.setTimeout(() => {
+          settleTimerRef.current = null
+          if (sessionRef.current !== signal.session) return
+          setToast(roll.alreadyClaimed
+            ? { title: 'Daily roll complete', detail: `Today's ${roll.title} reward was already claimed.` }
+            : { title: `+${roll.credits} Credits`, detail: `${roll.title}. Free daily Map roll claimed.` })
+          closeSoon(signal.session)
+        }, tumbleMs + (reducedMotion ? 40 : 80))
+      }, error => {
+        if (sessionRef.current !== signal.session) return
+        // Nothing was paid; the die stays unrolled and today's roll is still there.
+        setToast({
+          title: 'Daily roll unavailable',
+          detail: error instanceof CreditsRefused
+            ? error.message
+            : 'Poplur could not be reached. Your roll is still waiting; try again in a moment.',
+        })
+        closeSoon(signal.session)
+      })
     }
 
     window.addEventListener(RADIUS_REWARD_NAVIGATOR_EVENT, onNavigator)

@@ -8,8 +8,7 @@ import {
   canAfford,
   creditBalance,
   onCreditsChange,
-  refundCredits,
-  spendCredits,
+  refreshCredits,
 } from './poplurCredits'
 import {
   avatarCubes,
@@ -147,6 +146,8 @@ export default function AvatarScreen({ onClose: _onClose, bindBack }: {
   }, [])
 
   useEffect(() => onCreditsChange(() => setCredits(creditBalance())), [])
+  // The balance is the account's, on the server.
+  useEffect(() => { void refreshCredits().catch(() => { /* the last known balance stays up */ }) }, [])
   useEffect(() => onAvatarCubeChange(() => {
     setCubes(avatarCubes())
     setWorn(wornCubeId())
@@ -242,13 +243,10 @@ export default function AvatarScreen({ onClose: _onClose, bindBack }: {
       return
     }
     if (!canAfford(AVATAR_CUBE_COST)) { say('Not enough credits.'); return }
-    // Debit BEFORE the call and refund on failure. Charging on success looks
-    // kinder and is worse: a job that succeeds while the phone is asleep would
-    // never be billed, and Meshy has already been paid by then.
-    if (!spendCredits(AVATAR_CUBE_COST, 'avatar-cube', name || 'Avatar cube')) {
-      say('Not enough credits.')
-      return
-    }
+    // The server debits the account BEFORE it calls Meshy and refunds a job
+    // that fails (meshyModels.ts). Charging on success looks kinder and is
+    // worse: a job that succeeds while the phone is asleep would never be
+    // billed, and Meshy has already been paid by then.
     playPop()
     setStage('working')
     setError(null)
@@ -276,7 +274,6 @@ export default function AvatarScreen({ onClose: _onClose, bindBack }: {
       setStage('done')
     } catch (failure) {
       const cancelled = failure instanceof DOMException && failure.name === 'AbortError'
-      refundCredits(AVATAR_CUBE_COST, cancelled ? 'Sculpt cancelled' : 'Sculpt failed')
       if (!cancelled) {
         setError(
           failure instanceof MeshyUnavailable
@@ -287,6 +284,8 @@ export default function AvatarScreen({ onClose: _onClose, bindBack }: {
       setStage('style')
     } finally {
       abortRef.current = null
+      // Show what the server charged, or refunded.
+      void refreshCredits().catch(() => { /* the next open shows it */ })
     }
   }
 

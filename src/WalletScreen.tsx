@@ -4,21 +4,21 @@ import { playPop } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import {
-  CREDITS_PER_DOLLAR,
-  cashOutCredits,
-  creditBalance,
-  creditHistory,
+  CreditsRefused,
   creditsToCad,
+  creditsWallet,
   onCreditsChange,
-  transferCreditsOut,
-  type CreditEntry,
+  redeemReferralCode,
+  refreshCredits,
+  type CreditsWallet,
 } from './poplurCredits'
 
 // The Poplur Wallet — the account's money face. One card up top with the
 // credit balance and its CAD redemption value, the four verbs under it, and
-// the ledger's recent history below. It is a WINDOW onto poplurCredits.ts
-// (the same ledger the Avatar generator and the Store already move), never a
-// second balance.
+// the ledger's recent history below. It is a WINDOW onto the account's
+// credits on the server (poplurCredits.ts mirrors the `poplurCredits`
+// callable): the same balance a card purchase adds to and a Meshy cube
+// spends from, never a second one.
 //
 // SEND and CASH OUT are inner pages of this screen, not separate subscreens —
 // but each announces itself over `poplur-wallet-page` so the navigator cube
@@ -51,18 +51,24 @@ function rememberOwnedCard(cardId: string) {
   catch { /* private mode */ }
 }
 
-const ENTRY_LABEL: Record<CreditEntry['kind'], string> = {
-  'welcome': 'Welcome credits',
-  'purchase': 'Bought credits',
-  'refund': 'Refund',
-  'avatar-cube': 'Avatar cube',
-  'transfer-out': 'Sent',
-  'transfer-in': 'Received',
-  'cash-out': 'Cash out',
-  'casino-win': 'Casino win',
-  'map-reward': 'Map reward',
-  'referral': 'Referral reward',
+/** The server ledger's row types (functions/src/credits.ts, cardPurchases.ts,
+    meshyModels.ts and the AI routes in index.ts). */
+const ENTRY_LABEL: Record<string, string> = {
+  welcome_grant: 'Welcome credits',
+  store_card_purchase: 'Bought credits',
+  map_daily_roll: 'Map reward',
+  casino_daily_spin: 'Casino win',
+  referral_reward: 'Referral reward',
+  meshy_generation: 'Avatar cube',
+  meshy_refund: 'Refund',
+  ai_generation_reserve: 'AI generation',
+  ai_generation_refund: 'Refund',
+  ai_generation_cancel_refund: 'Refund',
+  radius_boost_spend: 'Radius boost',
 }
+
+const failureText = (error: unknown) =>
+  error instanceof Error && error.message ? error.message : 'Credits are unavailable right now.'
 
 type WalletPage = 'home' | 'send' | 'cashout'
 
@@ -71,21 +77,36 @@ export default function WalletScreen({ bindBack }: {
       back to the wallet home before the cube closes the screen. */
   bindBack?: (fn: (() => boolean) | null) => void
 } = {}) {
-  const [balance, setBalance] = useState(() => creditBalance())
-  const [history, setHistory] = useState(() => creditHistory().slice(0, 12))
+  const [wallet, setWallet] = useState<CreditsWallet | null>(creditsWallet)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [ownedCards, setOwnedCards] = useState(readOwnedCards)
   const [page, setPage] = useState<WalletPage>('home')
   const [note, setNote] = useState<string | null>(null)
   const [sendTo, setSendTo] = useState('')
   const [sendAmount, setSendAmount] = useState('')
   const [cashAmount, setCashAmount] = useState('')
+  const [friendCode, setFriendCode] = useState('')
+  const [redeeming, setRedeeming] = useState(false)
   const pageRef = useRef(page)
   pageRef.current = page
+  const balance = wallet?.balance ?? 0
+  const history = wallet?.history.slice(0, 12) ?? []
+  // Cards bought on the account, plus any this phone saw complete before the
+  // server listed them.
+  const cards = [...new Set([...(wallet?.cards ?? []), ...ownedCards])]
 
-  useEffect(() => onCreditsChange(() => {
-    setBalance(creditBalance())
-    setHistory(creditHistory().slice(0, 12))
-  }), [])
+  useEffect(() => onCreditsChange(() => setWallet(creditsWallet())), [])
+
+  // The account's balance, fetched every time the Wallet opens. A saved copy
+  // may paint first; it is replaced by the server's answer.
+  useEffect(() => {
+    let live = true
+    refreshCredits().then(
+      () => { if (live) setLoadError(null) },
+      error => { if (live) setLoadError(failureText(error)) },
+    )
+    return () => { live = false }
+  }, [])
 
   // A Store purchase completing while the wallet is open lands the card here
   // immediately; when the wallet is closed the same handler in the next open
@@ -110,6 +131,9 @@ export default function WalletScreen({ bindBack }: {
       const bought = (detail.completedItems ?? [])
         .map(item => item?.cardId)
         .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      // The purchase's credits were granted on the server before native
+      // reported success (verifyCardPurchase); show them.
+      void refreshCredits().catch(() => { /* the next open shows them */ })
       if (!bought.length) return
       bought.forEach(rememberOwnedCard)
       setOwnedCards(readOwnedCards())
@@ -147,31 +171,35 @@ export default function WalletScreen({ bindBack }: {
     window.setTimeout(() => setNote(null), 2600)
   }
 
+  // Sending and cashing out have no server operation yet, and the balance is
+  // the server's, so neither may pretend: nothing moves and the page says so.
   const submitSend = () => {
-    const to = sendTo.trim().replace(/^@/, '')
-    const amount = Math.floor(Number(sendAmount))
-    if (!to) { say('Who to?'); return }
-    if (!Number.isFinite(amount) || amount <= 0) { say('Enter an amount.'); return }
-    if (!transferCreditsOut(amount, `@${to}`)) { say('Not enough credits.'); return }
-    playCubeNavigationPop()
-    // The server executes transfers when the wallet backend lands; the shell
-    // is told so a native ledger can mirror the movement today.
-    if (isNativeShell()) postNativeEvent({ type: 'walletSendCredits', to, credits: amount })
-    say(`Sent ${amount.toLocaleString()} credits to @${to}`)
-    setSendTo('')
-    setSendAmount('')
-    setPage('home')
+    playPop()
+    say('Sending credits is not available yet. Nothing was sent.')
   }
 
   const submitCashOut = () => {
-    const amount = Math.floor(Number(cashAmount))
-    if (!Number.isFinite(amount) || amount <= 0) { say('Enter an amount.'); return }
-    if (!cashOutCredits(amount)) { say('Not enough credits.'); return }
-    playCubeNavigationPop()
-    if (isNativeShell()) postNativeEvent({ type: 'walletCashOut', credits: amount })
-    say(`Cashing out ${creditsToCad(amount)}`)
-    setCashAmount('')
-    setPage('home')
+    playPop()
+    say('Cash out is not available yet. Nothing was redeemed.')
+  }
+
+  /** A new account enters a friend's code; the server pays both sides once. */
+  const submitFriendCode = async () => {
+    const code = friendCode.trim()
+    if (redeeming) return
+    if (code.length !== 6) { say('Enter the 6-character code your friend shared.'); return }
+    playPop()
+    setRedeeming(true)
+    try {
+      const { creditsAdded } = await redeemReferralCode(code)
+      playCubeNavigationPop()
+      setFriendCode('')
+      say(`+${creditsAdded} credits. Your friend gets ${creditsAdded} too.`)
+    } catch (error) {
+      say(error instanceof CreditsRefused ? error.message : failureText(error))
+    } finally {
+      setRedeeming(false)
+    }
   }
 
   const buyCredits = () => {
@@ -228,7 +256,7 @@ export default function WalletScreen({ bindBack }: {
           <div className={styles.card}>
             <div className={styles.cashBalance}>
               <i>Available</i>
-              <b>{balance.toLocaleString()} Credits</b>
+              <b>{wallet ? `${balance.toLocaleString()} Credits` : '— Credits'}</b>
             </div>
             <label className={styles.field}>
               <span>Redeem</span>
@@ -258,8 +286,10 @@ export default function WalletScreen({ bindBack }: {
         {/* The wallet card: the balance is the object. */}
         <div className={styles.walletCard}>
           <span className={styles.walletKicker}>POPLUR WALLET</span>
-          <b className={styles.walletBalance}>{balance.toLocaleString()} Credits</b>
-          <i className={styles.walletCad}>≈ {creditsToCad(balance)}</i>
+          <b className={styles.walletBalance}>{wallet ? balance.toLocaleString() : '—'} Credits</b>
+          <i className={styles.walletCad}>
+            {wallet ? `≈ ${creditsToCad(balance)}` : (loadError ?? 'Checking your balance…')}
+          </i>
         </div>
 
         <div className={styles.actions}>
@@ -277,14 +307,40 @@ export default function WalletScreen({ bindBack }: {
           <button type="button" onClick={() => { playCubeNavigationPop(); setPage('cashout') }}>Cash Out</button>
         </div>
 
+        {/* A new account's first 14 days: a friend's code pays you both. */}
+        {wallet?.referral.canRedeem && (
+          <>
+            <div className={styles.sectionTitle}>HAVE A FRIEND&apos;S CODE?</div>
+            <div className={styles.card}>
+              <label className={styles.field}>
+                <span>Code</span>
+                <input
+                  value={friendCode}
+                  onChange={e => setFriendCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))}
+                  placeholder="ABC234"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+              </label>
+              <div className={styles.equivalent}>
+                You both get {wallet.referral.credits} credits and a day of worldwide radius.
+              </div>
+              <button type="button" className={styles.primary} disabled={redeeming} onClick={() => { void submitFriendCode() }}>
+                {redeeming ? 'Checking…' : 'Use Code'}
+              </button>
+            </div>
+          </>
+        )}
+
         {/* The cards the account holds, bought in the Store. */}
         <div className={styles.sectionTitle}>YOUR CARDS</div>
         <div className={styles.card}>
-          {ownedCards.length === 0 ? (
+          {cards.length === 0 ? (
             <div className={styles.emptyCards}>
               No cards yet — card designs live in the <b>STORE</b>.
             </div>
-          ) : ownedCards.map(id => (
+          ) : cards.map(id => (
             <div key={id} className={styles.cardRow}>
               <b>{CARD_NAMES[id] ?? id}</b>
               <i>Owned</i>
@@ -294,17 +350,27 @@ export default function WalletScreen({ bindBack }: {
 
         <div className={styles.sectionTitle}>RECENT ACTIVITY</div>
         <div className={styles.card}>
-          {history.map(entry => (
+          {history.length === 0 && (
+            <div className={styles.emptyCards}>
+              {!wallet
+                ? (loadError ?? 'Loading your activity…')
+                : wallet.historyComplete ? 'No activity yet.' : 'Your activity could not be loaded right now.'}
+            </div>
+          )}
+          {history.map(entry => {
+            const detail = entry.note ?? (entry.cardId ? CARD_NAMES[entry.cardId] : undefined)
+            return (
             <div key={entry.id} className={styles.entryRow}>
               <div className={styles.entryText}>
-                <b>{ENTRY_LABEL[entry.kind] ?? entry.kind}</b>
-                {entry.note && <i>{entry.note}</i>}
+                <b>{ENTRY_LABEL[entry.kind] ?? 'Credits'}</b>
+                {detail && <i>{detail}</i>}
               </div>
               <span className={entry.delta > 0 ? styles.gain : styles.loss}>
                 {entry.delta > 0 ? '+' : ''}{entry.delta.toLocaleString()}
               </span>
             </div>
-          ))}
+            )
+          })}
         </div>
 
         {note && <div className={styles.note}>{note}</div>}

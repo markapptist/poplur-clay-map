@@ -3,12 +3,6 @@ import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import MapRewardRollButton from '../MapRewardRollButton'
 import {
-  creditBalance,
-  creditHistory,
-  dailyMapRewardEntryId,
-  grantDailyMapReward,
-} from '../poplurCredits'
-import {
   DAILY_RADIUS_ROLL_COOLDOWN_MS,
   LEGACY_RADIUS_REWARD_STORAGE_KEY,
   RADIUS_REWARD_STORAGE_KEY,
@@ -141,30 +135,14 @@ describe('daily Radius reward roll', () => {
     expect(onPress).toHaveBeenCalledTimes(2)
   })
 
-  it('grants a daily Map reward to the Credits ledger exactly once', () => {
-    const values = new Map<string, string>()
-    vi.stubGlobal('window', {
-      localStorage: {
-        getItem: (key: string) => values.get(key) ?? null,
-        setItem: (key: string, value: string) => values.set(key, value),
-      },
-      dispatchEvent: vi.fn(),
-    })
-    vi.stubGlobal('CustomEvent', class {
-      constructor(public type: string, public init?: unknown) {}
-    })
-
-    try {
-      expect(dailyMapRewardEntryId('2026-08-30')).toBe('map-reward:2026-08-30')
-      expect(grantDailyMapReward(10, '2026-08-30', 'Daily die')).toBe(true)
-      expect(grantDailyMapReward(25, '2026-08-30', 'Repeated completion')).toBe(false)
-      expect(creditBalance()).toBe(40)
-      expect(creditHistory().filter(entry => entry.kind === 'map-reward')).toEqual([
-        expect.objectContaining({ id: 'map-reward:2026-08-30', delta: 10 }),
-      ])
-    } finally {
-      vi.unstubAllGlobals()
-    }
+  it('leaves the daily roll and its payment to the server', () => {
+    // The server rolls once per UTC day and pays it (functions/src/credits.ts
+    // `mapRoll`); the controller only draws the face it answers with. See
+    // serverCredits.test.ts for the round trip.
+    const controller = readFileSync(new URL('../MapDailyRewardController.tsx', import.meta.url), 'utf8')
+    expect(controller).toContain('claimDailyMapRoll()')
+    expect(controller).toMatch(/announceRadiusRewardDiceRoll\(signal\.session, roll\.face\)/)
+    expect(controller).not.toMatch(/selectRadiusRewardOutcome|grantDailyMapReward|localStorage/)
   })
 
   it('dispatches the normal dice to the existing bounded random tour', () => {
