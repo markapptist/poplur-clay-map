@@ -324,7 +324,7 @@ export default function WalletScreen({ bindBack }: {
                 />
               </label>
               <div className={styles.equivalent}>
-                You both get {wallet.referral.credits} credits and a day of worldwide radius.
+                You both get {wallet.referral.credits} credits.
               </div>
               <button type="button" className={styles.primary} disabled={redeeming} onClick={() => { void submitFriendCode() }}>
                 {redeeming ? 'Checking…' : 'Use Code'}

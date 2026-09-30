@@ -459,7 +459,7 @@ export default function SettingsScreen({ bindBack }: {
     const link = referralLink(code)
     const payload = {
       title: 'Poplur',
-      text: `Join me on Poplur. After you sign up, enter my code ${code} in your Wallet and we both get ${REFERRAL_CREDIT_REWARD} credits and the whole map for a day.`,
+      text: `Join me on Poplur. After you sign up, enter my code ${code} in your Wallet and we both get ${REFERRAL_CREDIT_REWARD} credits.`,
       url: link,
     }
     let sent = false
