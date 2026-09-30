@@ -9,6 +9,7 @@ import {
 } from 'firebase/firestore'
 import { webDb } from './webFirebase'
 import { clampRadiusMeters, clampRadiusKm } from './worldRadius'
+import type { OwnPop } from './ownPops'
 
 
 export interface AccountRadiusPostDocument {
@@ -17,9 +18,55 @@ export interface AccountRadiusPostDocument {
 }
 
 export interface AccountRadiusSnapshot {
+  /** Σ earned (organic) over live posts — what the account may claim. */
   radiusKm: number
   totalReachKm: number
   postCount: number
+  /** Σ (seed − 5 km) over live posts — claims already out on pops. */
+  committedClaimKm: number
+  /** radiusKm − committedClaimKm, floored at zero: the picker's ceiling above
+   *  the discovery seed. Earned once, spent once — while a claim sits on a
+   *  live pop it cannot be claimed again (firestore.rules maxSeedRadiusMeters). */
+  availableClaimKm: number
+  /** Live pops with a public origin — what a new pop within 5 km would
+   *  replace (ownPops.ts; server rule in functions/src/postReplacesNearby.ts). */
+  pops: OwnPop[]
+}
+
+export const EMPTY_ACCOUNT_RADIUS_SNAPSHOT: AccountRadiusSnapshot = Object.freeze({
+  radiusKm: 0, totalReachKm: 0, postCount: 0, committedClaimKm: 0, availableClaimKm: 0, pops: [],
+})
+
+function createdAtMillisOf(row: DocumentData): number | null {
+  const declared = finite(row.createdAtMillis)
+  if (declared !== null && declared > 0) return declared
+  const stamp = row.createdAt as { toMillis?: () => number } | undefined
+  const millis = typeof stamp?.toMillis === 'function' ? Number(stamp.toMillis()) : NaN
+  return Number.isFinite(millis) && millis > 0 ? millis : null
+}
+
+/** A live post's public origin as an OwnPop, or null for a hidden one. */
+export function ownPopFromAccountPost(id: string, row: DocumentData): OwnPop | null {
+  if (row.locationVisibility === 'hidden') return null
+  const latitude = finite(row.latitude)
+  const longitude = finite(row.longitude)
+  if (latitude === null || longitude === null || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null
+  return {
+    id, latitude, longitude,
+    radiusKm: clampRadiusMeters(Math.max(0, finite(row.radiusMeters ?? row.radius) ?? 0)) / 1_000,
+    createdAtMillis: createdAtMillisOf(row),
+    likeCount: Math.max(0, Math.round(finite(row.likeCount) ?? 0)),
+  }
+}
+
+/** The claim a live post is holding: its seed above the free 5 km discovery
+ *  grant, never more than its live reach — the trigger's reading
+ *  (functions/src/accountTotalRadius.ts postCommittedClaimMeters). */
+export function committedClaimKmFromAccountPost(row: DocumentData): number {
+  const reach = Math.max(0, finite(row.radiusMeters ?? row.radius) ?? 0)
+  if (reach <= 0 || row.visibilityStatus === 'expired') return 0
+  const seed = Math.min(Math.max(0, finite(row.seedRadiusMeters) ?? 0), reach)
+  return Math.max(0, clampRadiusMeters(seed) - 5_000) / 1_000
 }
 
 function finite(value: unknown): number | null {
@@ -55,10 +102,10 @@ export function radiusKmFromAccountPost(row: DocumentData): number {
 export function accountRadiusSnapshotFromDocuments(
   documents: readonly AccountRadiusPostDocument[],
 ): AccountRadiusSnapshot {
-  return documents.filter(document => {
+  const partial = documents.filter(document => {
     const row = document.data()
     return row.visibilityStatus !== 'expired' && (finite(row.radiusMeters ?? row.radius) ?? 0) > 0
-  }).reduce<AccountRadiusSnapshot>((snapshot, document) => ({
+  }).reduce((snapshot, document) => ({
     radiusKm: snapshot.radiusKm + radiusKmFromAccountPost(document.data()),
     // The SUM takes the ceiling too, not just each post. Every post was already
     // clamped into the scale on the way in, but adding clamped numbers together
@@ -69,7 +116,10 @@ export function accountRadiusSnapshotFromDocuments(
     totalReachKm: clampRadiusKm(snapshot.totalReachKm + clampRadiusMeters(
       finite(document.data().radiusMeters ?? document.data().radius) ?? 0) / 1_000),
     postCount: snapshot.postCount + 1,
-  }), { radiusKm: 0, totalReachKm: 0, postCount: 0 })
+    committedClaimKm: snapshot.committedClaimKm + committedClaimKmFromAccountPost(document.data()),
+    pops: (() => { const pop = ownPopFromAccountPost(document.id, document.data()); return pop ? [...snapshot.pops, pop] : snapshot.pops })(),
+  }), { radiusKm: 0, totalReachKm: 0, postCount: 0, committedClaimKm: 0, pops: [] as OwnPop[] })
+  return { ...partial, availableClaimKm: Math.max(0, partial.radiusKm - partial.committedClaimKm) }
 }
 
 /**
@@ -83,7 +133,7 @@ export function subscribeAccountRadiusPosts(
   onError: (error: Error) => void = () => {},
 ): Unsubscribe {
   if (!ownUid) {
-    listener({ radiusKm: 0, totalReachKm: 0, postCount: 0 })
+    listener(EMPTY_ACCOUNT_RADIUS_SNAPSHOT)
     return () => {}
   }
 
@@ -96,7 +146,7 @@ export function subscribeAccountRadiusPosts(
       snapshot.docs as QueryDocumentSnapshot<DocumentData>[],
     ))
   }, error => {
-    listener({ radiusKm: 0, totalReachKm: 0, postCount: 0 })
+    listener(EMPTY_ACCOUNT_RADIUS_SNAPSHOT)
     onError(error instanceof Error ? error : new Error('Account radius is unavailable.'))
   })
 }

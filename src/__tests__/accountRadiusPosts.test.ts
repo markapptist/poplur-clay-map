@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   accountRadiusSnapshotFromDocuments,
+  committedClaimKmFromAccountPost,
   radiusKmFromAccountPost,
 } from '../accountRadiusPosts'
 
@@ -25,15 +26,51 @@ describe('authoritative account post radius', () => {
   })
 
   it('is exactly zero for a fresh account', () => {
-    expect(accountRadiusSnapshotFromDocuments([])).toEqual({ radiusKm: 0, totalReachKm: 0, postCount: 0 })
+    expect(accountRadiusSnapshotFromDocuments([])).toMatchObject({ radiusKm: 0, totalReachKm: 0, postCount: 0, committedClaimKm: 0, availableClaimKm: 0,
+    })
+  })
+
+  it('spends a claim while it sits on a live pop and gives it back when the pop goes', () => {
+    // 40 km earned on one pop; a second pop seeded 25 km against it (20 km
+    // above the free grant). The picker may offer 20 km more, not 40 again.
+    const earned = post('earned', { radiusMeters: 45_000, organicRadiusMeters: 40_000, seedRadiusMeters: 5_000 })
+    const claimed = post('claimed', { radiusMeters: 25_000, organicRadiusMeters: 0, seedRadiusMeters: 25_000 })
+    const both = accountRadiusSnapshotFromDocuments([earned, claimed])
+    expect(both.radiusKm).toBe(40)
+    expect(both.committedClaimKm).toBe(20)
+    expect(both.availableClaimKm).toBe(20)
+    expect(committedClaimKmFromAccountPost(claimed.data())).toBe(20)
+    // Delete (or expire) the claimed pop: the whole 40 km is available again.
+    expect(accountRadiusSnapshotFromDocuments([earned]).availableClaimKm).toBe(40)
+    const expired = post('claimed', { ...claimed.data(), visibilityStatus: 'expired' })
+    expect(accountRadiusSnapshotFromDocuments([earned, expired]).availableClaimKm).toBe(40)
+  })
+
+  it('never lets a decayed pop hold more claim than its reach, and never goes negative', () => {
+    // Seeded 25 km, decayed to 8 km: 3 km of claim is out, not 20.
+    const decayed = post('d', { radiusMeters: 8_000, organicRadiusMeters: 0, seedRadiusMeters: 25_000 })
+    expect(committedClaimKmFromAccountPost(decayed.data())).toBe(3)
+    // Earnings decayed under an outstanding claim: the allowance floors at zero.
+    const thin = post('t', { radiusMeters: 12_000, organicRadiusMeters: 2_000, seedRadiusMeters: 10_000 })
+    const snapshot = accountRadiusSnapshotFromDocuments([thin])
+    expect(snapshot.committedClaimKm).toBe(5)
+    expect(snapshot.availableClaimKm).toBe(0)
+  })
+
+  it('does not count the discovery seed as a claim — thirteen unengaged pops are entitled to nothing', () => {
+    const pops = Array.from({ length: 13 }, (_, i) => post(String(i), {
+      radiusMeters: 5_000, organicRadiusMeters: 0, seedRadiusMeters: 5_000,
+    }))
+    const snapshot = accountRadiusSnapshotFromDocuments(pops)
+    expect(snapshot.totalReachKm).toBe(65)
+    expect(snapshot.availableClaimKm).toBe(0)
   })
 
   it('sums every authored post rather than a capped public-map feed', () => {
     const documents = Array.from({ length: 180 }, (_, index) => post(String(index), {
       radius: index === 179 ? 500 : 0,
     }))
-    expect(accountRadiusSnapshotFromDocuments(documents)).toEqual({
-      radiusKm: 0.5,
+    expect(accountRadiusSnapshotFromDocuments(documents)).toMatchObject({ radiusKm: 0.5,
       totalReachKm: 0.5,
       postCount: 1,
     })
@@ -79,5 +116,5 @@ it('reports the sum of full post reach separately from earned claim allowance', 
   expect(accountRadiusSnapshotFromDocuments([
     post('seeded', { radius: 44566, seedRadiusMeters: 23500, organicRadiusMeters: 21066 }),
     post('legacy', { radius: 21827, organicRadiusMeters: 21827 }),
-  ])).toEqual({ radiusKm: 42.893, totalReachKm: 66.393, postCount: 2 })
+  ])).toMatchObject({ radiusKm: 42.893, totalReachKm: 66.393, postCount: 2 })
 })

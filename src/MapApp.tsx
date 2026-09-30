@@ -1,6 +1,7 @@
 import BuildingStylePreview, { BUILDING_STYLE_PREVIEW, buildingPreviewShade } from './BuildingStylePreview'
 import { onFrame } from './frameGovernor'
 import { cutMapCamera } from './cutMapCamera'
+import { PIN_ARRIVAL_FEED_HOLD_MS, useMapPinArrival } from './useMapPinArrival'
 import { useImmersiveControls } from './useImmersiveControls'
 import { useMapDiscovery } from './useMapDiscovery'
 import { mapBoardPosts } from './mapDiscovery'
@@ -261,8 +262,9 @@ import {
 import { localSunriseToNoon, skyShadeAt } from './skyCycle'
 import { mapDaypart, type MapDaypart } from './contextCubeModels'
 import { moonPhase } from './celestial'
-import { publishAccountRadiusKm } from './accountRadius'
-import { subscribeAccountRadiusPosts } from './accountRadiusPosts'
+import { publishAccountRadiusKm, publishAvailableClaimKm } from './accountRadius'
+import { publishOwnPops, type OwnPop } from './ownPops'
+import { subscribeAccountRadiusPosts, EMPTY_ACCOUNT_RADIUS_SNAPSHOT, type AccountRadiusSnapshot } from './accountRadiusPosts'
 import { distinctOwnerColor, liveMapPinGhost, nativeFeedPostsToMapPins, subscribeLiveMapPosts, type LiveMapPostPin } from './mapLivePosts'
 import { otherOwnerPinColor, PIN_COLOR_SWATCH, type PinColorId } from './pinColors'
 import { myPinColor, onMyPinColor } from './myPinColor'
@@ -2849,12 +2851,8 @@ export default function MapApp() {
   // see every pop, including the ones no marker is standing on right now.
   const ownLiveClaims = useMemo(() => accountPostedClaims([...new Map([...accountMapPosts, ...liveMapPosts].map(p => [p.id, p])).values()]), [liveMapPosts, accountMapPosts])
   const [liveMapPostsReady, setLiveMapPostsReady] = useState(false)
-  const [accountRadiusSnapshot, setAccountRadiusSnapshot] = useState({
-    radiusKm: 0,
-    totalReachKm: 0,
-    postCount: 0,
-  })
-  const [nativeAccountTotals, setNativeAccountTotals] = useState<{ radiusKm: number; totalReachKm: number; postCount: number } | null>(null)
+  const [accountRadiusSnapshot, setAccountRadiusSnapshot] = useState<AccountRadiusSnapshot>(EMPTY_ACCOUNT_RADIUS_SNAPSHOT)
+  const [nativeAccountTotals, setNativeAccountTotals] = useState<AccountRadiusSnapshot | null>(null)
   useEffect(() => {
     if (rnWebShellRoute) return undefined
     return onUser(user => setOwnUid(user?.uid ?? null))
@@ -2868,7 +2866,7 @@ export default function MapApp() {
     if (rnWebShellRoute || nativeShell) {
       const receiveForwardedPosts = (event: MessageEvent) => {
         if (event.origin !== window.location.origin || event.source !== window.parent) return
-        const payload = event.data as { type?: unknown; posts?: unknown[]; ownUid?: unknown; accountTotals?: { radiusKm: number; totalReachKm: number; postCount: number } } | null
+        const payload = event.data as { type?: unknown; posts?: unknown[]; ownUid?: unknown; accountTotals?: { radiusKm: number; totalReachKm: number; postCount: number; availableClaimKm?: number } } | null
         if (!payload || payload.type !== 'poplur-native-map-posts') return
         const nextUid = typeof payload.ownUid === 'string' && payload.ownUid.trim()
           ? payload.ownUid.trim().slice(0, 128)
@@ -2887,10 +2885,18 @@ export default function MapApp() {
         // radius is the create rule's entitlement and is passed through
         // untouched, because shrinking it is what once made the picker offer
         // more reach than the server would accept.
+        // The allowance (earned − committed) comes from the phone too; a shell
+        // that predates it sends none, and earned alone then over-offers only
+        // by what is already out on live pops — the rule refuses that, never
+        // the reverse.
         setNativeAccountTotals(payload.accountTotals
           ? {
             ...payload.accountTotals,
             totalReachKm: clampRadiusKm(payload.accountTotals.totalReachKm),
+            committedClaimKm: Math.max(0, payload.accountTotals.radiusKm - (payload.accountTotals.availableClaimKm ?? payload.accountTotals.radiusKm)),
+            availableClaimKm: Math.max(0, payload.accountTotals.availableClaimKm ?? payload.accountTotals.radiusKm),
+            // The phone's own pops arrive as pins (below); the totals carry none.
+            pops: [],
           }
           : null)
         const forwarded = nativeFeedPostsToMapPins(posts, nextUid, { syntheticOnly: rnWebShellRoute })
@@ -2933,7 +2939,13 @@ export default function MapApp() {
   }, [])
   useEffect(() => {
     if (!rnWebShellRoute && !nativeShell) return
-    if (nativeAccountTotals) { setAccountRadiusSnapshot(nativeAccountTotals); return }
+    // The own pops a new one would replace (one live pop per place): the
+    // relayed pins are the phone's own posts with a public origin.
+    const ownPops: OwnPop[] = accountMapPosts.map(pin => ({
+      id: pin.id, latitude: pin.coords[1], longitude: pin.coords[0], radiusKm: Math.max(0, pin.radiusKm),
+      createdAtMillis: pin.createdAtMs > 0 ? pin.createdAtMs : null, likeCount: 0,
+    }))
+    if (nativeAccountTotals) { setAccountRadiusSnapshot({ ...nativeAccountTotals, pops: ownPops }); return }
     const mine = accountMapPosts
     setAccountRadiusSnapshot({
       // EARNED radius only, the same sum the web path takes
@@ -2949,6 +2961,11 @@ export default function MapApp() {
       // how the card came to read a total larger than its own maximum.
       totalReachKm: clampRadiusKm(mine.reduce((sum, pin) => sum + Math.max(0, pin.radiusKm), 0)),
       postCount: mine.length,
+      // Pins carry no seed, so nothing can be told about claims out; earned
+      // is the allowance here and the rule is the backstop.
+      committedClaimKm: 0,
+      availableClaimKm: mine.reduce((sum, pin) => sum + earnedRadiusKmFromPin(pin), 0),
+      pops: ownPops,
     })
   }, [accountMapPosts, nativeShell, nativeAccountTotals, rnWebShellRoute])
   useEffect(() => {
@@ -2959,21 +2976,27 @@ export default function MapApp() {
     return subscribeAccountRadiusPosts(
       ownUid,
       setAccountRadiusSnapshot,
-      () => setAccountRadiusSnapshot({ radiusKm: 0, totalReachKm: 0, postCount: 0 }),
+      () => setAccountRadiusSnapshot(EMPTY_ACCOUNT_RADIUS_SNAPSHOT),
     )
   }, [nativeShell, ownUid, rnWebShellRoute])
   const accountRadiusKm = accountRadiusSnapshot.totalReachKm
   const accountPostCount = accountRadiusSnapshot.postCount
   const accountTotalReachKm = accountRadiusSnapshot.totalReachKm
+  const accountAvailableClaimKm = accountRadiusSnapshot.availableClaimKm
+  const accountOwnPops = accountRadiusSnapshot.pops
   useEffect(() => {
     const publishedRadiusKm = publishAccountRadiusKm(accountRadiusKm)
+    const publishedAvailableClaimKm = publishAvailableClaimKm(accountAvailableClaimKm)
+    publishOwnPops(accountOwnPops)
     window.parent?.postMessage({
       type: 'poplur-account-radius',
       radiusKm: publishedRadiusKm,
       totalReachKm: accountTotalReachKm,
       postCount: accountPostCount,
+      availableClaimKm: publishedAvailableClaimKm,
+      pops: accountOwnPops,
     }, '*')
-  }, [accountPostCount, accountRadiusKm, accountTotalReachKm])
+  }, [accountPostCount, accountRadiusKm, accountTotalReachKm, accountAvailableClaimKm, accountOwnPops])
   const [pinRadiusPulse, setPinRadiusPulse] = useState<{
     id: string
     deltaKm: number
@@ -3918,6 +3941,79 @@ export default function MapApp() {
   }, [mapPins, benchPin])
   const mapPinsRef = useRef(mapPins)
   mapPinsRef.current = mapPins
+
+  // Read actual reach even when Discovery supplies viewport-ranked pins.
+  // Level/filter changes and marker mounting do not count as delivery.
+  const arrivalPins = useMemo(() => {
+    void currentLocation; void liveSimulation; void blockedUsers
+    const viewer = currentViewerCoords()
+    const posts = discoveryEnabled === true ? discovery.page!.pins : liveMapPosts
+    return posts.filter(pin => !pin.mine && !liveMapPinGhost(pin, viewer)
+      && !isUserBlocked(pin.ownerId, pin.user))
+      .sort((a, b) => b.createdAtMs - a.createdAtMs || a.id.localeCompare(b.id))
+  }, [liveMapPosts, discoveryEnabled, discovery.page, currentLocation, liveSimulation, blockedUsers])
+  const arrivalPinsRef = useRef(arrivalPins)
+  arrivalPinsRef.current = arrivalPins
+  useMapPinArrival({
+    pins: arrivalPins,
+    ready: Boolean(mapLive && liveMapPostsReady && currentViewerCoords()
+      && (rnWebShellRoute || discoveryEnabled !== null)),
+    viewerKey: ownUid,
+    visible: () => mapFrontRef.current,
+    available: () => {
+      const map = mapRef.current
+      const blocked = 'input:focus, textarea:focus, [role="dialog"], [data-map-directions] > *'
+      let parentBlocked = false
+      try { parentBlocked = window.parent !== window && Boolean(window.parent.document.querySelector(blocked)) } catch { /* separate origin */ }
+      return Boolean(map && currentQuality() > 1 && !map.isMoving() && !streetView && !tourOnRef.current
+        && !searchOpen && !weatherOpen && !mapConquerBoardOpen && !mapContentPopupOpen
+        && !focusedPostPicker && !focusedUserKeyRef.current && popLevel !== 'mine'
+        && !BUILDING_STYLE_PREVIEW && !map.getSource('clay-nav-route')
+        && !parentBlocked && !document.querySelector(blocked))
+    },
+    arrive: (pin, openFeed) => {
+      idleBroadcastControlRef.current.stop()
+      cancelTourIdle()
+      let cancelled = false
+      let arrived = false
+      let feedTimer = 0
+      const landed = () => {
+        arrived = true
+        if (cancelled || !mapFrontRef.current || document.hidden) return
+        const delivered = arrivalPinsRef.current.find(candidate => candidate.id === pin.id)
+        if (!delivered) return
+        const current = mapPinsRef.current.find(candidate => candidate.id === pin.id) ?? delivered
+        setCurrentPlace(displayPlaceName(current.name))
+        focusMapPointForPin(current.id)
+        try {
+          if (mapRef.current) { installPinSpotlight(mapRef.current); updatePinSpotlight(mapRef.current, current) }
+        } catch { /* style still settling */ }
+        // Framing the pin is not opening its content: keep NEW through the cut.
+        if (openFeed && window.parent !== window) feedTimer = window.setTimeout(() => {
+          const target = arrivalPinsRef.current.find(candidate => candidate.id === pin.id)
+          if (!cancelled && target?.media && mapFrontRef.current && !document.hidden) {
+            if (target.contentType === 'message') openClickedMapPinContent(target, true)
+            else openPinInFeed(target)
+          }
+        }, PIN_ARRIVAL_FEED_HOLD_MS)
+      }
+      const flew = flyToCenter(pin.coords, 0, {
+        center: pin.coords, zoom: PIN_FOCUS_ZOOM, pitch: MAP_BROWSE_3D_PITCH, bearing: MAP_BROWSE_3D_BEARING,
+      }, 'default', landed, 'pin')
+      const flightSerial = stagedCameraFlightRef.current.serial
+      if (!flew) landed()
+      const map = mapRef.current
+      const cancel = () => {
+        cancelled = true
+        window.clearTimeout(feedTimer)
+        if (!arrived && stagedCameraFlightRef.current.serial === flightSerial) cancelStagedCameraFlight()
+      }
+      // Native renderer gestures arrive as map events, without DOM pointers.
+      const onGesture = (event: { originalEvent?: unknown }) => { if (event.originalEvent) cancel() }
+      map?.on('movestart', onGesture)
+      return () => { cancel(); map?.off('movestart', onGesture) }
+    },
+  })
 
   const idleSeenPins = useRef(new Set<string>())
   const idleBroadcast = useIdleMapBroadcast({

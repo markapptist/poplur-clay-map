@@ -7,6 +7,14 @@ import { track } from './analytics'
  */
 export const ACCOUNT_RADIUS_STORAGE_KEY = 'poplur.totalRadiusKm'
 export const ACCOUNT_RADIUS_CHANGE_EVENT = 'poplur-account-radius-change'
+/**
+ * The claim allowance (earned − committed, km) kept apart from the total.
+ * The total is the profile's number and is what the picker used to read —
+ * which, because seeds count in it, let every drop claim the sum of every
+ * drop before it (7–17 Sep 2026). The picker reads THIS, which only other
+ * people's engagement can raise and which a live claim spends.
+ */
+export const AVAILABLE_CLAIM_STORAGE_KEY = 'poplur.availableClaimKm'
 
 export function normalizeAccountRadiusKm(value: unknown): number {
   const parsed = Number(value)
@@ -24,6 +32,27 @@ function readStoredAccountRadius(): string | null {
 export function readAccountRadiusKm(): number {
   if (typeof window === 'undefined') return 0
   return normalizeAccountRadiusKm(readStoredAccountRadius())
+}
+
+export function readAvailableClaimKm(): number {
+  if (typeof window === 'undefined') return 0
+  try {
+    return normalizeAccountRadiusKm(window.localStorage.getItem(AVAILABLE_CLAIM_STORAGE_KEY))
+  } catch {
+    return 0
+  }
+}
+
+/** Publish the claim allowance; wakes the same listeners as the total so the
+ *  composer's slider re-reads at once. Never tracked as a radius change. */
+export function publishAvailableClaimKm(value: unknown): number {
+  const availableClaimKm = normalizeAccountRadiusKm(value)
+  if (typeof window === 'undefined') return availableClaimKm
+  try { window.localStorage.setItem(AVAILABLE_CLAIM_STORAGE_KEY, String(availableClaimKm)) } catch { /* private mode */ }
+  window.dispatchEvent(new CustomEvent(ACCOUNT_RADIUS_CHANGE_EVENT, {
+    detail: { availableClaimKm },
+  }))
+  return availableClaimKm
 }
 
 // The last total analytics considers current, per document. This is NOT the

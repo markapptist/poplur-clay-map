@@ -104,6 +104,9 @@ import { VERIFIED_CHECK_LABEL, VERIFIED_CHECK_SRC, verifiedCheckKind, type Verif
 import { businessDirectorySnapshot, subscribeBusinessDirectory } from './businessDirectory'
 import { shouldUseMiles } from './units'
 import PoplurDialog from './PoplurDialog'
+import ProfilePictureDialog from './ProfilePictureDialog'
+import ProfileCloseButton from './ProfileCloseButton'
+import { removeProfileMedia } from './profileMediaRemoval'
 import PostDeleteDialog from './PostDeleteDialog'
 import PostReportDialog from './PostReportDialog'
 import { relativeWhen } from './newsMessages'
@@ -722,6 +725,10 @@ export default function ProfileTwin({
     return () => window.clearTimeout(timer)
   }, [highlightPops, viewUser])
   const [capturing, setCapturing] = useState(false)
+  const [pictureMenu, setPictureMenu] = useState(false)
+  const [removingPicture, setRemovingPicture] = useState(false)
+  const [pictureError, setPictureError] = useState<string | null>(null)
+  const captureSessionRef = useRef(0)
   // The profile picture, PERSISTED. This tab unmounts every time the cube
   // turns (HomeTwin gates it on committedTab), so plain state meant a photo
   // you had just taken was gone the moment you left the screen and the card
@@ -843,6 +850,7 @@ export default function ProfileTwin({
     })
   }, [acceptDecodedProfilePhoto])
   useEffect(() => () => {
+    captureSessionRef.current += 1
     const pending = [...detachedPhotoProbeCancelsRef.current]
     pending.forEach(cancel => cancel())
     detachedPhotoProbeCancelsRef.current.clear()
@@ -878,6 +886,36 @@ export default function ProfileTwin({
   }, [photo, photoReloadRevision, retryProfilePhoto, acceptDecodedProfilePhoto])
   const renderedPhotoSource = displayedPhoto?.source ?? null
   const [selfieVideo, setSelfieVideo] = useState<string | null>(() => readStoredSelfieVideo())
+  const clearProfileMedia = useCallback(() => {
+    // Invalidate every decode already in flight before clearing its fallback.
+    committedPhotoProbeSequenceRef.current = ++photoProbeSequenceRef.current
+    detachedPhotoProbeCancelsRef.current.forEach(cancel => cancel())
+    detachedPhotoProbeCancelsRef.current.clear()
+    photoRef.current = null
+    accountPhotoCandidateRef.current = null
+    setPhoto(null)
+    setDisplayedPhoto(null)
+    setSelfieVideo(null)
+    writeStoredPhoto(null)
+    writeStoredSelfieVideo(null)
+    try { window.localStorage.removeItem('poplur.faceid.reference') } catch { /* embedded */ }
+    setAccountProfile({ photoURL: null, videoURL: null }, 'native')
+    window.dispatchEvent(new CustomEvent('poplur-profile-photo', { detail: { photo: null } }))
+    window.dispatchEvent(new CustomEvent('poplur-profile-media', { detail: { photo: null, video: null } }))
+  }, [])
+  const removePicture = async () => {
+    if (removingPicture) return
+    playPop()
+    setRemovingPicture(true)
+    setPictureError(null)
+    try {
+      await removeProfileMedia()
+      clearProfileMedia()
+      setPictureMenu(false)
+    } catch (error) {
+      setPictureError(error instanceof Error ? error.message : 'Could not remove your picture. Try again.')
+    } finally { setRemovingPicture(false) }
+  }
   const selfieVideoRef = useRef<HTMLVideoElement | null>(null)
   const [camError, setCamError] = useState(false)
   const [captureSource, setCaptureSource] = useState<CaptureSource>('camera')
@@ -991,6 +1029,7 @@ export default function ProfileTwin({
     && viewerIdx == null
     && !showNotifs
     && !faceAsk
+    && !pictureMenu
     && !activeCall,
   )
 
@@ -1095,6 +1134,7 @@ export default function ProfileTwin({
       avatarUrl?: string
       video?: string
       selfieVideoURL?: string
+      profileMediaRemoved?: boolean
     }
     const applyProfile = (value: unknown) => {
       const prof = value as NativeProfile
@@ -1131,6 +1171,10 @@ export default function ProfileTwin({
         let local: string | null = null
         try { local = usableUsername(window.localStorage.getItem('poplur.username')) } catch { /* embedded */ }
         if (local) postNativeEvent({ type: 'saveProfileUsername', username: local })
+      }
+      if (prof?.profileMediaRemoved === true) {
+        clearProfileMedia()
+        return
       }
       const nativePhotos = nativeProfilePhotoCandidates(prof)
       if (nativePhotos.length) {
@@ -1175,7 +1219,7 @@ export default function ProfileTwin({
     return () => {
       window.removeEventListener('poplur-native-profile', receiveProfile)
     }
-  }, [probeDetachedProfilePhotos])
+  }, [probeDetachedProfilePhotos, clearProfileMedia])
 
   // Feed, Map and Profile now read one shared, lifecycle-owned Firestore posts
   // snapshot. A complete add/change/delete snapshot replaces the grid; a wipe
@@ -1524,13 +1568,14 @@ export default function ProfileTwin({
   // The cube is the back control for the profile's layers too, topmost first.
   // Kept in a ref-read closure so the handler registers once and still sees
   // current state.
+  const closeCaptureRef = useRef(() => {})
   const backStateRef = useRef({
     shareOpen, viewerCommentOpen, deletePrompt: deletePromptPost != null, deletePending: deletePending != null,
-    viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
+    viewerIdx, capturing, pictureMenu, removingPicture, showNotifs, visiting: Boolean(viewUser),
   })
   backStateRef.current = {
     shareOpen, viewerCommentOpen, deletePrompt: deletePromptPost != null, deletePending: deletePending != null,
-    viewerIdx, capturing, showNotifs, visiting: Boolean(viewUser),
+    viewerIdx, capturing, pictureMenu, removingPicture, showNotifs, visiting: Boolean(viewUser),
   }
   const onBackToOwnRef = useRef(onBackToOwn)
   onBackToOwnRef.current = onBackToOwn
@@ -1540,12 +1585,14 @@ export default function ProfileTwin({
     if (!bindGoBack) return
     bindGoBack(() => {
       const s = backStateRef.current
+      if (s.removingPicture) return true
+      if (s.pictureMenu) { setPictureMenu(false); return true }
       if (s.shareOpen) { setShareOpen(false); return true }
       if (s.viewerCommentOpen) { setViewerCommentOpen(false); return true }
       if (s.deletePrompt) { setDeletePromptPost(null); return true }
       if (s.deletePending) return true
       if (s.viewerIdx != null) { setViewerIdx(null); return true }
-      if (s.capturing) { setCapturing(false); return true }
+      if (s.capturing) { closeCaptureRef.current(); return true }
       if (s.showNotifs) { closeNotifsRef.current(); return true }
       if (s.visiting) { onBackToOwnRef.current?.(); return true }
       return false
@@ -1807,9 +1854,22 @@ export default function ProfileTwin({
     // Straight to capture. The camera used to bloom out of its side control on
     // a 380ms spring (camBtnPop + camEject); the side controls are a pop now,
     // not a launch animation, so a press opens the viewfinder immediately.
+    captureSessionRef.current += 1
+    setSavingPhoto(false)
     setCaptureSource('camera')
     setCapturing(true)
   }
+
+  const closeCapture = () => {
+    playPop()
+    captureSessionRef.current += 1
+    discardSelfieRecordingRef.current = true
+    stopStream()
+    setSavingPhoto(false)
+    setSelfieArOpen(false)
+    setCapturing(false)
+  }
+  closeCaptureRef.current = closeCapture
 
   const commitSelfieVideo = (source: string, preview: string, nativePayload?: Record<string, unknown>) => {
     setSelfieVideo(source)
@@ -1832,10 +1892,8 @@ export default function ProfileTwin({
     })
     window.dispatchEvent(new CustomEvent('poplur-profile-media', { detail: { video: source } }))
     try { window.localStorage.setItem('poplur.faceid.reference', '1') } catch { /* embedded */ }
-    window.setTimeout(() => {
-      setSavingPhoto(false)
-      setCapturing(false)
-    }, 220)
+    setSavingPhoto(false)
+    setCapturing(false)
   }
 
   const captureSelfiePoster = (video: HTMLVideoElement): string | null => {
@@ -1890,8 +1948,10 @@ export default function ProfileTwin({
     playPop()
     setSavingPhoto(true)
     const native = isNativeShell()
+    const session = captureSessionRef.current
     void previewVideo(src)
       .then(preview => {
+        if (session !== captureSessionRef.current) return
         commitSelfieVideo(
           src,
           preview,
@@ -1902,7 +1962,7 @@ export default function ProfileTwin({
         // first caused that reply to be overwritten by the temporary capture.
         if (native) postNativeEvent({ type: 'saveProfileSelfieVideoAsset', src })
       })
-      .catch(() => setSavingPhoto(false))
+      .catch(() => { if (session === captureSessionRef.current) setSavingPhoto(false) })
   }
 
   const recordSelfie = () => {
@@ -1931,11 +1991,13 @@ export default function ProfileTwin({
     setSavingPhoto(true)
     setSelfieRecording(true)
     setSelfieSecondsLeft(SELFIE_DURATION_SECONDS)
+    const session = captureSessionRef.current
     const startedAt = performance.now()
     recorder.ondataavailable = event => {
       if (event.data.size) chunks.push(event.data)
     }
     recorder.onstop = () => {
+      if (session !== captureSessionRef.current) return
       selfieRecorderRef.current = null
       if (selfieStopTimerRef.current != null) window.clearTimeout(selfieStopTimerRef.current)
       if (selfieClockRef.current != null) window.clearInterval(selfieClockRef.current)
@@ -1948,10 +2010,11 @@ export default function ProfileTwin({
       if (!clip.size || !preview) { setSavingPhoto(false); return }
       const reader = new FileReader()
       reader.onload = () => {
+        if (session !== captureSessionRef.current) return
         if (typeof reader.result !== 'string') { setSavingPhoto(false); return }
         commitSelfieVideo(reader.result, preview, { type: 'saveProfileSelfieVideo', video: reader.result })
       }
-      reader.onerror = () => setSavingPhoto(false)
+      reader.onerror = () => { if (session === captureSessionRef.current) setSavingPhoto(false) }
       reader.readAsDataURL(clip)
     }
     selfieRecorderRef.current = recorder
@@ -2111,6 +2174,7 @@ export default function ProfileTwin({
               onActivate={returnToProfileCamera}
             />
           )}
+          <ProfileCloseButton label="Close profile selfie camera" onClose={closeCapture} />
         </TabControlRail>
         {captureSource === 'camera' && selfieArOpen && (
           <ARFilters active={selfieArFilter} onPick={setSelfieArFilter} onClose={() => setSelfieArOpen(false)} />
@@ -2568,6 +2632,16 @@ export default function ProfileTwin({
 
   return (
     <>
+      {pictureMenu && (
+        <ProfilePictureDialog
+          hasPicture={Boolean(photo || selfieVideo)}
+          busy={removingPicture}
+          error={pictureError}
+          onTake={() => { setPictureMenu(false); openCapture() }}
+          onRemove={() => { void removePicture() }}
+          onClose={() => { if (!removingPicture) { playPop(); setPictureMenu(false) } }}
+        />
+      )}
       {faceAsk && (
         <PermissionAlert
           icon="camera"
@@ -2682,8 +2756,12 @@ export default function ProfileTwin({
             <button
               type="button"
               className={styles.avatarTap}
-              onClick={openCapture}
-              aria-label="Record profile selfie video"
+              onClick={() => {
+                playPop()
+                setPictureError(null)
+                setPictureMenu(true)
+              }}
+              aria-label="Change profile picture"
             />
           )}
 

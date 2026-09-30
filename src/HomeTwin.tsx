@@ -12,11 +12,11 @@ import React, { useCallback, useState, useEffect, useRef, useSyncExternalStore }
 import { myPinColor, onMyPinColor } from './myPinColor'
 import { PIN_COLOR_SWATCH } from './pinColors'
 import MapBootCover from './MapBootCover'
+import MapUnavailable from './MapUnavailable'
 import { createPortal } from 'react-dom'
 import styles from './HomeTwin.module.css'
 import motionStyles from './HomeMotionEffects.module.css'
 import { radiusTrophyColor } from './radiusTrophies'
-import surfaceStyles from './TransientPopupSurface.module.css'
 import CubeTab3D, { DEFAULT_CUBE_MODEL, TAB_ORDER, type CubeTab } from './CubeTab3D'
 import { shouldHidePersistentCube } from './persistentCubeVisibility'
 import {
@@ -167,7 +167,7 @@ import {
   type QueuedMapAction,
 } from './nativeMapFallback'
 import { readMapConquerSnapshot, type MapConquerSnapshot } from './mapConquer'
-import { accountSnapshot, onAccountChange } from './accountStore'
+import { accountSnapshot, onAccountChange, setAccountProfile } from './accountStore'
 import ConquerGlance from './ConquerGlance'
 import {
   AIRPORT_CUBE_DISPLAY_MS,
@@ -223,7 +223,8 @@ import {
   registerOwnedPost,
 } from './radiusLedger'
 import { clampClaimRadiusKm } from './claimRadius'
-import { publishAccountRadiusKm } from './accountRadius'
+import { publishAccountRadiusKm, publishAvailableClaimKm } from './accountRadius'
+import { publishOwnPops } from './ownPops'
 import { poplurResourcePool } from './resourcePool'
 import { ownsMainSurface, ownsMapSurface } from './screenOwnership'
 import { applyNativeAccountPrivacy } from './accountPrivacy'
@@ -3099,6 +3100,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         if (Number.isFinite(totalRadiusKm)) {
           authoritativeAccountRadiusKmRef.current = publishAccountRadiusKm(totalRadiusKm)
         }
+        // The composer's ceiling is the claim allowance, never the total.
+        if (typeof event.data.availableClaimKm === 'number' && Number.isFinite(event.data.availableClaimKm)) {
+          publishAvailableClaimKm(event.data.availableClaimKm)
+        }
+        // The viewer's own live pops, for the one-pop-per-place warning.
+        if (Array.isArray(event.data.pops)) publishOwnPops(event.data.pops)
       }
       if (event.data.type === 'poplur-map-airport') {
         const id = typeof event.data.airportId === 'string'
@@ -3711,8 +3718,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     return () => window.removeEventListener('poplur-profile-photo', onPhoto)
   }, [])
   useEffect(() => {
-    type ProfileMedia = { uid?: string | null; username?: string; photo?: string | null; video?: string | null }
+    type ProfileMedia = { uid?: string | null; username?: string; photo?: string | null; video?: string | null; profileMediaRemoved?: boolean }
     const applyProfileMedia = (detail: ProfileMedia | undefined) => {
+      if (detail?.profileMediaRemoved) {
+        setAccountProfile({ photoURL: null, videoURL: null }, 'native')
+        try { window.localStorage.removeItem('poplur.faceid.reference') } catch { /* embedded */ }
+      }
       if (typeof detail?.uid === 'string' || detail?.uid === null) setOwnUid(detail.uid ?? null)
       if (typeof detail?.photo === 'string' || detail?.photo === null) setOwnPhoto(detail.photo ?? null)
       if (typeof detail?.video === 'string' || detail?.video === null) {
@@ -4694,6 +4705,9 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       setNativeAccountTotals(data)
       setAccountTotalReachKm(data.totalReachKm)
       authoritativeAccountRadiusKmRef.current = publishAccountRadiusKm(data.totalReachKm)
+      // Earned once, spent once: the phone sends earned − committed; a shell
+      // from before the split sends only earned, which the rule bounds.
+      publishAvailableClaimKm(typeof data.availableClaimKm === 'number' ? data.availableClaimKm : data.radiusKm)
     }
     window.addEventListener('poplur-native-account-radius', receive)
     return () => window.removeEventListener('poplur-native-account-radius', receive)
@@ -5684,7 +5698,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
             {/* Only while actually booting: once lifted the cover is invisible
                 and the bar's compositor animations should not keep running
                 under a live map. */}
-            {!mapPainted && activeTab === 'map' && <MapBootCover />}
+            {!mapPainted && !mapFailedVisible && activeTab === 'map' && <MapBootCover />}
           </div>
         </>
       )}
@@ -6033,13 +6047,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           already running hot. The cube's own physics carries the motion. */}
 
       {mapFailedVisible && activeTab === 'map' && committedTab === 'map' && (
-        <div className={`${styles.mapFailure} ${surfaceStyles.scrim}`} role="alertdialog" aria-modal="true" aria-labelledby="map-failure-title">
-          <div className={`${styles.mapFailureCard} ${surfaceStyles.surface}`}>
-            <h2 id="map-failure-title">MAP COULDN'T LOAD</h2>
-            <p>Check your connection, then try the map again.</p>
-            <button type="button" className={surfaceStyles.primary} autoFocus onClick={retryMapNow}>TRY AGAIN</button>
-          </div>
-        </div>
+        <MapUnavailable onRetry={retryMapNow} onLeave={() => setActiveTab('feed')} />
       )}
 
       {/* Bottom HUD — channel changer + reach metric. Persistent

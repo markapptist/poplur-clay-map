@@ -285,6 +285,10 @@ export interface PopPin {
   }
   /** Feed channel and optional uploaded creative for the intercept window. */
   channel?: string
+  /** The author's words, separate from the media's accessibility label. */
+  caption?: string
+  contentType?: 'message' | 'post'
+  messageCard?: boolean
   media?: {
     kind: 'image' | 'video'
     src: string

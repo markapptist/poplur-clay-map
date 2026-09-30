@@ -1,0 +1,31 @@
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 47;
+  background: rgba(25, 6, 17, 0.18);
+}
+
+/* Reuse the map window's frame, header and buttons; only size this shorter
+   choice window to its content instead of reserving room for a radius slider. */
+.dialog.dialog {
+  top: 50%;
+  width: min(360px, calc(100% - 36px));
+  min-width: 0;
+  max-height: calc(100% - 32px);
+  /* The map window is translucent to reveal a radius claim. Here its same
+     gradients sit on a solid backing so profile labels cannot show through. */
+  background-color: #220817;
+}
+
+.title { margin: 0; }
+.body { display: grid; gap: 12px; padding-bottom: 18px; }
+.remove { justify-content: flex-start; gap: 10px; text-align: left; font-size: 12px; }
+.dialog button:disabled { cursor: default; opacity: 0.55; }
+.error {
+  margin: 0;
+  padding: 12px;
+  border-radius: 14px;
+  color: #72103f;
+  background: #fff1f8;
+  font: 750 13px/1.4 system-ui, sans-serif;
+}

@@ -1,0 +1,12 @@
+.host {
+  position: absolute;
+  inset: 0;
+  /* Recovery replaces the map, while the shared cube and rails stay usable. */
+  z-index: 255;
+  display: grid;
+  place-items: center;
+  padding: max(96px, calc(env(safe-area-inset-top) + 70px)) 18px max(160px, calc(env(safe-area-inset-bottom) + 130px));
+  background: radial-gradient(ellipse at 50% 45%, #321020 0%, #110b14 65%);
+  overflow-y: auto;
+  pointer-events: none;
+}

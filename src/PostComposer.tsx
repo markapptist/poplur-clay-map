@@ -45,6 +45,11 @@ import {
 } from './accountPrivacy'
 import { CLAIM_RADIUS_SEED_KM, clampClaimRadiusKm, formatClaimRadiusKm, preferredClaimRadiusKm } from './claimRadius'
 import { useClaimRadiusLimitKm } from './useClaimRadiusLimit'
+import { postSpotGate } from './postSpotGate'
+import { OWN_POPS_CHANGE_EVENT, formatOwnPopAge, formatOwnPopDistance, nearestOwnPop, readOwnPops, type OwnPop } from './ownPops'
+import { readViewerFix } from './viewerFix'
+import { isRNWebShellRoute } from './nativeBridge'
+import { accountSnapshot } from './accountStore'
 
 // Web twin of PostCaptureComposerOverlay.swift — the one composer every capture
 // route ends in, with the same step machine the app ships:
@@ -137,7 +142,7 @@ function stillFromVideo(video: HTMLVideoElement): string | null {
 export default function PostComposer({
   items,
   media: incomingMedia,
-  target,
+  target: incomingTarget,
   draft,
   onClose,
   onPosted,
@@ -178,6 +183,16 @@ export default function PostComposer({
    * without dispatching production HomeTwin events. */
   onRequestLocation?: () => void
 }) {
+  const [localTarget, setLocalTarget] = useState<ComposerTarget | null>(null)
+  const target = localTarget ?? incomingTarget
+  useEffect(() => { setLocalTarget(null) }, [incomingTarget?.lat, incomingTarget?.lng])
+  const [viewerFix, setViewerFix] = useState(readViewerFix)
+  useEffect(() => {
+    const update = () => setViewerFix(readViewerFix())
+    window.addEventListener('poplur-location', update)
+    update()
+    return () => window.removeEventListener('poplur-location', update)
+  }, [])
   const [step, setStep] = useState<PostComposerStep>(draft ? 'channel' : initialStep ?? 'finish')
   const [filterId, setFilterId] = useState(draft?.filterId ?? 'none')
   const [effectId, setEffectId] = useState<VFXEffectId>((draft?.effectId as VFXEffectId | undefined) ?? 'none')
@@ -219,6 +234,28 @@ export default function PostComposer({
   const [pinColor, setPinColor] = useState<PinColorId | null>(draft?.pinColor ?? null)
   const [channelPickerOpen, setChannelPickerOpen] = useState(false)
   const claimRadiusMaxKm = useClaimRadiusLimitKm()
+  // Free posting is "where you are": a spot farther than a walk from the
+  // viewer's fix is a placement, which is paid (Phase 2) and not offered here.
+  // The server cannot see the device, so this is the honest client's half;
+  // the claim ceiling and post rate in firestore.rules bound the rest.
+  const spotGate = postSpotGate({
+    target: target ? { lat: target.lat, lng: target.lng } : null,
+    fix: viewerFix,
+    viewerUid: accountSnapshot().uid,
+    harness: isRNWebShellRoute(),
+  })
+  // One live pop per place: a pop within 5 km of your own live pop replaces
+  // it (server rule, postReplacesNearby.ts). Warn first, with the pop at stake.
+  const [ownPops, setOwnPops] = useState<OwnPop[]>(() => readOwnPops())
+  useEffect(() => {
+    const sync = () => setOwnPops(readOwnPops())
+    window.addEventListener(OWN_POPS_CHANGE_EVENT, sync)
+    return () => window.removeEventListener(OWN_POPS_CHANGE_EVENT, sync)
+  }, [])
+  const nearbyOwn = React.useMemo(() => (target ? nearestOwnPop(target, ownPops) : null), [target, ownPops])
+  const [replacePrompt, setReplacePrompt] = useState(false)
+  const replaceAckRef = React.useRef<string | null>(null)
+  useEffect(() => { setReplacePrompt(false); replaceAckRef.current = null }, [target])
   const [radiusKm, setRadiusKm] = useState(() => target?.radiusKm === undefined
     ? preferredClaimRadiusKm(claimRadiusMaxKm)
     : clampClaimRadiusKm(target.radiusKm, claimRadiusMaxKm))
@@ -625,16 +662,30 @@ export default function PostComposer({
       setPublishError({ message: privacyError, retryable: false })
       return
     }
+    const destination = caption.trim() ? 'feed' as const : 'tv' as const
+    const audience = 'public' as const
+    // Re-check at the publish boundary. A stale draft or bridge message cannot
+    // bypass a limit that changed while the composer was open — nor the spot
+    // rule: a fix that moved since the spot was picked is judged now.
+    if (!target || !postSpotGate({
+      target, fix: readViewerFix(), viewerUid: accountSnapshot().uid, harness: isRNWebShellRoute(),
+    }).allowed) {
+      setPublishError({ message: 'Choose a spot within 1 km of your current location.', retryable: false })
+      setViewerFix(readViewerFix())
+      return
+    }
+    // The replacement warning is answered per pop: a different nearby pop
+    // (the list moved under us) asks again.
+    if (nearbyOwn && replaceAckRef.current !== nearbyOwn.pop.id) {
+      setReplacePrompt(true)
+      return
+    }
     setPublishError(null)
     publishingRef.current = true
     retirePreview()
     setPublishing(true)
     setUploadProgress(null)
     setUploadPhaseState('preparing')
-    const destination = caption.trim() ? 'feed' as const : 'tv' as const
-    const audience = 'public' as const
-    // Re-check at the publish boundary. A stale draft or bridge message cannot
-    // bypass a limit that changed while the composer was open.
     const publishedRadiusKm = clampClaimRadiusKm(radiusKm, claimRadiusMaxKm)
     const post: PublishedPost = {
       media,
@@ -1182,6 +1233,19 @@ export default function PostComposer({
               <em>{target ? 'Change' : 'Choose'}</em>
             </button>
 
+            {!spotGate.allowed && <div className={styles.locationNotice}>
+              <p>{spotGate.reason === 'remote'
+                ? `${Math.round(spotGate.distanceKm ?? 0).toLocaleString()} km away. Choose a spot within 1 km of you.`
+                : 'Choose a nearby spot to post. Your location is needed to confirm it.'}</p>
+              {viewerFix && <button type="button" className={styles.secondary} onClick={() => {
+                const fix = readViewerFix()
+                if (!fix) { setViewerFix(null); return }
+                playPop()
+                setLocalTarget({ lat: fix.latitude, lng: fix.longitude, radiusKm })
+                setPublishError(null)
+              }}>Use my current location</button>}
+            </div>}
+
             <div className={styles.summaryRow} aria-label="Pin colour">
               <span className={styles.summaryGlyph} aria-hidden="true">📍</span>
               <span>
@@ -1247,19 +1311,35 @@ export default function PostComposer({
               bug, while a disabled one with the reason under it teaches the
               step. `📍 Pick a spot on the map` directly above is the way out,
               so this is never a dead end. */}
+          {replacePrompt && nearbyOwn && (
+            <div className={styles.replaceNotice} role="alertdialog" aria-live="assertive" aria-label="This pop replaces one of yours">
+              <strong>This spot replaces one of your pops</strong>
+              <p>
+                You already have a pop {formatOwnPopDistance(nearbyOwn.distanceKm)} from here
+                {formatOwnPopAge(nearbyOwn.pop.createdAtMillis) ? ` — posted ${formatOwnPopAge(nearbyOwn.pop.createdAtMillis)}` : ''}
+                {nearbyOwn.pop.radiusKm > 0 ? `, ${formatClaimRadiusKm(Math.round(nearbyOwn.pop.radiusKm * 10) / 10)} km reach` : ''}
+                {nearbyOwn.pop.likeCount > 0 ? `, ${nearbyOwn.pop.likeCount} ${nearbyOwn.pop.likeCount === 1 ? 'like' : 'likes'}` : ''}.
+                {' '}One live pop per place: posting here replaces it, and its reach carries over to this pop.
+              </p>
+              <div className={styles.replaceActions}>
+                <button type="button" className={styles.secondary} onClick={() => { playPop(); setReplacePrompt(false) }}>Keep my pop</button>
+                <button type="button" className={styles.primary} onClick={() => { playPop(); replaceAckRef.current = nearbyOwn.pop.id; setReplacePrompt(false); void publish() }}>Replace it</button>
+              </div>
+            </div>
+          )}
           <button
             className={styles.primary}
             onClick={() => { void publish() }}
             // A pop is a picture or a message. Neither is not a pop, so the
             // button will not publish one — the same rule the map applies to
             // rows that arrive without either.
-            disabled={publishing || !rightsAttested || !target || (draft?.newsMessage && !caption.trim()) || (!media && !caption.trim())}
+            disabled={publishing || !rightsAttested || !target || !spotGate.allowed || (draft?.newsMessage && !caption.trim()) || (!media && !caption.trim())}
           >
             {publishing
               ? 'Uploading…'
               : publishError?.retryable
                 ? 'Retry upload'
-                : !media && !caption.trim() ? 'Add a photo or write a message' : target ? draft?.newsMessage ? locationVisibility === 'approximate' ? 'Post message to map' : 'Post message' : `Post to ${caption.trim() ? 'News Feed' : 'TV'}` : 'Choose a spot to post'}
+                : !media && !caption.trim() ? 'Add a photo or write a message' : target && !spotGate.allowed ? (spotGate.reason === 'remote' ? 'Choose a nearby spot' : 'Waiting for your location') : target ? draft?.newsMessage ? locationVisibility === 'approximate' ? 'Post message to map' : 'Post message' : `Post to ${caption.trim() ? 'News Feed' : 'TV'}` : 'Choose a spot to post'}
           </button>
           {publishError && !publishing && (
             <div className={styles.publishError} role="alert">

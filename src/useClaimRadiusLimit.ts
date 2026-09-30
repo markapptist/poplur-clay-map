@@ -2,21 +2,26 @@ import { useCallback, useEffect, useState } from 'react'
 import { claimRadiusLimitKm } from './claimRadius'
 import {
   ACCOUNT_RADIUS_CHANGE_EVENT,
-  ACCOUNT_RADIUS_STORAGE_KEY,
-  readAccountRadiusKm,
+  AVAILABLE_CLAIM_STORAGE_KEY,
+  readAvailableClaimKm,
 } from './accountRadius'
 
 /**
  * Keeps posting controls aligned with the Firestore-backed account cache,
  * including the map iframe. Same-document writes arrive as a custom event and
  * parent/child document writes arrive through postMessage or storage events.
+ *
+ * The ceiling is the claim ALLOWANCE (earned − committed), never the profile's
+ * total: offering the total is what let thirteen unengaged posts climb to the
+ * world radius, and offering more than the rule accepts is what once refused
+ * legitimate claims on upload with nothing to explain it.
  */
-export function useClaimRadiusLimitKm(authoritativeRadiusKm?: number): number {
+export function useClaimRadiusLimitKm(authoritativeAvailableClaimKm?: number): number {
   const read = useCallback(() => claimRadiusLimitKm(
-    authoritativeRadiusKm === undefined
-      ? readAccountRadiusKm()
-      : authoritativeRadiusKm,
-  ), [authoritativeRadiusKm])
+    authoritativeAvailableClaimKm === undefined
+      ? readAvailableClaimKm()
+      : authoritativeAvailableClaimKm,
+  ), [authoritativeAvailableClaimKm])
   const [limit, setLimit] = useState(read)
 
   useEffect(() => {
@@ -24,7 +29,7 @@ export function useClaimRadiusLimitKm(authoritativeRadiusKm?: number): number {
       if (typeof StorageEvent !== 'undefined'
         && event instanceof StorageEvent
         && event.key !== null
-        && event.key !== ACCOUNT_RADIUS_STORAGE_KEY) return
+        && event.key !== AVAILABLE_CLAIM_STORAGE_KEY) return
       setLimit(read())
     }
     window.addEventListener(ACCOUNT_RADIUS_CHANGE_EVENT, sync)
