@@ -26,12 +26,15 @@ export interface RealtimeProfilePost {
 
 /** A shareable pop is addressed by its immutable post id, never its channel.
  * Returning null keeps legacy rows without an id from masquerading as a
- * different post on the same channel. */
+ * different post on the same channel. The link opens poplur.ca — poplur.com
+ * does not resolve, so every earlier pop link was dead — with the id as ?pop=,
+ * so a pop page on the site can take it over without another app release.
+ * iOS, Android and React Native build this same link from a postId. */
 export function profilePostShareUrl(
   post: Pick<RealtimeProfilePost, 'id'>,
 ): string | null {
   const postId = post.id?.trim()
-  return postId ? `https://poplur.com/p/${encodeURIComponent(postId)}` : null
+  return postId ? `https://www.poplur.ca/?pop=${encodeURIComponent(postId)}` : null
 }
 
 // A second copy of FeedTwin's CHANNELS numbering, kept here because this

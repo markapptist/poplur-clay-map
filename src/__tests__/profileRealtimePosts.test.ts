@@ -67,8 +67,8 @@ describe('realtime Profile post projection', () => {
   })
 
   it('builds a unique canonical share URL from the immutable post id', () => {
-    expect(profilePostShareUrl({ id: 'post/a b' })).toBe('https://poplur.com/p/post%2Fa%20b')
-    expect(profilePostShareUrl({ id: 'post-two' })).toBe('https://poplur.com/p/post-two')
+    expect(profilePostShareUrl({ id: 'post/a b' })).toBe('https://www.poplur.ca/?pop=post%2Fa%20b')
+    expect(profilePostShareUrl({ id: 'post-two' })).toBe('https://www.poplur.ca/?pop=post-two')
     expect(profilePostShareUrl({})).toBeNull()
   })
 

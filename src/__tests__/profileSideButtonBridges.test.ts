@@ -90,6 +90,24 @@ describe('Profile side-button bridge contracts', () => {
     )
   })
 
+  it('builds the same poplur.ca pop and invite links in every shell', () => {
+    // poplur.com has no DNS, so a link built on it is dead on arrival.
+    for (const source of [rnSource, androidSource, iosSource]) {
+      expect(source).not.toContain('https://poplur.com')
+    }
+    expect(rnSource).toContain('`https://www.poplur.ca/?pop=${encodeURIComponent(message.postId)}`')
+    // Uri.encode leaves exactly encodeURIComponent's characters unescaped.
+    expect(androidSource).toContain('"https://www.poplur.ca/?pop=${Uri.encode(postId)}"')
+    expect(androidSource).toContain('"https://www.poplur.ca/?ref=${Uri.encode(code)}"')
+    expect(iosSource).toContain('"https://www.poplur.ca/?pop=\\(component(postId))"')
+    expect(iosSource).toContain('"https://www.poplur.ca/?ref=\\(component(code))"')
+    expect(iosSource).toContain('let url = URL(string: PoplurShareLink.pop(postId))')
+    const unescaped = Array.from({ length: 128 }, (_, code) => String.fromCharCode(code))
+      .filter(char => encodeURIComponent(char) === char)
+    const swiftAllowed = iosSource.match(/uriComponentAllowed = CharacterSet\(\s*charactersIn: "([^"]+)"/)?.[1] ?? ''
+    expect([...swiftAllowed].sort()).toEqual(unescaped)
+  })
+
   it('projects visited profiles by stable uid before handle fallback', () => {
     expect(profileSource).toContain(
       'profilePostsFromRealtime(realtimePosts, accountUid, viewUser, viewUserId)',
