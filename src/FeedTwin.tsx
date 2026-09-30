@@ -43,6 +43,7 @@ import ClayCornerButton from './ClayCornerButton'
 import SideControlIconButton, { SideControlIconImage } from './SideControlIcon'
 import PoplurDialog from './PoplurDialog'
 import PostDeleteDialog from './PostDeleteDialog'
+import PostReportDialog from './PostReportDialog'
 import { playFeedVideo } from './feedVideoPlayback'
 import PoplurStatusToast from './PoplurStatusToast'
 import FeedChannelRail from './FeedChannelRail'
@@ -74,7 +75,7 @@ import { currentViewerCoords as viewerCoordsFromFix } from './viewerFix'
 import { useFeedPostComments } from './feedPostComments'
 import { mediaTimeLabel } from './mediaTiming'
 import { FEED_CHANNEL_STATIC_MS, FEED_LIVE_DWELL_SECONDS, FEED_PHOTO_DWELL_SECONDS, nextBroadcastPost } from './feedBroadcast'
-import { blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } from './blockedUsers'
+import { blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange, reportPost } from './blockedUsers'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
 // a fullscreen vertical TV-channel video pager. Vertical swipe changes channel;
@@ -981,6 +982,9 @@ export default function FeedTwin({
   // blockedUsers.ts filters these posts on the next render — it just is not
   // where the decision gets made.
   const [deletePromptPost, setDeletePromptPost] = useState<ChannelPost | null>(null)
+  // "Report this pop" from the comments sheet, and what came of it.
+  const [reportPromptPost, setReportPromptPost] = useState<ChannelPost | null>(null)
+  const [reportNote, setReportNote] = useState<{ ok: boolean; detail: string } | null>(null)
   const [deletePending, setDeletePending] = useState<{ requestId: string; postId: string } | null>(null)
   const canDeletePost = Boolean(post?.id && post.ownerId && accountUid && post.ownerId === accountUid)
   const confirmDelete = () => {
@@ -2432,6 +2436,24 @@ export default function FeedTwin({
             dataId={`feed-delete:${deletePromptPost.id ?? 'post'}`}
           />
         )}
+        {reportPromptPost && (
+          <PostReportDialog
+            onReport={() => {
+              playPop()
+              const target = reportPromptPost
+              setReportPromptPost(null)
+              void reportPost({ postId: target.id, ownerUid: target.ownerId, username: target.user, reason: 'pop' })
+                .then(route => {
+                  setReportNote(route === 'local'
+                    ? { ok: false, detail: 'The report could not be sent. Try again.' }
+                    : { ok: true, detail: 'Poplur reviews every report.' })
+                  window.setTimeout(() => setReportNote(null), 2600)
+                })
+            }}
+            onCancel={() => { playPop(); setReportPromptPost(null) }}
+            dataId={`feed-report:${reportPromptPost.id}`}
+          />
+        )}
         {/* The no-signal card above is aria-hidden, so with nothing on the
             live channel would otherwise announce nothing at all. */}
         {ch.id === 'live' && !post && (
@@ -2570,6 +2592,18 @@ export default function FeedTwin({
             </div>
 
             <div className={styles.commentTitle}>Comment on {post.user}</div>
+            {/* Reporting is about the pop, not the person, so it lives with the
+                pop's comments rather than on the rail beside Like. Only on
+                someone else's pop that carries its owner's id. */}
+            {dmPeer && post.id && (
+              <button
+                type="button"
+                className={styles.commentReport}
+                onClick={() => { playPop(); setReportPromptPost(post); closeComments() }}
+              >
+                Report this pop
+              </button>
+            )}
             <div className={styles.commentRow}>
               <input
                 className={styles.commentInput}
@@ -2586,6 +2620,13 @@ export default function FeedTwin({
       )}
 
       {commentSent && <PoplurStatusToast title="Comment posted" detail="Your reply is live" />}
+      {reportNote && (
+        <PoplurStatusToast
+          title={reportNote.ok ? 'Reported to Poplur' : 'Not sent'}
+          detail={reportNote.detail}
+          tone={reportNote.ok ? 'success' : 'error'}
+        />
+      )}
       {shareNote && (
         <PoplurStatusToast
           title={/unavailable/i.test(shareNote) ? 'Could not share' : 'Post ready'}

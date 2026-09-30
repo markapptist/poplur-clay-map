@@ -205,6 +205,35 @@ export async function reportUser(who: { uid?: string | null; username?: string |
   return 'local'
 }
 
+/** Report one pop to Poplur. Like reportUser it has no local consequence. The
+ *  report names the pop and its owner, so a moderator can find both, and the
+ *  owner is never told who reported it (clients cannot read `reports`). */
+export async function reportPost(pop: { postId?: string | null; ownerUid?: string | null; username?: string | null; reason?: string }): Promise<SafetyRoute> {
+  const postId = pop.postId?.trim().slice(0, 128) || undefined
+  const uid = pop.ownerUid?.trim().slice(0, 128) || undefined
+  if (!postId || !uid) return 'local'
+  const reason = (pop.reason ?? 'pop').slice(0, 64)
+  const username = (pop.username ?? '').slice(0, 48)
+  if (postNativeEvent({ type: 'reportPost', postId, userId: uid, username, reason })) return 'native'
+  const me = isNativeShell() ? null : currentUid()
+  if (me && me !== uid) {
+    try {
+      await addDoc(collection(webDb(), 'reports'), {
+        reporterId: me,
+        userId: uid,
+        postId,
+        username,
+        reason,
+        source: 'post',
+        platform: 'web',
+        createdAt: serverTimestamp(),
+      })
+      return 'web'
+    } catch { /* not recorded */ }
+  }
+  return 'local'
+}
+
 /** Test seam. */
 export function resetBlockedUsersForTests(): void {
   entries = []

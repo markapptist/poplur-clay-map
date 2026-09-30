@@ -105,8 +105,9 @@ import { businessDirectorySnapshot, subscribeBusinessDirectory } from './busines
 import { shouldUseMiles } from './units'
 import PoplurDialog from './PoplurDialog'
 import PostDeleteDialog from './PostDeleteDialog'
+import PostReportDialog from './PostReportDialog'
 import { relativeWhen } from './newsMessages'
-import { blockUser, reportUser } from './blockedUsers'
+import { blockUser, reportPost, reportUser } from './blockedUsers'
 
 // Browser twin of the iOS Profile screen (ProfileView.swift). Light ground
 // with the STATIC 3D Mark head (the talking rig's neutral render — animation
@@ -941,6 +942,8 @@ export default function ProfileTwin({
   // The visited profile's Block / Report dialog (PoplurDialog) and its toast.
   const [blockPrompt, setBlockPrompt] = useState(false)
   const [safetyNote, setSafetyNote] = useState<string | null>(null)
+  // "Report this pop" from a visited profile's opened pop.
+  const [reportPromptPostId, setReportPromptPostId] = useState<string | null>(null)
   const [mailText, setMailText] = useState('')
   const [shareNote, setShareNote] = useState<string | null>(null)
   const [pendingProfileDM, setPendingProfileDM] = useState<{
@@ -3094,6 +3097,15 @@ export default function ProfileTwin({
                   <button type="button" className={surfaceStyles.primary} onClick={sendViewerComment} disabled={!viewerCommentText.trim()}>Post</button>
                 </div>
                 <button type="button" className={`${styles.viewerDialogCancel} ${surfaceStyles.secondary}`} onClick={() => setViewerCommentOpen(false)}>Cancel</button>
+                {visiting && viewerPost?.id && visitingRecipientId && (
+                  <button
+                    type="button"
+                    className={`${styles.viewerDialogCancel} ${surfaceStyles.secondary}`}
+                    onClick={() => { playPop(); setViewerCommentOpen(false); setReportPromptPostId(viewerPost.id ?? null) }}
+                  >
+                    Report this pop
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -3104,6 +3116,22 @@ export default function ProfileTwin({
               onDelete={() => { playPop(); confirmViewerDelete() }}
               onCancel={() => { playPop(); setDeletePromptPost(null) }}
               dataId={`delete:${deletePromptPost.id ?? 'post'}`}
+            />
+          )}
+          {reportPromptPostId && visitingRecipientId && (
+            <PostReportDialog
+              onReport={() => {
+                playPop()
+                const postId = reportPromptPostId
+                setReportPromptPostId(null)
+                void reportPost({ postId, ownerUid: visitingRecipientId, username: viewUser ?? shownName, reason: 'pop' })
+                  .then(route => {
+                    setSafetyNote(route === 'local' ? 'The report could not be sent. Try again.' : 'Reported this pop to Poplur')
+                    window.setTimeout(() => setSafetyNote(null), 2600)
+                  })
+              }}
+              onCancel={() => { playPop(); setReportPromptPostId(null) }}
+              dataId={`report:${reportPromptPostId}`}
             />
           )}
 
