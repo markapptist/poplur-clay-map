@@ -1,4 +1,4 @@
-import { isGateMuted, onGateChange, setUserMuted } from './audioGate'
+import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { currentAudioOwner, holdThroughSilence, registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
 import { setMusicPlayback } from './musicPlayback'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
@@ -297,6 +297,9 @@ export function setRadioScreenVisible(visible: boolean): void {
 }
 
 function isRadioGateMuted(): boolean {
+  // Outside scope lifts only the lifecycle half of the gate. A listener who
+  // muted the radio heard it start the moment they left the app.
+  if (isUserMuted()) return true
   const outsideBackground = readRadioScope() === 'outside'
     && typeof document !== 'undefined'
     && document.visibilityState === 'hidden'
@@ -323,6 +326,9 @@ if (typeof window !== 'undefined') {
     if (d.poplurRadioScope === 'screen' || d.poplurRadioScope === 'app' || d.poplurRadioScope === 'outside') {
       setRadioScope(d.poplurRadioScope)
     }
+    // Android's "Radio outside app" notification has a Stop button; the station
+    // lives here, so the shell asks rather than silencing the WebView itself.
+    if (d.type === 'poplurRadioStop') stopMapRadio()
     if (d.poplurRadioBackgroundQuery) {
       try {
         (e.source as Window | null)?.postMessage(
