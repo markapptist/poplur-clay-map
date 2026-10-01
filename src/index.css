@@ -356,6 +356,13 @@ html.native-map-live,
   filter: none !important;
   text-shadow: none !important;
 }
+/* Except the colour of the camera's AR grade. The rule above left the A03's
+   viewfinder ungraded while its photos were graded. Camera.tsx hands the
+   colour-matrix part over (arFilterLiteCss: no blur, drop-shadow or anaglyph
+   pass), and this outranks both that rule and PoplurLiteTier's injected one. */
+.tier-low video[data-poplur-grade] {
+  filter: var(--poplur-live-grade-lite, none) !important;
+}
 
 /* ── tier-ios (auto: iOS native shell only; force with ?iosTier=1) ─────────
    Set on <html> by main.tsx. tier-low above can never reach iOS — WebKit does

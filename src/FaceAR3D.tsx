@@ -5,12 +5,22 @@ import { arFilterCatalog, type ARFilterModel } from './arFilterCatalog'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type { Detection } from './mlDetect'
 import { onFrame } from './frameGovernor'
+import { sustainManagedRendering } from './nativeBridge'
 import { PoplurPerformanceManager, type PoplurRendererHandle } from './poplurPerformanceManager'
 import { releaseWebGL } from './threeCleanup'
 import { faceAccessoryAnchor, easePose, poseEase, type DrawnPose } from './faceARLandmarks'
 import styles from './FaceAROverlay.module.css'
 
 const THREE_D_FILTERS = new Set(['beauty', 'brighten', 'glow', 'sharpen', 'cool', 'vintage'])
+
+// A costume has to move with the face for as long as there is one. It drew on
+// the ambient lane, which sleeps about 15 s after the last touch everywhere and
+// for good after boot on 3GB-class phones, so the A03 never showed a costume
+// at all. The managed lane runs exactly while a lease is held; each detection
+// with a face renews one at the decorative budget, and the lease runs out
+// shortly after the face leaves.
+const FACE_TRACK_LEASE_MS = 1_500
+const FACE_TRACK_RENEW_MS = 500
 
 
 /** A filter has a 3D part when it is one of the code-built six, or when the
@@ -342,9 +352,16 @@ export default function FaceAR3D({ detections, filter }: {
   const detectionsRef = useRef(detections)
   const performanceHandleRef = useRef<PoplurRendererHandle | null>(null)
   detectionsRef.current = detections
+  const lastLeaseRef = useRef(Number.NEGATIVE_INFINITY)
   useEffect(() => {
-    performanceHandleRef.current?.setDemand(detections.some(isFace))
-  }, [detections])
+    const demanded = detections.some(isFace)
+    performanceHandleRef.current?.setDemand(demanded)
+    if (!demanded || !hasFaceAR3D(filter)) return
+    const now = performance.now()
+    if (now - lastLeaseRef.current < FACE_TRACK_RENEW_MS) return
+    lastLeaseRef.current = now
+    sustainManagedRendering(FACE_TRACK_LEASE_MS)
+  }, [detections, filter])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -498,7 +515,7 @@ export default function FaceAR3D({ detections, filter }: {
         // setSize even when the CSS bounds are unchanged so pressure modes
         // actually release the old high-DPI framebuffer.
         resize(true)
-        if (active && !stopFrames) stopFrames = onFrame(frame, 'ambient')
+        if (active && !stopFrames) stopFrames = onFrame(frame, 'managed')
         else if (!active && stopFrames) { stopFrames(); stopFrames = null }
       },
       releaseInactiveResources: () => {

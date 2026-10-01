@@ -27,6 +27,7 @@ import { isKeyboardCameraRollClick } from './cameraControlActivation'
 import {
   arFilterCatalog,
   arFilterLiveCss,
+  arFilterLiteCss,
   anaglyphFilterId,
   arFiltersNeedingSvg,
   applyAnaglyphToCanvas,
@@ -463,6 +464,8 @@ export default function Camera({
   // The viewfinder gets the SVG-backed chain; the capture canvas cannot use it
   // (`ctx.filter` rejects `url(#…)` in Safari) and does the split in pixels.
   const filterLiveCss = arFilterLiveCss(filterEntry)
+  // What a tier-low phone's viewfinder keeps of it (index.css): the colour.
+  const filterLiteCss = arFilterLiteCss(filterEntry)
   // The capture currently in the post composer (photo taken, video recorded, or
   // a roll pick). Null when the camera is just a viewfinder.
   const [composing, setComposing] = useState<ComposerMedia | null>(null)
@@ -1955,7 +1958,9 @@ export default function Camera({
           <video
             ref={videoRef}
             className={`${styles.camSpoofFeed} ${facing === 'user' ? styles.cameraFeedMirror : ''}`}
+            data-poplur-grade={filterLiteCss === 'none' ? undefined : ''}
             style={{
+              ...({ '--poplur-live-grade-lite': filterLiteCss } as React.CSSProperties),
               objectFit: !hardwareZoom && zoom < 1 ? 'contain' : 'cover',
               display: streamOn ? '' : 'none',
               // THE AR FILTER. `filterCss` was computed above and then only

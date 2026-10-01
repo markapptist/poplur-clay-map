@@ -172,6 +172,18 @@ export function arFilterLiveCss(entry: ARFilterEntry | undefined): string {
   return anaglyph > 0 ? `url(#${anaglyphFilterId(entry.id)}) ${entry.css}` : entry.css
 }
 
+// Colour-matrix functions only. On tier-low phones the viewfinder keeps these
+// and drops the rest: blur, drop-shadow and the anaglyph's SVG pass are what
+// cost the A03 its frames, while a colour matrix is one cheap shader pass.
+// Captures still bake the full grade.
+const COLOUR_MATRIX_FILTER = /\b(?:brightness|contrast|saturate|hue-rotate|sepia|grayscale|invert)\([^()]*\)/g
+
+export function arFilterLiteCss(entry: ARFilterEntry | undefined): string {
+  if (!entry || entry.css === 'none') return 'none'
+  const kept = entry.css.match(COLOUR_MATRIX_FILTER)
+  return kept?.length ? kept.join(' ') : 'none'
+}
+
 export function anaglyphFilterId(id: string): string {
   return `poplur-anaglyph-${id}`
 }
