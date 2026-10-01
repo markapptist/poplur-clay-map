@@ -26,17 +26,17 @@ export interface VFXCueTiming {
 export const VFX_EFFECTS = [
   { id: 'none', name: 'No overlay', kind: 'CLEAN', group: 'objects', engine: 'none', model: null, thumb: '/logo_icon.png' },
   { id: 'meshy', name: 'Create in 3D', kind: 'MESHY AI', group: 'objects', engine: 'scene3d', model: null, thumb: '/logo_icon.png' },
-  { id: 'globe', name: 'Clay globe', kind: 'SCENE 3D', group: 'objects', engine: 'scene3d', model: '/poplur-globe-lite.glb', thumb: '/sprites/zoom_globe_y20_p12_s256.png' },
-  { id: 'camera', name: 'Poplur camera', kind: 'SCENE 3D', group: 'objects', engine: 'scene3d', model: '/poplur_camera_kodak.glb', thumb: '/sprites/poplur_camera_kodak_y0_p14_s320.png' },
-  { id: 'tv', name: 'Clay TV', kind: 'SCENE 3D', group: 'objects', engine: 'scene3d', model: '/clay_tv_navigator.glb', thumb: '/clay_tv.png' },
-  { id: 'mic', name: 'Poplur mic', kind: 'SCENE 3D', group: 'objects', engine: 'scene3d', model: '/poplur_mic_lite.glb', thumb: '/sprites/poplur_mic_lite_y0_p0_s512.png' },
-  { id: 'plane', name: 'Fly-by', kind: 'SCENE 3D', group: 'objects', engine: 'scene3d', model: '/models/plane.glb', thumb: '/sprites/plane_y0_p74_s256.png' },
-  { id: 'pin', name: 'Location pin', kind: 'SCENE 3D', group: 'objects', engine: 'scene3d', model: '/poplur_pin_lite.glb', thumb: '/sprites/poplur_pin_lite_y20_p14_s256.png' },
-  { id: 'explosion', name: 'Explosion', kind: 'SCN PARTICLE', group: 'effects', engine: 'scenekit', model: null, thumb: null },
-  { id: 'fireworks', name: 'Fireworks', kind: 'SK EMITTER', group: 'effects', engine: 'spritekit', model: null, thumb: null },
-  { id: 'confetti', name: 'Confetti', kind: 'SK EMITTER', group: 'effects', engine: 'spritekit', model: null, thumb: null },
-  { id: 'rain', name: 'Rain', kind: 'SK EMITTER', group: 'effects', engine: 'spritekit', model: null, thumb: null },
-  { id: 'fire', name: 'Fire', kind: 'SCN PARTICLE', group: 'effects', engine: 'scenekit', model: null, thumb: null },
+  { id: 'globe', name: 'Clay globe', kind: '3D OBJECT', group: 'objects', engine: 'scene3d', model: '/poplur-globe-lite.glb', thumb: '/sprites/zoom_globe_y20_p12_s256.png' },
+  { id: 'camera', name: 'Poplur camera', kind: '3D OBJECT', group: 'objects', engine: 'scene3d', model: '/poplur_camera_kodak.glb', thumb: '/sprites/poplur_camera_kodak_y0_p14_s320.png' },
+  { id: 'tv', name: 'Clay TV', kind: '3D OBJECT', group: 'objects', engine: 'scene3d', model: '/clay_tv_navigator.glb', thumb: '/clay_tv.png' },
+  { id: 'mic', name: 'Poplur mic', kind: '3D OBJECT', group: 'objects', engine: 'scene3d', model: '/poplur_mic_lite.glb', thumb: '/sprites/poplur_mic_lite_y0_p0_s512.png' },
+  { id: 'plane', name: 'Fly-by', kind: '3D OBJECT', group: 'objects', engine: 'scene3d', model: '/models/plane.glb', thumb: '/sprites/plane_y0_p74_s256.png' },
+  { id: 'pin', name: 'Location pin', kind: '3D OBJECT', group: 'objects', engine: 'scene3d', model: '/poplur_pin_lite.glb', thumb: '/sprites/poplur_pin_lite_y20_p14_s256.png' },
+  { id: 'explosion', name: 'Explosion', kind: 'PARTICLES', group: 'effects', engine: 'scenekit', model: null, thumb: null },
+  { id: 'fireworks', name: 'Fireworks', kind: 'PARTICLES', group: 'effects', engine: 'spritekit', model: null, thumb: null },
+  { id: 'confetti', name: 'Confetti', kind: 'PARTICLES', group: 'effects', engine: 'spritekit', model: null, thumb: null },
+  { id: 'rain', name: 'Rain', kind: 'PARTICLES', group: 'effects', engine: 'spritekit', model: null, thumb: null },
+  { id: 'fire', name: 'Fire', kind: 'PARTICLES', group: 'effects', engine: 'scenekit', model: null, thumb: null },
 ] as const
 
 export type VFXEffectId = typeof VFX_EFFECTS[number]['id']
@@ -92,10 +92,12 @@ function formatTimestamp(seconds: number): string {
   return `${minutes}:${String(wholeSeconds).padStart(2, '0')}.${tenths}`
 }
 
+// The engine ids are stored with a post (effectEngine) and stay. The names
+// people read do not claim SpriteKit or SceneKit: every effect is this page's
+// own canvas particles or WebGL model, on iPhone and Android alike.
 function engineLabel(engine: VFXEngine): string {
-  if (engine === 'spritekit') return 'SpriteKit'
-  if (engine === 'scenekit') return 'SceneKit'
-  if (engine === 'scene3d') return 'SceneKit 3D'
+  if (engine === 'spritekit' || engine === 'scenekit') return 'Particles'
+  if (engine === 'scene3d') return '3D object'
   return 'No effect'
 }
 
@@ -606,7 +608,7 @@ export default function VFXStudio({
           </button>
         </div>
       ) : tool !== 'transform' ? (
-        <div className={styles.objectRail} aria-label={tool === 'objects' ? 'Poplur 3D objects' : 'SpriteKit and SceneKit particle effects'}>
+        <div className={styles.objectRail} aria-label={tool === 'objects' ? 'Poplur 3D objects' : 'Particle effects'}>
           {visibleEffects.map(effect => (
             <button
               type="button"
