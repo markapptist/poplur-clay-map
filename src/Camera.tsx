@@ -11,6 +11,7 @@ import styles from './ViewHarness.module.css'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { playPop, popHaptic } from './pop'
 import { cancelVoiceSpeech, speakWithVoiceAudioFocus } from './voiceAudio'
+import { freshCameraVoice, nextCameraLine } from './cameraVoice'
 import { addCapture, removeCaptures, isDetectOn, setDetectOn, onCameraStore, listCaptures, getLibraryNewest, setLastSceneTerms, takePendingMapPost, type PendingMapPost,
   takePendingRollPost,
   takePendingRollExtras,
@@ -713,6 +714,9 @@ export default function Camera({
   // to detectOn here.
   const scanNarrationActive = detectOn && analysisGranted
     && effectiveLiveSurfaceVisible && !nativePreviewParked
+  const scanNarrationRef = useRef(scanNarrationActive)
+  scanNarrationRef.current = scanNarrationActive
+  const cameraVoiceRef = useRef(freshCameraVoice())
   useEffect(() => {
     if (isNativeShell()) {
       postNativeEvent({ type: 'cameraLiveVisibilityChanged', visible: effectiveLiveSurfaceVisible })
@@ -742,6 +746,7 @@ export default function Camera({
       resetScan()
       onScanTotal?.(null)
       cancelVoiceSpeech()
+      cameraVoiceRef.current = freshCameraVoice()
     }
   }, [scanNarrationActive, onScanTotal])
 
@@ -964,10 +969,12 @@ export default function Camera({
   // is explicitly a simulation (see mlDetect.ts) and must never be what draws
   // boxes over a live lens; it also cannot run here, because the iOS camera is
   // native behind a transparent WebView so this page's <video> has no frames.
-  // NO web-side detection voice here. The native CameraAIAnnouncer already
+  // NO web-side detection voice on iOS. The native CameraAIAnnouncer already
   // announces ML objects from the same frames (WebHomeCameraLayer wires it in
   // enableClassificationBridge), so speaking from here too said everything
   // twice, half a beat apart. The setting that silences it is native-side.
+  // Android has no announcer, so there the page speaks, by iOS's rules
+  // (cameraVoice.ts), from the ML Kit labels its shell sends.
 
   useEffect(() => {
     if (!isNativeShell()) return
@@ -1022,6 +1029,10 @@ export default function Camera({
       if (recordScanDetections(detail.map(d => d.label)).length) {
         playPop(0.35)
         onScanTotal?.(scanTotalKm())
+      }
+      if (ANDROID_SHELL && scanNarrationRef.current && readCameraAiVoice()) {
+        const line = nextCameraLine(detail, cameraVoiceRef.current, Date.now())
+        if (line) speakWithVoiceAudioFocus(line)
       }
     }
     window.addEventListener('poplur-native-detections', receive)
