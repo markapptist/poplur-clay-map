@@ -74,8 +74,11 @@ const ICE_SERVERS: RTCIceServer[] = [
 
 // Keep unanswered calls bounded. This starts only after signalling has opened
 // the rendezvous (not while the browser is still asking for mic/camera access),
-// and is cleared as soon as the far side's answer is applied.
-const OUTGOING_NO_ANSWER_MS = 30_000
+// and is cleared as soon as the far side's answer is applied. 45 s, not 30: a
+// callee answering on Android's ringing screen while Poplur was closed needs a
+// cold start before its page can answer (A7); the ring notification, the
+// callee's popup and the server's push all use the same window.
+const OUTGOING_NO_ANSWER_MS = 45_000
 
 // Signalling transport. Inside the app the native bridge carries the messages;
 // in a plain browser they go to the web Firestore backend, which is loaded

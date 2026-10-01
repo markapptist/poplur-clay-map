@@ -2614,13 +2614,43 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
 
   const incomingCallTimer = useRef<number | null>(null)
   const incomingCallIdRef = useRef('')
+  // Set once acceptIncomingCall exists, below; the call listener reads it.
+  const acceptIncomingCallRef = useRef<(call: { callId: string; callerId: string; callerName: string; video?: boolean; context?: CallContext }) => void>(() => {})
   useEffect(() => {
     postNativeEvent({ type: 'callWatchIncoming' })
     const onCallEvent = (event: MessageEvent) => {
       if (event.source !== window || !event.data || typeof event.data !== 'object') return
+      if (event.data.type === 'poplurCallAnswer') {
+        // Answered on the phone's own incoming-call screen while Poplur was
+        // closed (Android IncomingCallNotifier): join it without ringing again.
+        const answeredId = String(event.data.callId ?? '')
+        if (!answeredId || callState().callId === answeredId || callState().phase !== 'idle') return
+        if (incomingCallIdRef.current && incomingCallIdRef.current !== answeredId) return
+        if (incomingCallIdRef.current !== answeredId) {
+          recordCallStart({
+            callId: answeredId,
+            peerId: String(event.data.callerId ?? ''),
+            peerName: String(event.data.callerName ?? 'Unknown'),
+            direction: 'incoming',
+            video: event.data.video === true,
+          })
+        }
+        acceptIncomingCallRef.current({
+          callId: answeredId,
+          callerId: String(event.data.callerId ?? ''),
+          callerName: String(event.data.callerName ?? 'Unknown'),
+          video: event.data.video === true,
+          context: normalizeCallContext(event.data.context),
+        })
+        return
+      }
       if (event.data.type === 'poplurCallIncoming') {
         const timedCallId = String(event.data.callId ?? '')
         if (!timedCallId || incomingCallIdRef.current === timedCallId) return
+        // The call this page is already joining (answered on the phone's own
+        // ringing screen) can still arrive as incoming; declining it as busy
+        // would end it.
+        if (callState().callId === timedCallId) return
         // Keep one honest call surface. A second caller while another call is
         // ringing/negotiating/connected receives a busy decline instead of
         // replacing the first popup or leaving an unanswerable ringing doc.
@@ -2647,7 +2677,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         startRingtone()
         // A few real haptic taps, not a loop: most phones buzz a handful of
         // times and let the visual ring (and the cube's own shake) carry the
-        // rest, rather than draining the battery buzzing for the full 30s.
+        // rest, rather than draining the battery buzzing for the full 45s.
         // `popHaptic` is the same cross-platform tap `playPop` already uses —
         // vibrate on Android WebView, a native impact on iOS/WKWebView, no
         // audible sound either way — so this needs no native code at all.
@@ -2659,7 +2689,8 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
           declineCall(timedCallId)
           if (incomingCallIdRef.current === timedCallId) incomingCallIdRef.current = ''
           setIncomingCall(null)
-        }, 30_000)
+          // The caller's own window (webCall.ts OUTGOING_NO_ANSWER_MS).
+        }, 45_000)
       }
       if (event.data.type === 'poplurCallIncomingUnavailable') {
         const unavailableId = String(event.data.callId ?? '')
@@ -2718,6 +2749,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     })
     setIncomingCall(null)
   }, [])
+  acceptIncomingCallRef.current = acceptIncomingCall
 
   const declineIncomingCall = useCallback((call: { callId: string; callerId: string; callerName: string }) => {
     playCubeNavigationPop()
