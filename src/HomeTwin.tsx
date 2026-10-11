@@ -17,7 +17,7 @@ import { createPortal } from 'react-dom'
 import styles from './HomeTwin.module.css'
 import motionStyles from './HomeMotionEffects.module.css'
 import { radiusTrophyColor } from './radiusTrophies'
-import CubeTab3D, { DEFAULT_CUBE_MODEL, TAB_ORDER, type CubeTab } from './CubeTab3D'
+import CubeTab3D, { TAB_ORDER, type CubeTab } from './CubeTab3D'
 import { shouldHidePersistentCube } from './persistentCubeVisibility'
 import {
   CONTENT_CUBE_DISPLAY_MS,
@@ -202,6 +202,7 @@ import {
 import { noteNewsMessage } from './newsMessages'
 import { contentPostId, dropAt } from './postedContent'
 import { onProfileGenderChange, profileHeadModel } from './profileGender'
+import { defaultCubeModel, seasonalDefaultCubeModel } from './seasonalCube'
 import { POIS, type PopLevel } from './data'
 import { KM_TO_MI, hasStoredUnitChoice, setUseMiles, shouldUseMiles } from './units'
 import { skyShadeAt } from './skyCycle'
@@ -446,14 +447,19 @@ const TAB_COACH: Record<CubeTab, { title: string; lines: string[]; split?: boole
  *
  * A blob: URL out of IndexedDB, so it loads through exactly the same
  * GLTFLoader path as every shipped model.
+ *
+ * With no cube of your own, the DEFAULT cube is what you wear — and through
+ * Halloween 2026 that default is the jack-o'-lantern (seasonalCube.ts). It
+ * claims exactly the two places a made cube claims, nothing more.
  */
 function wornNavigatorModel(
   tab: CubeTab,
   screen: string | null,
   worn: string | null,
 ): string | undefined {
-  if (screen === 'profile-avatar') return worn ?? DEFAULT_CUBE_MODEL
-  if (!screen && tab === 'profile' && worn) return worn
+  const cube = worn ?? seasonalDefaultCubeModel()
+  if (screen === 'profile-avatar') return cube ?? defaultCubeModel()
+  if (!screen && tab === 'profile' && cube) return cube
   return undefined
 }
 // ── The navigator's object, per subscreen ────────────────────────────────────

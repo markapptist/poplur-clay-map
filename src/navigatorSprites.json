@@ -10172,5 +10172,112 @@
       "pitch": 16,
       "src": "navigator-sprites/poplur_cube_basketball_y24_p16.webp"
     }
+  ],
+  "poplur_cube_jackolantern.glb": [
+    {
+      "yaw": -24,
+      "pitch": -16,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y-24_p-16.webp"
+    },
+    {
+      "yaw": -16,
+      "pitch": -16,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y-16_p-16.webp"
+    },
+    {
+      "yaw": -8,
+      "pitch": -16,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y-8_p-16.webp"
+    },
+    {
+      "yaw": 0,
+      "pitch": -16,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y0_p-16.webp"
+    },
+    {
+      "yaw": 8,
+      "pitch": -16,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y8_p-16.webp"
+    },
+    {
+      "yaw": 16,
+      "pitch": -16,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y16_p-16.webp"
+    },
+    {
+      "yaw": 24,
+      "pitch": -16,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y24_p-16.webp"
+    },
+    {
+      "yaw": -24,
+      "pitch": 0,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y-24_p0.webp"
+    },
+    {
+      "yaw": -16,
+      "pitch": 0,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y-16_p0.webp"
+    },
+    {
+      "yaw": -8,
+      "pitch": 0,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y-8_p0.webp"
+    },
+    {
+      "yaw": 0,
+      "pitch": 0,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y0_p0.webp"
+    },
+    {
+      "yaw": 8,
+      "pitch": 0,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y8_p0.webp"
+    },
+    {
+      "yaw": 16,
+      "pitch": 0,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y16_p0.webp"
+    },
+    {
+      "yaw": 24,
+      "pitch": 0,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y24_p0.webp"
+    },
+    {
+      "yaw": -24,
+      "pitch": 16,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y-24_p16.webp"
+    },
+    {
+      "yaw": -16,
+      "pitch": 16,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y-16_p16.webp"
+    },
+    {
+      "yaw": -8,
+      "pitch": 16,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y-8_p16.webp"
+    },
+    {
+      "yaw": 0,
+      "pitch": 16,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y0_p16.webp"
+    },
+    {
+      "yaw": 8,
+      "pitch": 16,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y8_p16.webp"
+    },
+    {
+      "yaw": 16,
+      "pitch": 16,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y16_p16.webp"
+    },
+    {
+      "yaw": 24,
+      "pitch": 16,
+      "src": "navigator-sprites/poplur_cube_jackolantern_y24_p16.webp"
+    }
   ]
 }
