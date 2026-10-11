@@ -1,12 +1,13 @@
 // The cube you hold by default is seasonal for Halloween 2026. Mark's call
 // (11 Oct 2026): the jack-o'-lantern Poplur cube is not a Store skin you pick,
-// it is THE default cube until Halloween, and the plain Poplur cube comes back
-// on its own afterwards — no release needed to take the pumpkin down.
+// it is THE default cube until Halloween, on every tab — and the ordinary
+// objects come back on their own afterwards, no release needed to take the
+// pumpkin down.
 //
-// "Default cube" means the cube you wear when you have not made or bought one:
-// it claims exactly what a worn cube claims (bare Profile and the AVATAR
-// screen). The map keeps its globe/sun/moon and the feed its TV, the same rule
-// that stops a custom cube from being those.
+// "Default" means the resting object of each tab root (map, feed, camera and
+// profile) and the plain cube AVATAR shows before you have made one. Subscreen
+// objects, event cubes, deliberate actions and a cube you made all still win
+// over it — HomeTwin.tabNavigatorModel is the one place it is applied.
 
 import { DEFAULT_CUBE_MODEL } from './navigatorContract'
 
@@ -29,8 +30,8 @@ export function halloweenCubeActive(now: Date = new Date()): boolean {
     && today <= dayIndex(HALLOWEEN_LAST_DAY.year, HALLOWEEN_LAST_DAY.month, HALLOWEEN_LAST_DAY.day)
 }
 
-/** The cube worn when nothing custom is: the jack-o'-lantern through
- *  Halloween, otherwise null so the ordinary resting object stays. */
+/** The resting object every tab root wears while a seasonal default is on;
+ *  null the rest of the year so each tab keeps its own object. */
 export function seasonalDefaultCubeModel(now: Date = new Date()): string | null {
   return halloweenCubeActive(now) ? HALLOWEEN_CUBE_MODEL : null
 }

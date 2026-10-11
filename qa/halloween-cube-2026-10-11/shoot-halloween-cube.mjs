@@ -58,9 +58,12 @@ try {
     return imgs[imgs.length - 1] || null
   })()`)
   const shots = [
+    { name: 'map-root', url: `${origin}/?view=map`, expect: 'poplur_cube_jackolantern' },
+    { name: 'feed-root', url: `${origin}/?view=feed`, expect: 'poplur_cube_jackolantern' },
+    { name: 'camera-root', url: `${origin}/?view=camera`, expect: 'poplur_cube_jackolantern' },
     { name: 'profile-root', url: `${origin}/?view=profile`, expect: 'poplur_cube_jackolantern' },
+    // Control: a subscreen keeps its own object (AVATAR rests on the printer).
     { name: 'profile-avatar-screen', url: `${origin}/?view=holdmenu&holdScreen=profile-avatar`, expect: 'poplur_cube_printer' },
-    { name: 'feed-control', url: `${origin}/?view=feed`, expect: 'clay_tv' },
   ]
   for (const shot of shots) {
     await send('Page.navigate', { url: shot.url })

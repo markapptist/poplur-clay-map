@@ -376,12 +376,20 @@ function writeLastScreen(tab: CubeTab, screen: string | null) {
 /** Each main tab owns one recognisable, true 3D clay object. The Profile tab
     wears the head that matches the account's chosen gender (profileGender.ts)
     — the mark head or the female head; profile media belongs in the profile
-    frame. */
+    frame.
+
+    Through Halloween 2026 the jack-o'-lantern is the default cube on EVERY
+    tab root (Mark, 11 Oct: "put it on every tab"). Only the tab's resting
+    object changes: subscreen objects, event cubes, deliberate actions and a
+    cube you made all still win above this, and on 1 November the sky object,
+    TV, camera and head come back on their own (seasonalCube.ts). */
 function tabNavigatorModel(
   tab: CubeTab,
   mapDaypart: MapDaypart = 'twilight',
   mapMoon: 'full' | 'crescent' = 'crescent',
 ): string {
+  const seasonal = seasonalDefaultCubeModel()
+  if (seasonal) return seasonal
   // Map wears the sky's time of day: the sun by day, the phase-matched moon
   // at night, and the globe through dawn and dusk. Each change flows through
   // the normal one-shot cube POP swap; there is no second renderer or loop.
@@ -448,18 +456,16 @@ const TAB_COACH: Record<CubeTab, { title: string; lines: string[]; split?: boole
  * A blob: URL out of IndexedDB, so it loads through exactly the same
  * GLTFLoader path as every shipped model.
  *
- * With no cube of your own, the DEFAULT cube is what you wear — and through
- * Halloween 2026 that default is the jack-o'-lantern (seasonalCube.ts). It
- * claims exactly the two places a made cube claims, nothing more.
+ * The plain cube AVATAR falls back to is the seasonal default while one is on
+ * (the jack-o'-lantern through Halloween 2026 — seasonalCube.ts).
  */
 function wornNavigatorModel(
   tab: CubeTab,
   screen: string | null,
   worn: string | null,
 ): string | undefined {
-  const cube = worn ?? seasonalDefaultCubeModel()
-  if (screen === 'profile-avatar') return cube ?? defaultCubeModel()
-  if (!screen && tab === 'profile' && cube) return cube
+  if (screen === 'profile-avatar') return worn ?? defaultCubeModel()
+  if (!screen && tab === 'profile' && worn) return worn
   return undefined
 }
 // ── The navigator's object, per subscreen ────────────────────────────────────
@@ -613,7 +619,7 @@ function holdFocusNavigatorModel(
   if (focus.action === 'photo') return PROFILE_CAMERA_MODEL
   if (focus.action === 'video') return CAMCORDER_MODEL
   if (focus.action === 'profile') {
-    return wornNavigatorModel('profile', null, wornCube) ?? profileHeadModel()
+    return wornNavigatorModel('profile', null, wornCube) ?? tabNavigatorModel('profile', mapDaypart, mapMoon)
   }
   if (focus.mapAction === 'tour') return 'poplur_cube_tour.glb'
   if (focus.mapAction === 'directions') return 'poplur_cube_directions_arrow.glb'
@@ -5265,11 +5271,12 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // kept above a still-mounted Podcast room, where cubeScreen remains Studio.
     : ipodCubeModel
     ? ipodCubeModel
-    // Feed's one navigator is the supplied TV. Ambient music, food language,
-    // and Map events may change their own surfaces, but never replace the TV on
+    // Feed's one navigator is its resting object — the supplied TV, or the
+    // seasonal default cube while one is on. Ambient music, food language,
+    // and Map events may change their own surfaces, but never replace it on
     // the unobscured Feed root.
     : activeTab === 'feed' && committedTab === 'feed' && cubeScreen == null
-    ? FEED_TV_CUBE_MODEL
+    ? tabNavigatorModel('feed', mapDaypart, mapMoon)
     // The reward roll is a deliberate Map action. Its actual 3D die owns the
     // persistent navigator until the glossy reward panel closes, then the
     // normal globe/sun/moon returns with the ordinary Map return pop.

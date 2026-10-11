@@ -1,6 +1,21 @@
 {
-  "shotAt": "2026-10-11T18:42:30.534Z",
+  "shotAt": "2026-10-11T18:57:11.096Z",
   "results": {
+    "map-root": {
+      "url": "http://127.0.0.1:5173/?view=map",
+      "navigatorSprite": "navigator-sprites/poplur_cube_jackolantern_y0_p0.webp",
+      "ok": true
+    },
+    "feed-root": {
+      "url": "http://127.0.0.1:5173/?view=feed",
+      "navigatorSprite": "navigator-sprites/poplur_cube_jackolantern_y0_p0.webp",
+      "ok": true
+    },
+    "camera-root": {
+      "url": "http://127.0.0.1:5173/?view=camera",
+      "navigatorSprite": "navigator-sprites/poplur_cube_jackolantern_y0_p0.webp",
+      "ok": true
+    },
     "profile-root": {
       "url": "http://127.0.0.1:5173/?view=profile",
       "navigatorSprite": "navigator-sprites/poplur_cube_jackolantern_y0_p0.webp",
@@ -9,11 +24,6 @@
     "profile-avatar-screen": {
       "url": "http://127.0.0.1:5173/?view=holdmenu&holdScreen=profile-avatar",
       "navigatorSprite": "navigator-sprites/poplur_cube_printer_y0_p0.webp",
-      "ok": true
-    },
-    "feed-control": {
-      "url": "http://127.0.0.1:5173/?view=feed",
-      "navigatorSprite": "navigator-sprites/clay_tv_y0_p0.webp",
       "ok": true
     }
   }
