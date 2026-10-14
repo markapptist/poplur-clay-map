@@ -154,8 +154,10 @@ import {
   nativeFeedPostsSnapshot,
   onNativeFeedPosts,
   requestNativeFeedPosts,
+  type NativeFeedPost,
 } from './nativeFeedPosts'
-import { nextInterceptingChannelIndex } from './feedChannelSelection'
+import { autoTunedFeedChannelIndex } from './feedChannelSelection'
+import { blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } from './blockedUsers'
 import {
   normalizeMapFeedHandoff,
   type MapFeedHandoffRequest,
@@ -243,7 +245,7 @@ import {
   type TestActivityScreen,
 } from './testActivity'
 import { EARTH_RADIUS_KM } from './worldRadius'
-import { publishViewerFix } from './viewerFix'
+import { currentViewerCoords, publishViewerFix } from './viewerFix'
 import { loadTestSimulation } from './testActivity'
 import { feedPostReachesViewer } from './feedDiscovery'
 import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
@@ -685,6 +687,15 @@ function subscribePageVisibility(onChange: () => void): () => void {
 
 function pageIsVisible(): boolean {
   return typeof document === 'undefined' || document.visibilityState === 'visible'
+}
+
+// useSyncExternalStore adapter for the Feed auto-tune: your own pops reach you
+// by uid, so the account arriving can be what fills a channel.
+function subscribeAccountUidForTune(onStoreChange: () => void): () => void {
+  return onAccountChange(onStoreChange)
+}
+function accountUidSnapshot(): string | null {
+  return accountSnapshot().uid
 }
 
 // Sample data matching the rest of the harness: 128 posts, 41.8 km radius.
@@ -2191,6 +2202,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     setActiveTab('feed')
     setHoldOpen(false)
   }, [])
+  // Only pops that actually reach the viewer make a channel worth landing on:
+  // the Feed's own delivery rule, measured from the Feed's own viewer fix
+  // (viewerFix.ts), so Home and the Feed agree on which channels are filled.
+  const feedPostsReachingViewer = useCallback((posts: readonly NativeFeedPost[]) => {
+    const viewer = currentViewerCoords()
+    return posts.filter(post => !isUserBlocked(post.ownerId, post.username) && feedPostReachesViewer(post, viewer))
+  }, [])
   // Feed TV opens on something actually intercepting the viewer, rather than
   // pinning every visit to CH 101. Native posts are the authoritative live
   // candidates; the catalogue only rotates in browser-preview/empty states.
@@ -2203,35 +2221,53 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     }
     const visit = ++feedEntryVisitRef.current
     setChanIndex(current => {
-      const next = nextInterceptingChannelIndex(CHANNELS, nativeFeedPostsSnapshot(), current, visit)
+      const reaching = feedPostsReachingViewer(nativeFeedPostsSnapshot())
+      const next = autoTunedFeedChannelIndex(CHANNELS, reaching, current, visit, true)
       autoTunedFeedChannelRef.current = next
       return next
     })
-  }, [activeTab])
+  }, [activeTab, feedPostsReachingViewer])
   useEffect(() => {
     if (activeTab !== 'feed') setFeedFocusedContent(null)
   }, [activeTab])
-  // A Feed entry may happen before the native bridge has returned. Retune one
-  // time when real interception rows arrive, unless the viewer deliberately
-  // selected a channel in the meantime.
+  // A Feed entry may happen before the native bridge has returned, before
+  // the location fix, or before the signed-in account (your own pops reach
+  // you by uid). Each of those can be what fills a channel, so each re-runs
+  // the tune while Home still owns the dial: it moves off an empty channel
+  // onto a filled one and never off a channel that is showing something. A
+  // channel the viewer picked (D-pad, dial, a pin, a handoff) clears the
+  // ownership and is never retuned. The old one-shot retune read Home's radio
+  // fix and fired only on a post snapshot, so a late fix or account left the
+  // demo account on an empty CH 110 (14 Oct 2026).
   const liveSimulationForTune = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
+  const accountUidForTune = useSyncExternalStore(subscribeAccountUidForTune, accountUidSnapshot, () => null)
+  const blockedUsersForTune = useSyncExternalStore(onBlockedUsersChange, blockedUsersSnapshot, blockedUsersSnapshot)
+  const [viewerFixRevision, setViewerFixRevision] = useState(0)
+  useEffect(() => {
+    const refresh = () => setViewerFixRevision(value => value + 1)
+    window.addEventListener('poplur-location', refresh)
+    window.addEventListener('poplur-native-location', refresh)
+    return () => {
+      window.removeEventListener('poplur-location', refresh)
+      window.removeEventListener('poplur-native-location', refresh)
+    }
+  }, [])
   useEffect(() => {
     void liveSimulationForTune
-    if (activeTab !== 'feed' || !interceptingFeedPosts.length) return
-    // Only pops that actually reach the viewer make a channel worth landing
-    // on — the same rule Feed delivery applies, test mode included.
-    const fix = radioLocationRef.current
-    const viewer: [number, number] | null = fix ? [fix.lng, fix.lat] : null
-    const reaching = interceptingFeedPosts.filter(post => feedPostReachesViewer(post, viewer))
+    void accountUidForTune
+    void blockedUsersForTune
+    void viewerFixRevision
+    if (activeTab !== 'feed') return
+    const reaching = feedPostsReachingViewer(interceptingFeedPosts)
     if (!reaching.length) return
     const visit = feedEntryVisitRef.current
     setChanIndex(current => {
       if (autoTunedFeedChannelRef.current !== current) return current
-      const next = nextInterceptingChannelIndex(CHANNELS, reaching, current, visit)
-      autoTunedFeedChannelRef.current = null
+      const next = autoTunedFeedChannelIndex(CHANNELS, reaching, current, visit, false)
+      autoTunedFeedChannelRef.current = next
       return next
     })
-  }, [activeTab, interceptingFeedPosts, liveSimulationForTune])
+  }, [activeTab, interceptingFeedPosts, feedPostsReachingViewer, liveSimulationForTune, accountUidForTune, blockedUsersForTune, viewerFixRevision])
   // Cube size follows the viewport so the bottom cluster never overlaps.
   const [cubeSize, setCubeSize] = useState(cubeSizeFor)
   const mapFrameRef = useRef<HTMLIFrameElement>(null)
@@ -4783,9 +4819,13 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
         ? earnedRadiusKm + scanKm
         // On the feed the card reads the PLAYING VIDEO's reach, re-counting
           // on every change — the same fact as the "reached you from" line,
-          // but told by the counter that owns radius numbers.
-          : activeTab === 'feed' && feedReachKm != null
-            ? feedReachKm
+          // but told by the counter that owns radius numbers. An empty channel
+          // has no post radius to report, so it reads 0, as News' empty
+          // timeline does. Falling through to the account total put
+          // "305,808 km" under POST RADIUS ◆ against the 6,371 km ceiling
+          // (App Review demo account, 14 Oct 2026).
+          : activeTab === 'feed'
+            ? feedReachKm ?? 0
             // An open pop on the profile speaks for itself, exactly as on the
             // feed. Closing it reports null and the card falls back below.
             : activeTab === 'profile' && profileReachKm != null
