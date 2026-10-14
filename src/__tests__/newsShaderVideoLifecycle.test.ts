@@ -136,7 +136,7 @@ describe('News shader video thermal lifecycle', () => {
     // The opaque detail sheet owns the only active copy of an opened story;
     // list copies stay mounted for layout but release their media pipelines.
     // Opening the composer also pauses the covered story's media.
-    expect(paper.match(/active=\{!detail && !composingMessage\}/g)).toHaveLength(1)
-    expect(paper).toContain('<EntryMedia active={!composingMessage} media={detail.media} large />')
+    expect(paper.match(/active=\{!detail && !composingMessage && !messageProfile\}/g)).toHaveLength(1)
+    expect(paper).toContain('<EntryMedia active={!composingMessage && !messageProfile} media={detail.media} large />')
   })
 })

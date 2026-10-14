@@ -53,7 +53,7 @@ describe('shared realtime Feed store', () => {
     expect(firestore.onSnapshot).toHaveBeenCalledTimes(1)
     expect(firestore.collection).toHaveBeenCalledWith({ kind: 'db' }, 'posts')
     expect(firestore.orderBy).toHaveBeenCalledWith('createdAt', 'desc')
-    expect(firestore.limit).toHaveBeenCalledWith(160)
+    expect(firestore.limit).toHaveBeenCalledWith(640)
 
     const document = (viewCount: number) => ({
       id: 'post-1',

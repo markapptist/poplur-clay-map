@@ -9,7 +9,8 @@ vi.hoisted(() => {
   ;(globalThis as { window?: unknown }).window = target
 })
 
-vi.mock('../pop', () => ({ playPop: () => {}, playPopAmbient: () => {} }))
+const notificationPop = vi.hoisted(() => vi.fn())
+vi.mock('../pop', () => ({ playPop: () => {}, playPopAmbient: () => {}, playNotificationPop: notificationPop }))
 // The host's card components pull in the performance manager, which reads
 // `document` at import. The store under test never renders them.
 vi.mock('../PoplurDialog', () => ({ default: () => null }))
@@ -18,7 +19,7 @@ vi.mock('../FlatNotifIcon', () => ({ default: () => null }))
 
 import { clearPopups, showPopup } from '../popups'
 
-afterEach(() => { clearPopups(); vi.useRealTimers() })
+afterEach(() => { clearPopups(); vi.useRealTimers(); notificationPop.mockClear() })
 
 describe('banner popups', () => {
   it('stands alone: a newer banner replaces the older instead of stacking', () => {
@@ -28,6 +29,7 @@ describe('banner popups', () => {
     // is module state, so a second show is observable through the ids.
     const a = showPopup({ kind: 'banner', banner: { title: 'A', detail: 'a', kind: 'like' } })
     const b = showPopup({ kind: 'banner', banner: { title: 'B', detail: 'b', kind: 'view' } })
+    expect(notificationPop).toHaveBeenCalledTimes(2)
     expect(b).toBeGreaterThan(a)
     seen.push([a, b])
     // Both timers are gone with the item; advancing past the banner TTL must

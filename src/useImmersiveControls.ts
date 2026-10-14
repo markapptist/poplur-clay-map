@@ -1,7 +1,7 @@
 import { useLayoutEffect } from 'react'
 import './immersiveControls.css'
 
-/** Camera wakes on tap; Feed's cube toggles its rails. */
+/** Camera wakes on tap; Feed starts visible and its cube toggles its rails. */
 export function useImmersiveControls(enabled: boolean, context: string) {
   useLayoutEffect(() => {
     if (!enabled) return
@@ -15,12 +15,12 @@ export function useImmersiveControls(enabled: boolean, context: string) {
     // sleep not working at all.
     root.dataset.immersiveContext = context
     let timer = 0
-    const startsHidden = context === 'feed' || context === 'post'
+    const startsHidden = context === 'post'
     const hide = () => { root.dataset.controlsIdle = 'true' }
     const wake = () => {
       delete root.dataset.controlsIdle
       window.clearTimeout(timer)
-      timer = window.setTimeout(hide, 10_000)
+      if (context !== 'feed') timer = window.setTimeout(hide, 10_000)
     }
     const input = () => {
       // Touches on the video must not reveal Feed rails. Once revealed,

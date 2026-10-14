@@ -11,7 +11,7 @@ export const PROFILE_TABS: readonly ProfileMode[] = HIDE_BETA_PLACEHOLDERS
 
 // Which page Profile should open on, handed over from another screen.
 //
-// A window event alone cannot do this: the sender (News' hamburger) fires
+// A window event alone cannot do this: the sender (for example Camera) fires
 // while Profile is UNMOUNTED — the shell only switches tabs afterwards — so
 // the listener does not exist yet and the request is lost. The value is parked
 // module-side, which outlives that unmount, and Profile takes it on mount.

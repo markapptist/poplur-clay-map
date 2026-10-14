@@ -3468,7 +3468,7 @@ export default function MapApp() {
         id: pin.id,
         channelId: pin.channel ?? 'live',
         username: pin.user ?? '@you',
-        caption: pin.media?.alt || pin.name,
+        caption: pin.caption || pin.media?.alt || pin.name,
         mediaURL: pin.media?.src,
         mediaType: pin.media?.kind === 'image' ? 'photo' : 'video',
         posterURL: pin.media?.poster,
@@ -3489,7 +3489,9 @@ export default function MapApp() {
         name: pin.name,
         user: pin.user,
         channel: pin.channel,
-        caption: pin.media?.alt,
+        caption: pin.caption,
+        contentType: pin.contentType,
+        messageCard: pin.messageCard,
         radiusKm: pin.radiusKm,
         media: pin.media,
       },
@@ -3498,7 +3500,7 @@ export default function MapApp() {
       // then drops on the native path while the map still shows the pin — the
       // exact mismatch that makes a post look present and broken at once.
       // Without this the card simply does not offer the action.
-      onActivate: pin.media ? () => { openPinInFeed(pin) } : undefined,
+      onActivate: pin.media && pin.contentType !== 'message' ? () => { openPinInFeed(pin) } : undefined,
       action: {
         label: pin.user ? `VIEW ${pin.user}` : 'VIEW YOUR PROFILE',
         onActivate: () => {
@@ -3888,7 +3890,9 @@ export default function MapApp() {
     // the Feed, on its channel — no card in between. Automatic landings (the
     // point arrows) and pops without media keep the card: the arrows are a
     // survey, and a media-less pop cannot travel to the feed at all.
-    const directToFeed = !automatic && Boolean(pin.media)
+    // A message's generated image is only a share preview. Open its actual
+    // words here instead of cropping that image into the video feed.
+    const directToFeed = !automatic && Boolean(pin.media) && pin.contentType !== 'message'
     // Show how much ground this pop holds: its radius painted on the land in
     // the pin's own colour, cleared again when the card goes. Not on the
     // direct-to-feed path — there is no card to clear it, and a stale

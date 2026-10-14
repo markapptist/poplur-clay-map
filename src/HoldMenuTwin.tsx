@@ -18,7 +18,6 @@ import AIChatScreen from './AIChatScreen'
 import StudioScreen from './StudioScreen'
 import CharacterEditor from './CharacterEditor'
 import SettingsScreen from './SettingsScreen'
-import MessageTimeline from './MessageTimeline'
 import AvatarScreen from './AvatarScreen'
 import MailScreen from './MailScreen'
 import StatsScreen from './StatsScreen'
@@ -164,10 +163,6 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // Wears the supplied mailbox render — the same object the screen's own
     // navigator cube wears at rest (poplur_cube_mailbox.glb).
     { icon: 'Mail', title: 'MAIL', screen: 'profile-messages', native: true },
-    // Your Pop Messages as a timeline. Not on the wheel: News' drawer row is
-    // its door, and a news author's name opens theirs. `profile-messages` is
-    // MAIL (direct messages) — a different thing, hence a different id.
-    { icon: 'Mail', title: 'TIMELINE', screen: 'profile-timeline', native: true, hidden: true },
     { icon: HOLD_MENU_ICON_ASSETS.store, title: 'STORE', screen: 'profile-store' },
     // The account's money face: credit balance, the Store's cards, send and
     // cash-out. A window onto the poplurCredits ledger, never a second one.
@@ -1282,13 +1277,6 @@ export default function HoldMenuTwin({
             onAcceptCall={onAcceptCall}
             onDeclineCall={onDeclineCall}
           />
-        </div>
-      )
-    }
-    if (activeScreen.native && activeScreen.screen === 'profile-timeline') {
-      return (
-        <div className={styles.subscreenStage} role="dialog" aria-label="Pop Messages">
-          <MessageTimeline onClose={() => { playSubscreenNavigationPop(); onClose() }} />
         </div>
       )
     }

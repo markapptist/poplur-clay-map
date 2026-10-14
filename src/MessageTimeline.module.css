@@ -1,5 +1,5 @@
 /* ── The Pop Message timeline ─────────────────────────────────────────────
-   A hold-menu subscreen in the same white-page shape Notifications takes:
+   The profile nested inside Messages uses the same white-page shape as Notifications:
    this host is the one scroll surface, padded clear of the wordmark above
    and the shared cube below. The rows borrow the profile's message row —
    same card, same ◆ km — with the author on the left the way a timeline
@@ -13,8 +13,9 @@
   position: relative;
   padding:
     calc(var(--header-title-top, 44px) + var(--header-title-height, 40px) + 14px)
-    16px
-    calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom));
+    var(--messages-content-right, 16px)
+    calc(18px + var(--cube-size, 176px) + 14px + env(safe-area-inset-bottom))
+    var(--messages-content-left, 16px);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   color: #24141d;
@@ -225,21 +226,3 @@
   line-height: 1.45;
   letter-spacing: 0.035em;
 }
-
-.close {
-  align-self: center;
-  margin-top: 18px;
-  min-height: 40px;
-  padding: 0 22px;
-  border: 1px solid rgba(246, 59, 154, 0.22);
-  border-radius: 999px;
-  background: #fff1f7;
-  color: #e62d87;
-  box-shadow: 0 4px 10px rgba(198, 27, 102, 0.08);
-  font: 900 11px/1 inherit;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.close:active { transform: translateY(1px); }

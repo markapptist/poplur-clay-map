@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeLiveMapDocuments, normalizeLiveMapPost } from '../mapLivePosts'
+import { nativeFeedPostsToMapPins, normalizeLiveMapDocuments, normalizeLiveMapPost } from '../mapLivePosts'
+import { normalizeNativeFeedPosts } from '../nativeFeedPosts'
+import { normalizeDiscoveryPage } from '../mapDiscovery'
 import { mapPinRenderKey, pinMarkerNeedsRebuild } from '../mapPinRenderKey'
 import { readFileSync } from 'node:fs'
 
@@ -38,6 +40,27 @@ describe('live Firestore Map posts', () => {
       user: null,
       mine: true,
     })
+  })
+
+  it('keeps the full message and its line breaks through discovery and the native relay', () => {
+    const caption = 'Meet at the library 📚\n\nBring your notes.\n' + 'Final line '.repeat(35)
+    const row = { ...publicPost, caption, contentType: 'message', messageCard: true }
+    const discovery = normalizeDiscoveryPage({ schema: 1, enabled: true, mode: 'posts', posts: [{ id: 'message', row }] }, null)
+    const relayed = normalizeNativeFeedPosts({ posts: [{ ...row, id: 'message' }] })
+    for (const pin of [...discovery.pins, ...nativeFeedPostsToMapPins(relayed, null, { syntheticOnly: false })]) {
+      expect(pin.caption).toBe(caption.trim())
+      expect(pin.contentType).toBe('message')
+      expect(pin.messageCard).toBe(true)
+      expect(pin.caption).not.toBe(pin.media?.alt)
+    }
+    expect(discovery.pins).toHaveLength(1)
+    expect(relayed).toHaveLength(1)
+  })
+
+  it('retains the words of a legacy message that has no media', () => {
+    const pin = normalizeLiveMapPost('text', { ...publicPost, mediaURL: '', caption: 'First line\nSecond line' })
+    expect(pin).toMatchObject({ caption: 'First line\nSecond line', contentType: 'message' })
+    expect(pin?.media).toBeUndefined()
   })
 
   it.each([

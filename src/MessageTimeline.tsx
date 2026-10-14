@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import styles from './MessageTimeline.module.css'
 import ProfilePostPreview from './ProfilePostPreview'
+import ShaderVideoPlayer from './ShaderVideoPlayer'
 import { accountSnapshot, onAccountChange } from './accountStore'
 import { useAuthoredPosts } from './useAuthoredPosts'
 import { nativeFeedPostsSnapshot, onNativeFeedPosts } from './nativeFeedPosts'
@@ -12,26 +13,11 @@ import {
 } from './profileRealtimePosts'
 import { relativeWhen } from './newsMessages'
 import { playPop } from './pop'
-import { takeMessageTimelineRequest } from './messageTimelineRequest'
 import { presentableHandle, timelineRows, timelineStats } from './messageTimelineRows'
 
-/**
- * Your Pop Messages as a timeline — the profile a message deserves, in the
- * shape people already read one in: who, when, the whole text, how far it
- * went. Opened from News' drawer ("Profile · Your messages") and from a news
- * author's name; the Messages TAB this replaces on the profile page is gone,
- * so this is the one place a message timeline lives.
- *
- * A hold-menu subscreen, like Notifications — not a fourth tab. It reads the
- * same shared post snapshot the profile grid does and the same per-account
- * projection, so a message that exists on the profile exists here, and a
- * deleted one leaves both without a reload.
- *
- * Tapping your own message opens the pop itself — comments, delete, its
- * radius on the card — through the same route a notification about it takes.
- * Someone else's timeline is read-only: their text is here in full, and the
- * routes that open a pop all assume the profile behind it is yours.
- */
+/** A profile nested inside Messages. Its list and individual message views
+ * stay on that screen; closing them never selects the main Profile or Browser.
+ * The same authored-post projection keeps edits and deletions live here. */
 
 function postIsVideo(post: RealtimeProfilePost): boolean {
   return post.mediaType === 'video'
@@ -44,11 +30,20 @@ function postPoster(post: RealtimeProfilePost): string {
   return 'logo_icon.png'
 }
 
-export default function MessageTimeline({ onClose }: { onClose: () => void }) {
-  // Taken ONCE, on mount — see messageTimelineRequest. A useState initializer
-  // is the one place that runs exactly once per instance.
-  const [request] = useState(() => takeMessageTimelineRequest())
-  const viewUser = request?.handle ?? null
+export default function MessageTimeline({ viewUser = null, bindBack, active = true }: {
+  viewUser?: string | null
+  bindBack?: (back: (() => boolean) | null) => void
+  active?: boolean
+}) {
+  const [openedPostId, setOpenedPostId] = useState<string | null>(null)
+  useEffect(() => {
+    bindBack?.(() => {
+      if (!openedPostId) return false
+      setOpenedPostId(null)
+      return true
+    })
+    return () => bindBack?.(null)
+  }, [bindBack, openedPostId])
 
   // NOT useSyncExternalStore: accountSnapshot() builds a fresh object per call
   // (a new identity every read = an infinite re-render), so subscribe the way
@@ -69,6 +64,8 @@ export default function MessageTimeline({ onClose }: { onClose: () => void }) {
   )
   const rows = useMemo(() => timelineRows(posts), [posts])
   const stats = timelineStats(rows)
+  const openedPost = rows.find(post => post.id === openedPostId)
+  const displayedRows = openedPost ? [openedPost] : rows
 
   const visiting = Boolean(viewUser)
   const photo = visiting
@@ -82,15 +79,11 @@ export default function MessageTimeline({ onClose }: { onClose: () => void }) {
   const openPop = (post: RealtimeProfilePost) => {
     if (visiting || !post.id) return
     playPop()
-    // The same route a notification about this pop takes: the shell closes
-    // this menu, lands on the profile, and the pop opens in its viewer.
-    window.dispatchEvent(new CustomEvent('poplur-open-post-notification', {
-      detail: { postId: post.id, comments: false },
-    }))
+    setOpenedPostId(post.id)
   }
 
   return (
-    <section className={styles.screen} aria-label="Pop Messages" data-clay-scroll>
+    <section className={styles.screen} aria-label={openedPost ? 'Pop Message' : 'Pop Messages'} data-clay-scroll>
       <header className={styles.head}>
         <div className={styles.who}>
           <span className={styles.avatar} aria-hidden="true">
@@ -124,7 +117,7 @@ export default function MessageTimeline({ onClose }: { onClose: () => void }) {
         <p className={styles.empty}>{visiting ? 'No Pop Messages yet.' : 'No Pop Messages yet. Write one from News.'}</p>
       ) : (
         <ol className={styles.timeline}>
-          {rows.map((post, index) => {
+          {displayedRows.map((post, index) => {
             const body = (
               <>
                 <span className={styles.rowAvatar} aria-hidden="true">
@@ -140,8 +133,10 @@ export default function MessageTimeline({ onClose }: { onClose: () => void }) {
                   <p className={styles.text}>{post.title}</p>
                   {!post.messageCard && (
                     <span className={styles.attachment}>
-                      <ProfilePostPreview src={postPoster(post)} />
-                      {postIsVideo(post) && <span>Video</span>}
+                      {openedPost && postIsVideo(post)
+                        ? <ShaderVideoPlayer src={post.video} poster={post.poster} active={active} />
+                        : <ProfilePostPreview src={postPoster(post)} />}
+                      {postIsVideo(post) && !openedPost && <span>Video</span>}
                     </span>
                   )}
                   {post.reachKm != null && (
@@ -155,7 +150,7 @@ export default function MessageTimeline({ onClose }: { onClose: () => void }) {
             const key = `${post.id ?? post.video}-${index}`
             return (
               <li key={key} className={styles.row}>
-                {visiting || !post.id
+                {visiting || !post.id || openedPost
                   ? <div className={styles.rowInner}>{body}</div>
                   : (
                     <button
@@ -172,8 +167,6 @@ export default function MessageTimeline({ onClose }: { onClose: () => void }) {
           })}
         </ol>
       )}
-
-      <button type="button" className={styles.close} onClick={onClose}>CLOSE</button>
     </section>
   )
 }

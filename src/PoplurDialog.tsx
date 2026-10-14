@@ -71,10 +71,11 @@ export default function PoplurDialog({
    * repeating it in a blocky frame around the picture was the thing in the way
    * (user-ordered 6 Sep). The title still ships, for screen readers.
    */
-  variant?: 'card' | 'media'
+  variant?: 'card' | 'media' | 'message'
   mediaBadge?: string
 }) {
-  const mediaFirst = variant === 'media'
+  const messageFirst = variant === 'message'
+  const mediaFirst = variant !== 'card'
   const stop = (event: { stopPropagation: () => void }) => event.stopPropagation()
   // With no × and nothing around the window to tap, the pop itself is the way
   // out. PopupHost's tap-anywhere dismissal explicitly skips anything inside
@@ -146,13 +147,18 @@ export default function PoplurDialog({
         {!mediaFirst && (
           <button type="button" className={styles.close} aria-label="Close" onClick={onClose}>×</button>
         )}
-        <div className={mediaFirst ? `${styles.panel} ${styles.panelMedia}` : styles.panel}>
+        <div className={messageFirst ? `${styles.panel} ${styles.panelMessage}` : mediaFirst ? `${styles.panel} ${styles.panelMedia}` : styles.panel}>
           {mediaFirst && mediaBadge && <p className={styles.mediaBadge}>{mediaBadge}</p>}
           {eyebrow && !mediaFirst && <p className={styles.eyebrow}>{eyebrow}</p>}
-          {mediaFirst
+          {messageFirst
+            ? <h2 className={styles.messageAuthor}>{title}</h2>
+            : mediaFirst
             ? <h2 className={styles.srOnly}>{title}</h2>
             : <h2 className={styles.title}>{title}</h2>}
           {subtitle && !mediaFirst && <p className={styles.subtitle}>{subtitle}</p>}
+          {messageFirst && subtitle && <div className={styles.messageBody} data-clay-scroll onClick={stop}>
+            <p className={styles.messageText}>{subtitle}</p>
+          </div>}
           {media && (
             <figure
               className={`${styles.media}${mediaActivatable ? ` ${styles.mediaInteractive}` : ''}`}
@@ -173,7 +179,7 @@ export default function PoplurDialog({
               ) : (
                 <img src={media.src} alt={media.alt} draggable={false} />
               )}
-              {mediaFirst && hasActions && (
+              {mediaFirst && !messageFirst && hasActions && (
                 // Inside the content, not under it: a scrim at the foot of the
                 // pop with the actions on top. `stop` keeps a button press from
                 // also reaching the close-on-tap handler on the way out.
@@ -193,6 +199,7 @@ export default function PoplurDialog({
               ))}
             </div>
           )}
+          {messageFirst && hasActions && <div className={styles.messageActions} onClick={stop}>{actions}</div>}
           {!mediaFirst && actions}
         </div>
       </article>

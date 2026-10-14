@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PostComposer from '../PostComposer'
 import { postNativeEvent } from '../nativeBridge'
 import ShellOverlayPortal, { mountShellOverlay } from '../ShellOverlayPortal'
+import { readOwnPops } from '../ownPops'
 
 vi.mock('../FeedTwin', () => {
   const channels = [{ id: 'food', number: 101, name: 'Food', icon: 'food' }]
@@ -20,12 +21,17 @@ vi.mock('../nativeBridge', async importOriginal => ({ ...await importOriginal<ty
 vi.mock('../pop', () => ({ playPop: vi.fn() }))
 vi.mock('../analytics', () => ({ track: vi.fn() }))
 vi.mock('../useClaimRadiusLimit', () => ({ useClaimRadiusLimitKm: () => 100 }))
+vi.mock('../ownPops', async original => ({ ...await original<typeof import('../ownPops')>(), readOwnPops: vi.fn(() => []) }))
 
 let root: Root
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  // Free posting is "where you are" (postSpotGate.ts): the viewer stands at
+  // the spot these drafts are published to, so the gate lets them through.
+  Object.assign(window, { __poplurNativeLocation: { type: 'poplur-location', latitude: 43, longitude: -79, source: 'test' } })
   vi.useFakeTimers()
   vi.clearAllMocks()
+  vi.mocked(readOwnPops).mockReturnValue([])
   const element = document.createElement('main')
   document.body.appendChild(element)
   root = createRoot(element)
@@ -37,6 +43,67 @@ afterEach(() => {
 })
 
 describe('upload stage ownership', () => {
+  it('keeps the draft usable while confirming replacement of an existing pop', async () => {
+    vi.mocked(readOwnPops).mockReturnValue([{ id: 'existing', latitude: 43, longitude: -79, radiusKm: 5, createdAtMillis: null, likeCount: 0 }])
+    act(() => root.render(<PostComposer
+      media={{ kind: 'photo', src: 'data:image/jpeg;base64,fixture' }}
+      target={{ lat: 43, lng: -79, radiusKm: 5 }}
+      draft={{ caption: 'Replacement draft', channelId: 'food', filterId: 'none', usedAI: false, rightsAttested: true }}
+      onClose={vi.fn()} />))
+    const post = [...document.querySelectorAll('button')].find(button => button.textContent === 'Post to News Feed')!
+    await act(async () => post.click())
+    expect(document.querySelector('[aria-label="This pop replaces one of yours"]')).not.toBeNull()
+    expect(document.querySelector('[aria-label="Post upload progress"]')).toBeNull()
+    expect(document.querySelector('textarea')?.value).toBe('Replacement draft')
+    expect(vi.mocked(postNativeEvent).mock.calls.some(([data]) => data.type === 'publishPost')).toBe(false)
+    await act(async () => [...document.querySelectorAll('button')].find(button => button.textContent === 'Replace it')!.click())
+    const requests = vi.mocked(postNativeEvent).mock.calls.map(([data]) => data).filter(data => data.type === 'publishPost')
+    expect(requests).toHaveLength(1)
+    await act(async () => window.dispatchEvent(new CustomEvent('poplur-upload-result', { detail: { requestId: requests[0].requestId, ok: true } })))
+    expect(document.querySelector('[aria-label="Posted confirmation"]')).not.toBeNull()
+  })
+
+  it('moves a distant draft to the current location without losing its content', async () => {
+    act(() => root.render(<PostComposer
+      media={{ kind: 'photo', src: 'data:image/jpeg;base64,fixture' }}
+      target={{ lat: -33.87, lng: 151.21, radiusKm: 5 }}
+      draft={{ caption: 'Keep this local draft', channelId: 'food', filterId: 'none', usedAI: false, rightsAttested: true }}
+      onClose={vi.fn()} />))
+    const blocked = [...document.querySelectorAll('button')].find(button => button.textContent === 'Choose a nearby spot')!
+    expect(blocked.disabled).toBe(true)
+    act(() => [...document.querySelectorAll('button')].find(button => button.textContent === 'Use my current location')!.click())
+    expect(document.querySelector('textarea')?.value).toBe('Keep this local draft')
+    const post = [...document.querySelectorAll('button')].find(button => button.textContent === 'Post to News Feed')!
+    expect(post.disabled).toBe(false)
+    await act(async () => post.click())
+    const request = vi.mocked(postNativeEvent).mock.calls.map(([data]) => data).find(data => data.type === 'publishPost')!
+    expect(request).toMatchObject({ targetLatitude: 43, targetLongitude: -79, caption: 'Keep this local draft' })
+    await act(async () => window.dispatchEvent(new CustomEvent('poplur-upload-result', { detail: { requestId: request.requestId, ok: true } })))
+  })
+
+  it('recovers from a changed GPS fix without entering or latching the upload state', async () => {
+    act(() => root.render(<PostComposer
+      media={{ kind: 'photo', src: 'data:image/jpeg;base64,fixture' }}
+      target={{ lat: 43, lng: -79, radiusKm: 5 }}
+      draft={{ caption: 'Wait for my location', channelId: 'food', filterId: 'none', usedAI: false, rightsAttested: true }}
+      onClose={vi.fn()} />))
+    Object.assign(window, { __poplurNativeLocation: { latitude: -33.87, longitude: 151.21 } })
+    await act(async () => [...document.querySelectorAll('button')].find(button => button.textContent === 'Post to News Feed')!.click())
+    expect(document.querySelector('[aria-label="Post upload progress"]')).toBeNull()
+    expect(document.querySelector('textarea')?.value).toBe('Wait for my location')
+    expect(vi.mocked(postNativeEvent).mock.calls.some(([data]) => data.type === 'publishPost')).toBe(false)
+    act(() => {
+      Object.assign(window, { __poplurNativeLocation: { latitude: 43, longitude: -79 } })
+      window.dispatchEvent(new Event('poplur-location'))
+    })
+    const post = [...document.querySelectorAll('button')].find(button => button.textContent === 'Post to News Feed')!
+    expect(post.disabled).toBe(false)
+    await act(async () => post.click())
+    const request = vi.mocked(postNativeEvent).mock.calls.map(([data]) => data).find(data => data.type === 'publishPost')!
+    expect(request).toBeDefined()
+    await act(async () => window.dispatchEvent(new CustomEvent('poplur-upload-result', { detail: { requestId: request.requestId, ok: true } })))
+  })
+
   it.each([
     { kind: 'photo' as const, messageCard: true },
     { kind: 'photo' as const, messageCard: false },

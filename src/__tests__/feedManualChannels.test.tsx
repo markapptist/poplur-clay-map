@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import FeedTwin from '../FeedTwin'
 import { setUserMuted } from '../audioGate'
+import { isPostSeen } from '../seenPosts'
 
 const store = vi.hoisted(() => ({ posts: [] as any[], listeners: new Set<() => void>() }))
 vi.mock('../nativeFeedPosts', () => ({
@@ -59,6 +60,26 @@ afterEach(async () => {
 })
 
 describe('manual Feed tuning with one populated channel', () => {
+  it('marks only the displayed post seen and keeps other arriving pins NEW', async () => {
+    await act(async () => {
+      store.posts = ['arrival-displayed', 'arrival-unopened'].map(id => ({ ...store.posts[0], id }))
+      store.listeners.forEach(listener => listener())
+    })
+    const displayed = host.querySelector('[data-feed-post-id]')!.getAttribute('data-feed-post-id')!
+    expect(isPostSeen(displayed)).toBe(true)
+    const unopened = store.posts.find(post => post.id !== displayed)!
+    expect(isPostSeen(unopened.id)).toBe(false)
+  })
+  it('keeps background arrivals NEW until Feed is in front', async () => {
+    await act(async () => root.render(<FeedTwin index={0} frontMost={false} />))
+    await act(async () => {
+      store.posts = [{ ...store.posts[0], id: 'arrival-background' }]
+      store.listeners.forEach(listener => listener())
+    })
+    expect(isPostSeen('arrival-background')).toBe(false)
+    await act(async () => root.render(<FeedTwin index={0} frontMost />))
+    expect(isPostSeen('arrival-background')).toBe(true)
+  })
   it('automatically tunes through active channels after an unlimited photo, with static between channels', async () => {
     await act(async () => {
       store.posts = [

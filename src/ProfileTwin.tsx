@@ -2139,7 +2139,7 @@ export default function ProfileTwin({
           <strong>{captureSource === 'camera' ? 'PROFILE SELFIE' : 'SELFIE VIDEOS'}</strong>
           <span>{captureStatus}</span>
         </div>
-        <TabControlRail side={controlSide} label="Profile selfie controls">
+        <TabControlRail side="left" label="Profile selfie controls">
           {captureSource === 'camera' ? (
             <>
               <CameraARButton active={selfieArOpen} size={42} onToggle={() => setSelfieArOpen(open => !open)} />

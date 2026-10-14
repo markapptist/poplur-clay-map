@@ -56,7 +56,7 @@ export const TEST_ACTIVITY_SCREENS = [
   'camera-ai-chat', 'camera-studio',
   'profile-avatar', 'profile-house', 'profile-messages', 'profile-notifications',
   'profile-phone', 'profile-settings', 'profile-stats', 'profile-store',
-  'profile-timeline', 'profile-trophies', 'profile-wallet', 'profile-wardrobe',
+  'profile-trophies', 'profile-wallet', 'profile-wardrobe',
 ] as const
 
 export type TestActivityScreen = typeof TEST_ACTIVITY_SCREENS[number]

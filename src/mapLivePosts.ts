@@ -11,11 +11,10 @@ import {
 import type { PopPin } from './ClayMap'
 import { feedPostReachesViewer } from './feedDiscovery'
 import { pinColorId } from './pinColors'
-import type { NativeFeedPost } from './nativeFeedPosts'
+import { LIVE_FEED_FETCH_LIMIT, windowFeedDocuments, type NativeFeedPost } from './nativeFeedPosts'
 import { webDb } from './webFirebase'
 import { clampRadiusMeters } from './worldRadius'
 
-const LIVE_MAP_POST_LIMIT = 160
 const OWNER_COLORS = ['#FF4BA1', '#4FD6B8', '#FFD24B', '#A97BFF', '#5FB0FF', '#FF8A3D', '#7CE04F'] as const
 
 function rgb(hex: string): [number, number, number] {
@@ -210,7 +209,7 @@ export function normalizeLiveMapPost(
   // client refuses to load is still a real claim with real media, and its
   // marker stays on the board — only a row with no media field and no words
   // is dropped.
-  const caption = text(row.caption, 2_048)
+  const caption = typeof row.caption === 'string' ? row.caption.trim().slice(0, 2_048) : ''
   const declaredMedia = text(row.playbackURL, 2_048) || text(row.mediaURL, 2_048)
   if (!declaredMedia && !caption) return null
 
@@ -233,6 +232,9 @@ export function normalizeLiveMapPost(
       profileVisits: count(row.profileVisitCount),
     },
     channel: text(row.channelId, 40) || 'live',
+    caption,
+    contentType: row.contentType === 'message' || (!declaredMedia && caption) ? 'message' : 'post',
+    messageCard: row.contentType === 'message' && row.messageCard === true,
     media,
     world: false,
     mine,
@@ -270,6 +272,8 @@ export function nativeFeedPostsToMapPins(
       mediaType: post.mediaType,
       posterURL: post.posterURL,
       caption: post.caption,
+      contentType: post.contentType,
+      messageCard: post.messageCard,
       channelId: post.channelId,
       radiusMeters: post.radiusMeters,
       createdAtMillis: post.createdAtMillis,
@@ -324,12 +328,14 @@ export function liveMapPinGhost(
 }
 
 /** Normalize one complete Firestore query snapshot. Replacing Map state with
- * this list makes deletion as immediate and deterministic as insertion. */
+ * this list makes deletion as immediate and deterministic as insertion. The
+ * snapshot is the wide fetch; the Map keeps the same per-population window
+ * the Feed does (windowFeedDocuments), so both boards show the same pops. */
 export function normalizeLiveMapDocuments(
   documents: readonly LiveMapPostDocument[],
   ownUid: string | null = null,
 ): LiveMapPostPin[] {
-  return documents.flatMap(document => {
+  return windowFeedDocuments(documents, ownUid).flatMap(document => {
     const pin = normalizeLiveMapPost(document.id, document.data(), ownUid)
     return pin ? [pin] : []
   })
@@ -348,7 +354,7 @@ export function subscribeLiveMapPosts(
   const posts = query(
     collection(webDb(), 'posts'),
     orderBy('createdAt', 'desc'),
-    limit(LIVE_MAP_POST_LIMIT),
+    limit(LIVE_FEED_FETCH_LIMIT),
   )
   return onSnapshot(posts, snapshot => {
     listener(normalizeLiveMapDocuments(

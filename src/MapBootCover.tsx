@@ -47,7 +47,7 @@ export default function MapBootCover() {
   }, [])
 
   return (
-    <div className={styles.loader}>
+    <div className={styles.loader} data-map-loading>
       <p className={`${styles.text}${swapping ? ` ${styles.swap}` : ''}`}>{LINES[index]}</p>
       <div className={styles.track}>
         <div className={styles.fill} />

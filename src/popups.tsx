@@ -8,7 +8,7 @@ import CommerceSuggestionWindow, { type SuggestionPrimaryAction } from './Commer
 import PoplurDialog from './PoplurDialog'
 import FlatNotifIcon from './FlatNotifIcon'
 import type { BannerAnatomy } from './notificationBanner'
-import { playPop, playPopAmbient } from './pop'
+import { playNotificationPop, playPop, playPopAmbient } from './pop'
 import { KM_TO_MI, shouldUseMiles } from './units'
 
 // The app's one transient popup layer: engagement and suggestions, centred on
@@ -58,6 +58,8 @@ export interface MapPopContent {
   user: string | null
   channel?: string
   caption?: string
+  contentType?: 'message' | 'post'
+  messageCard?: boolean
   radiusKm: number
   /** Optional only because a pop may be a MESSAGE rather than a picture: every
    *  pop carries media or a caption, never neither (the composer refuses to
@@ -244,7 +246,8 @@ export function showPopup(item: Omit<PopupItem, 'id' | 'ttl'> & { ttl?: number }
   // because these fire on a cadence with nobody touching the screen and the
   // ordinary pop's 8s volley-nap kept the audio thread running at idle (the
   // exact thing the thermal gate fails builds for). Muted app stays silent.
-  playPopAmbient(0.5, item.kind === 'banner' ? 'notification' : 'ambient')
+  if (item.kind === 'banner') playNotificationPop()
+  else playPopAmbient()
   expiryTimers.set(id, window.setTimeout(() => dismissPopup(id), ttl))
   return id
 }
@@ -383,11 +386,11 @@ export default function PopupHost({ dismissOnBackdrop = false }: { dismissOnBack
             // card under the title, and a preview that has to be read past
             // three chips is not a preview.
             <PoplurDialog
-              variant="media"
+              variant={item.content.contentType === 'message' ? 'message' : 'media'}
               dataId={item.content.id}
               title={item.content.user ?? 'Your pop'}
               subtitle={item.content.caption ?? item.content.media?.alt ?? item.content.name}
-              media={item.content.media}
+              media={item.content.messageCard ? undefined : item.content.media}
               onClose={() => {
                 playPop()
                 dismissPopup(item.id)

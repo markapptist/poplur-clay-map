@@ -6,7 +6,7 @@ import { isPlaybackBlocked, onGateChange } from './audioGate'
 import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudioFocus, requestAudioFocus, type AudioOwner } from './audioFocus'
 import { feedSuggestionFor } from './tourSmarts'
 import { feedUrl, channelUrl } from './assetPacks'
-import { markPostsSeen, onSeenPostsChange, seenPostsSnapshot } from './seenPosts'
+import { feedPostIdFromPinId, markPostsSeen, onSeenPostsChange, seenPostsSnapshot } from './seenPosts'
 import { blendedDemoPostsForChannel, demoFeedEnabled, useDemoFeedMedia } from './demoFeedMedia'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 import { setMusicPlayback } from './musicPlayback'
@@ -1032,14 +1032,11 @@ export default function FeedTwin({
   // Home chooses a populated channel on arrival. Once this screen is live,
   // an empty selection is intentional: updates to posts or location must not
   // pull the dial back to the one populated channel.
-  // Going to a channel is seeing what it holds: the badge on its tile comes
-  // off on arrival, not one pop at a time. The pop actually on screen is
-  // marked too, which is what clears the same pop's badge on the Map.
+  // Only the content on screen has been opened. Merely tuning a channel or
+  // receiving a background snapshot must not clear its other pins' NEW badges.
   useEffect(() => {
-    const arrived = publishedPosts.filter(candidate => candidate.channelId === ch.id).map(candidate => candidate.id)
-    if (post?.id) arrived.push(post.id)
-    if (arrived.length) markPostsSeen(arrived)
-  }, [ch.id, post?.id, publishedPosts])
+    if (frontMost && !suppressed && post?.id) markPostsSeen([feedPostIdFromPinId(post.id)])
+  }, [post?.id, frontMost, suppressed])
   const postId = radiusPostId(ch.id, post)
   // Every Firestore snapshot re-reports the server-owned reach. The old local
   // ledger is retained only when the authenticated write fails; it no longer

@@ -16,7 +16,22 @@ import { pinColorId, type PinColorId } from './pinColors'
 import { clampRadiusMeters } from './worldRadius'
 import { photoViewSeconds } from './mediaTiming'
 
-const LIVE_FEED_POST_LIMIT = 160
+/**
+ * The newest-N window, kept PER POPULATION — people and the simulation each
+ * get their own N (see windowByPopulation). One shared window let the
+ * synthetic cohort (~460 pops/day) turn the whole pool over every ~7 h, so a
+ * person's morning pop was gone from every other viewer's Feed and Map by the
+ * afternoon.
+ */
+export const LIVE_FEED_POST_LIMIT = 160
+/**
+ * Rows each pool listener FETCHES. Firestore cannot select the absence of a
+ * synthetic marker (`!=` and `not-in` skip documents missing the field, and
+ * human writers stamp nothing), so people's posts can only be found by reading
+ * past the simulation's: fetch wider, then window each population. At ~460
+ * simulation pops/day this reaches back ≈33 h; raise it to reach further.
+ */
+export const LIVE_FEED_FETCH_LIMIT = 640
 /** The account's own posts ride along regardless of age (see subscribeLiveFeedPosts). */
 const OWN_FEED_POST_LIMIT = 64
 
@@ -218,7 +233,7 @@ function normalizeFeedPost(
     photoViewSeconds: mediaType === 'photo' ? photoViewSeconds(row.photoViewSeconds) : null,
     posterURL,
     username: usernameValue.startsWith('@') ? usernameValue : `@${usernameValue}`,
-    caption: boundedText(row.caption, 2_000),
+    caption: typeof row.caption === 'string' ? row.caption.trim().slice(0, 2_000) || undefined : undefined,
     contentType: row.contentType === 'message' ? 'message' : 'post',
     messageCard: row.contentType === 'message' && row.messageCard === true,
     channelId,
@@ -248,19 +263,87 @@ function normalizeFeedPost(
   }
 }
 
+/**
+ * Whether a post row is simulation output. Mirrors the canonical classifier,
+ * functions/src/syntheticIdentity.ts in Poplur2025-iOS (postClass() ===
+ * 'synthetic' | 'lab'), minus the owner-profile lookup the web cannot make —
+ * every cohort and sim-daily actor announces itself in the uid prefix, which
+ * that module's own test asserts. Keep the two in step.
+ *
+ * Reads the raw Firestore row AND the already-normalised shape (ownerId,
+ * syntheticCohort) because the Map re-normalises rows the shell normalised.
+ */
+export function isSyntheticPostRow(id: string, row: Record<string, unknown>): boolean {
+  const owner = boundedText(row.userID ?? row.userId ?? row.ownerId, 128) ?? ''
+  return /^(?:synthetic-|sim-)/.test(owner)
+    || row.syntheticBeta === true
+    || row.syntheticCohort === true
+    || (typeof row.syntheticActorId === 'string' && row.syntheticActorId !== '')
+    || (typeof row.syntheticSource === 'string' && row.syntheticSource !== '')
+    || (typeof row.syntheticJourney === 'string' && row.syntheticJourney !== '')
+    || row.source === 'synthetic-browser'
+    || /^(?:post-sim-|synthetic-|post-radius-lab-)/.test(id)
+}
+
+export type PoolPopulation = 'person' | 'synthetic' | 'own'
+
+/**
+ * The newest LIVE_FEED_POST_LIMIT of EACH population, in the order given
+ * (newest first). Simulation volume can therefore never push a person's post
+ * out: people keep exactly the window they would have if no synthetic post
+ * existed, and the cohort keeps its own. The account's own posts are never
+ * counted against either window (the pool always carries them, whatever their
+ * age — see mergeFeedDocuments).
+ */
+export function windowByPopulation<T>(
+  items: readonly T[],
+  population: (item: T) => PoolPopulation,
+): T[] {
+  const kept: T[] = []
+  let people = 0
+  let synthetic = 0
+  for (const item of items) {
+    const kind = population(item)
+    if (kind === 'own') kept.push(item)
+    else if (kind === 'synthetic') { if (synthetic < LIVE_FEED_POST_LIMIT) { synthetic += 1; kept.push(item) } }
+    else if (people < LIVE_FEED_POST_LIMIT) { people += 1; kept.push(item) }
+  }
+  return kept
+}
+
+/** windowByPopulation over Firestore documents ordered newest first. */
+export function windowFeedDocuments(
+  latest: readonly LiveFeedPostDocument[],
+  ownUid: string | null = null,
+): LiveFeedPostDocument[] {
+  return windowByPopulation(latest, document => {
+    const row = document.data() as Record<string, unknown>
+    if (ownUid && boundedText(row.userID ?? row.userId ?? row.ownerId, 128) === ownUid) return 'own'
+    return isSyntheticPostRow(document.id, row) ? 'synthetic' : 'person'
+  })
+}
+
 /** Compatibility boundary for the native one-shot fallback. It uses the same
- * publication and privacy policy as the canonical Firestore listener. */
+ * publication and privacy policy as the canonical Firestore listener, and the
+ * same per-population window: a shell that forwards its whole fetch (or one
+ * that already windowed it — the window is idempotent) lands in the same pool. */
 export function normalizeNativeFeedPosts(
   detail: NativeFeedDetail,
-  options: { allowSyntheticOnboarding?: boolean } = {},
+  options: { allowSyntheticOnboarding?: boolean; ownUid?: string | null } = {},
 ): NativeFeedPost[] {
   if (!Array.isArray(detail.posts)) return []
-  return detail.posts.slice(0, LIVE_FEED_POST_LIMIT).flatMap(raw => {
+  const ownUid = options.ownUid === undefined ? accountSnapshot().uid : options.ownUid
+  const candidates = detail.posts.slice(0, LIVE_FEED_FETCH_LIMIT).flatMap(raw => {
     if (!raw || typeof raw !== 'object') return []
     const row = raw as Record<string, unknown>
     const post = normalizeFeedPost(row.id, row, options.allowSyntheticOnboarding === true)
-    return post ? [post] : []
-  }).sort((a, b) => b.createdAtMillis - a.createdAtMillis || a.id.localeCompare(b.id))
+    if (!post) return []
+    const population: PoolPopulation = ownUid && post.ownerId === ownUid
+      ? 'own'
+      : isSyntheticPostRow(post.id, row) ? 'synthetic' : 'person'
+    return [{ post, population }]
+  }).sort((a, b) => b.post.createdAtMillis - a.post.createdAtMillis || a.post.id.localeCompare(b.post.id))
+  return windowByPopulation(candidates, candidate => candidate.population).map(candidate => candidate.post)
 }
 
 export function normalizeLiveFeedPost(id: string, row: DocumentData): NativeFeedPost | null {
@@ -279,13 +362,16 @@ export function normalizeLiveFeedDocuments(
   }).sort((a, b) => b.createdAtMillis - a.createdAtMillis || a.id.localeCompare(b.id))
 }
 
-/** The newest window plus the account's own posts, deduplicated by id. Exported for tests. */
+/** The newest window of each population plus the account's own posts,
+ * deduplicated by id. Exported for tests. */
 export function mergeFeedDocuments(
   latest: readonly LiveFeedPostDocument[],
   own: readonly LiveFeedPostDocument[],
+  ownUid: string | null = null,
 ): LiveFeedPostDocument[] {
-  const seen = new Set(latest.map(document => document.id))
-  return [...latest, ...own.filter(document => !seen.has(document.id))]
+  const windowed = windowFeedDocuments(latest, ownUid)
+  const seen = new Set(windowed.map(document => document.id))
+  return [...windowed, ...own.filter(document => !seen.has(document.id))]
 }
 
 export function subscribeLiveFeedPosts(
@@ -298,11 +384,12 @@ export function subscribeLiveFeedPosts(
   // with them. Fold in what this account wrote, whatever its age.
   let latest: LiveFeedPostDocument[] = []
   let own: LiveFeedPostDocument[] = []
-  const emit = () => listener(normalizeLiveFeedDocuments(mergeFeedDocuments(latest, own)))
+  const uid = accountSnapshot().uid
+  const emit = () => listener(normalizeLiveFeedDocuments(mergeFeedDocuments(latest, own, uid)))
   const posts = query(
     collection(webDb(), 'posts'),
     orderBy('createdAt', 'desc'),
-    limit(LIVE_FEED_POST_LIMIT),
+    limit(LIVE_FEED_FETCH_LIMIT),
   )
   const stopLatest = onSnapshot(posts, next => {
     latest = next.docs as QueryDocumentSnapshot<DocumentData>[]
@@ -310,7 +397,6 @@ export function subscribeLiveFeedPosts(
   }, error => {
     onError(error instanceof Error ? error : new Error('Live Feed posts are unavailable.'))
   })
-  const uid = accountSnapshot().uid
   const stopOwn = uid
     ? onSnapshot(query(
       collection(webDb(), 'posts'),

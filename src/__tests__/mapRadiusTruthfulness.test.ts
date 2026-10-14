@@ -35,7 +35,7 @@ describe('the account total is derived from something a phone can see', () => {
     // Both non-happy paths of the subscription emit {0, 0}; that is fine as an
     // error fallback and fatal as the routine path.
     const accountRadius = src('accountRadiusPosts.ts')
-    expect(accountRadius).toContain('listener({ radiusKm: 0, totalReachKm: 0, postCount: 0 })')
+    expect(accountRadius).toContain('listener(EMPTY_ACCOUNT_RADIUS_SNAPSHOT)')
   })
 })
 

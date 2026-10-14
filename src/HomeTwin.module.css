@@ -239,45 +239,6 @@
   .contentLayer > * { animation: none; }
 }
 
-.mapFailure {
-  position: absolute;
-  inset: 0;
-  z-index: 265;
-  display: grid;
-  place-items: center;
-  padding: max(96px, calc(env(safe-area-inset-top) + 70px)) 22px max(120px, calc(env(safe-area-inset-bottom) + 92px));
-  color: #fff4fb;
-}
-
-.mapFailureCard {
-  width: min(100%, 360px);
-  padding: 26px 22px 22px;
-  text-align: center;
-}
-
-.mapFailureCard h2 {
-  margin: 0;
-  color: #ff8dca;
-  font: 950 19px/1.1 system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
-  letter-spacing: .08em;
-}
-
-.mapFailureCard p {
-  margin: 10px 0 20px;
-  color: rgba(255, 239, 249, .82);
-  font: 750 14px/1.4 system-ui, -apple-system, sans-serif;
-}
-
-.mapFailureCard button {
-  min-width: 148px;
-  min-height: 48px;
-  padding: 0 24px;
-  font: 950 14px/1 system-ui, -apple-system, sans-serif;
-  letter-spacing: .08em;
-}
-
-.mapFailureCard button:active { transform: scale(.96); }
-
 /* ---------- bottom counter row (HomeView: leading/trailing 16, bottom safe+20) ---------- */
 
 .bottomRow {

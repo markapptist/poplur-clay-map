@@ -536,9 +536,6 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   // — the object you press to get here is the object the navigator holds while
   // you are here.
   'profile-notifications': 'poplur_bell.glb',
-  // The timeline of your Pop Messages: the supplied @-sign cube — a handle is
-  // what a timeline is filed under.
-  'profile-timeline': 'poplur_cube_at_sign.glb',
   'profile-stats': 'poplur_cube_bargraph.glb',
   'profile-house': HOME_CUBE_MODEL,
   'profile-store': 'poplur_cube_shopping_bag.glb',
@@ -1486,15 +1483,11 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     return () => window.removeEventListener('poplur-avatar-preview', onPreview)
   }, [])
 
-  // News' hamburger → your profile. The shell owns the TAB half of that
-  // navigation (ProfileTwin owns picking the mode): switch tabs and close the
-  // menu the news page was living in, so you arrive on the profile itself.
+  // Explicit navigation to the main Profile (for example from Camera).
+  // Messages owns its nested profile and never dispatches this tab change.
   useEffect(() => {
     const onProfileMode = (event: Event) => {
-      // WHOSE profile. News names the author it was asked about; the drawer's
-      // own Profile row names nobody and therefore means you. Without this the
-      // handle was carried in the event and dropped on the floor, so opening
-      // someone from News landed on your own profile.
+      // A supplied handle visits that person; an absent handle means you.
       const handle = (event as CustomEvent<{ handle?: string }>).detail?.handle ?? null
       setProfileOrigin(activeTabLiveRef.current)
       setViewingUser(handle)
@@ -1551,19 +1544,6 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     }
     window.addEventListener('poplur-open-settings', onOpenSettings)
     return () => window.removeEventListener('poplur-open-settings', onOpenSettings)
-  }, [])
-  // News' Profile row, and a news author's name → a Pop Message timeline
-  // (MessageTimeline). The same subscreen route Settings takes. WHOSE
-  // timeline is parked module-side by the sender (messageTimelineRequest),
-  // because the screen mounts after this event has already fired.
-  useEffect(() => {
-    const onOpenTimeline = () => {
-      setActiveTab('profile')
-      setResume(current => ({ screen: 'profile-timeline', n: current.n + 1 }))
-      setHoldOpen(true)
-    }
-    window.addEventListener('poplur-open-message-timeline', onOpenTimeline)
-    return () => window.removeEventListener('poplur-open-message-timeline', onOpenTimeline)
   }, [])
   // The profile's store shortcut opens STORE — the same subscreen the hold
   // menu's tile does, reached without the wheel. App Review could not find the
@@ -5649,7 +5629,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     // The feed's comment box is the same kind of layer — no ✕ of its own, so
     // the cube is how you leave it.
     if (activeTab === 'feed' && feedBackRef.current?.()) { playPop(); return }
-    // Feed's TV cube reveals its side rails. Ads belong to content breaks.
+    // Feed starts with both rails visible; its TV cube toggles them.
     if (activeTab === 'feed') {
       playPop()
       setPopping(true)

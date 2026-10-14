@@ -6,7 +6,7 @@ import { usePullToRefresh } from './usePullToRefresh'
 import { useNewsRadiusFocus } from './useNewsRadiusFocus'
 import { playPop } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
-import { requestMessageTimeline } from './messageTimelineRequest'
+import MessageTimeline from './MessageTimeline'
 import { localDaylight } from './skyCycle'
 import ScreenCoach from './ScreenCoach'
 import ClayCornerButton from './ClayCornerButton'
@@ -375,11 +375,8 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
     }))
   }
 
-  // ── The hamburger: search, and the way to your profile ───────────────────
-  // The paper is Poplur's timeline, so it carries the two controls a timeline
-  // needs and nothing else (the queue names exactly these): a search that
-  // really filters what is set, and a door to your profile that lands on
-  // Messages — the drawer is where you go to READ, so it opens your inbox.
+  // The messages profile is a nested page of this screen. It never changes
+  // the app tab, the navigator object, or the separate Browser destination.
   const controlSide = useControlSide()
   const [menuOpen, setMenuOpen] = useState(false)
   // The drawer only ever played an ENTER animation — closing it just
@@ -398,6 +395,11 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
   /** The story opened as a full page, the way a tweet opens. */
   const [detail, setDetail] = useState<Entry | null>(null)
+  const [messageProfile, setMessageProfile] = useState<{ handle: string | null } | null>(null)
+  const messageProfileBackRef = useRef<(() => boolean) | null>(null)
+  const bindMessageProfileBack = useCallback((back: (() => boolean) | null) => {
+    messageProfileBackRef.current = back
+  }, [])
   const searchRef = useRef<HTMLInputElement>(null)
 
   const requestedEventFromUrl = useMemo(() => typeof window === 'undefined'
@@ -422,6 +424,11 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   // cube falls through to whatever it does on the paper itself.
   stepBackRef.current = () => {
     if (menuOpen) { setMenuOpen(false); return true }
+    if (messageProfile) {
+      if (messageProfileBackRef.current?.()) return true
+      setMessageProfile(null)
+      return true
+    }
     if (detail) { setDetail(null); return true }
     if (replyingTo) { setReplyingTo(null); setReplyDraft(''); return true }
     if (byHandle) { setByHandle(null); return true }
@@ -439,12 +446,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   const goToProfileMessages = () => {
     playCubeNavigationPop()
     setMenuOpen(false)
-    // Your Pop Messages, as a timeline (MessageTimeline). Park WHOSE before
-    // the event: the screen is unmounted right now and mounts only after the
-    // shell opens the menu, so a listener cannot catch this — it reads the
-    // parked value on mount. null means you.
-    requestMessageTimeline(null)
-    window.dispatchEvent(new CustomEvent('poplur-open-message-timeline'))
+    setMessageProfile({ handle: null })
   }
 
   // Search filters the EDITION, not just the visible rows: an empty result says
@@ -460,7 +462,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   }, [entries, selectedTag, feedTab, byHandle, needle, matches])
   useNewsRadiusFocus(scrollHost, shown,
     detail ? entries.find(entry => entry.id === detail.id) ?? detail : null,
-    menuMounted || composingMessage)
+    menuMounted || composingMessage || Boolean(messageProfile))
   const filtering = Boolean(needle) || Boolean(byHandle) || Boolean(selectedTag) || feedTab === 'video'
   const sourceProfile = entries.find(e => e.handle === byHandle)?.liveEvent?.author
 
@@ -513,13 +515,8 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
   const openProfileFor = (handle?: string) => {
     playCubeNavigationPop()
     setMenuOpen(false)
-    setDetail(null)
-    if (entries.some(e => e.handle === handle && e.liveEvent)) { setByHandle(handle ?? null); setSelectedTag(null); setFeedTab('world'); scrollHost.current?.scrollTo({ top: 0 }); return }
-    // Their Pop Messages, as a timeline — the same hand-off the drawer's own
-    // Profile row uses, with their handle parked as whose. (Resolving a handle
-    // to an account is the timeline's job, off the shared post wire.)
-    requestMessageTimeline(handle ?? null)
-    window.dispatchEvent(new CustomEvent('poplur-open-message-timeline'))
+    if (entries.some(e => e.handle === handle && e.liveEvent)) { setDetail(null); setByHandle(handle ?? null); setSelectedTag(null); setFeedTab('world'); scrollHost.current?.scrollTo({ top: 0 }); return }
+    setMessageProfile({ handle: handle === '@you' ? null : handle ?? null })
   }
 
   const rest = shown
@@ -568,7 +565,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
       aria-label="Poplur Times"
     >
       {/* No ✕ — the cube is the back control for every subscreen. */}
-      <div className={menuOpen ? `${styles.scroll} ${styles.scrollPushed}` : styles.scroll} ref={scrollHost}>
+      <div className={menuOpen ? `${styles.scroll} ${styles.scrollPushed}` : styles.scroll} ref={scrollHost} hidden={Boolean(messageProfile)}>
         <div className={pullStyles.panel} ref={pullPanel} data-pull-panel aria-hidden="true">
           <div className={pullStyles.head} ref={pullHead}>
             {/* The supplied mark head, prebaked flat by prerender-sprites —
@@ -670,7 +667,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                 {entry.headline && <h3 className={styles.entryHeadline}>{entry.headline}</h3>}
                 <p className={styles.body}>{entry.body.split(/(#[\p{L}\p{N}_]+)/u).map((part,index) => part.startsWith('#') ? <button key={index} className={styles.inlineTag} onClick={() => { setSelectedTag(part.slice(1)); setByHandle(null); scrollHost.current?.scrollTo({ top: 0 }) }}>{part}</button> : part)}</p>
                 {!!entry.liveEvent?.hashtags?.length && <div className={styles.hashtags}>{entry.liveEvent.hashtags.map(tag => <button key={tag} onClick={() => { setSelectedTag(tag); setByHandle(null); scrollHost.current?.scrollTo({ top: 0 }) }}>#{tag}</button>)}</div>}
-                {entry.media?.length ? <EntryMedia media={entry.media} active={!detail && !composingMessage} /> : null}
+                {entry.media?.length ? <EntryMedia media={entry.media} active={!detail && !composingMessage && !messageProfile} /> : null}
                 {(entry.kind === 'dispatch' || entry.kind === 'liveNews' || entry.mine) && snapshotFor(entry) && (
                   entry.liveEvent ? (
                     <button
@@ -772,7 +769,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
       {detail && (() => {
         const plate = snapshotFor(detail)
         return (
-          <div className={styles.detail} role="dialog" aria-label={`${detail.who}'s post`}>
+          <div className={styles.detail} role="dialog" aria-label={`${detail.who}'s post`} hidden={Boolean(messageProfile)}>
             <div className={styles.detailBar}>
               {/* No "‹ BACK". The cube under the page is the back button for
                   the whole app, and a story is exactly the case it was built
@@ -805,7 +802,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
 
               <h2>{detail.headline}</h2>
               <p className={styles.detailBody}>{detail.body}</p>
-              {detail.media?.length ? <EntryMedia active={!composingMessage} media={detail.media} large /> : null}
+              {detail.media?.length ? <EntryMedia active={!composingMessage && !messageProfile} media={detail.media} large /> : null}
               <p className={styles.detailWhen}>{detail.when === 'now' ? 'just now' : `${detail.when} ago`}</p>
 
               {detail.liveEvent && (
@@ -884,7 +881,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
         />
       )}
 
-      <ScreenCoach
+      {!messageProfile && <ScreenCoach
         id="news"
         title="POPLUR NEWS"
         lines={[
@@ -892,19 +889,19 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
           'Pull down to update the world wire.',
           'Tap a source or hashtag to explore its posts.',
         ]}
-      />
+      />}
 
       {/* Side rail, outside the scroll — the same edge-mounted furniture the
           TV screen and the map carry, rather than a hamburger stuck in a
           corner it doesn't share with anything. */}
-      {!menuOpen && <TabControlRail side={controlSide} label="News controls">
+      {!menuOpen && <TabControlRail side={controlSide} label={messageProfile ? 'Messages profile controls' : 'News controls'}>
         <SideControlIconButton
           icon="news.menu"
-          aria-label="Open news menu"
+          aria-label={messageProfile ? 'Open messages menu' : 'Open news menu'}
           aria-expanded={menuOpen}
           onActivate={openMenu}
         />
-        <button
+        {!messageProfile && <button
           type="button"
           className={showTop ? styles.toTop : `${styles.toTop} ${styles.toTopHidden}`}
           onClick={backToTop}
@@ -919,8 +916,19 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
             aria-hidden="true"
             draggable={false}
           />
-        </button>
+        </button>}
       </TabControlRail>}
+
+      {messageProfile && (
+        <div className={menuOpen ? `${styles.messageProfile} ${styles.scrollPushed}` : styles.messageProfile} data-control-side={controlSide} role="dialog" aria-label="Messages profile">
+          <MessageTimeline
+            key={messageProfile.handle ?? 'own'}
+            viewUser={messageProfile.handle}
+            bindBack={bindMessageProfileBack}
+            active={!menuMounted}
+          />
+        </div>
+      )}
 
       {menuMounted && (
         <>
@@ -933,7 +941,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
           <aside
             className={menuOpen ? styles.drawer : `${styles.drawer} ${styles.drawerOut}`}
             role="dialog"
-            aria-label="News menu"
+            aria-label={messageProfile ? 'Messages menu' : 'News menu'}
             aria-hidden={menuOpen ? undefined : 'true'}
           >
             <p className={styles.drawerTitle}>THE POPLUR TIMES</p>
@@ -985,7 +993,7 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                   <div key={person.handle} className={styles.person}>
                     <button
                       className={styles.personPick}
-                      onClick={() => { playPop(); setByHandle(person.handle); setMenuOpen(false) }}
+                      onClick={() => { playPop(); setMessageProfile(null); setDetail(null); setByHandle(person.handle); setMenuOpen(false) }}
                     >
                       <img src={person.avatar} alt="" draggable={false} />
                       <span>
@@ -1019,6 +1027,8 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
                       playPop()
                       setScope('posts')
                       setQuery(row.topic.replace(/^#/, ''))
+                      setMessageProfile(null)
+                      setDetail(null)
                       setMenuOpen(false)
                     }}
                   >
@@ -1035,6 +1045,12 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
               </div>
             )}
 
+            {messageProfile && <button className={styles.drawerRow} onClick={() => {
+              playCubeNavigationPop(); setMenuOpen(false); setMessageProfile(null); setDetail(null)
+            }}>
+              <span><b>Messages</b><i>Back to the messages feed</i></span>
+            </button>}
+
             <button className={styles.drawerRow} onClick={goToProfileMessages}>
               <img src="mark_talk0.png" alt="" draggable={false} />
               <span>
@@ -1043,7 +1059,6 @@ export default function NewsPaper({ onClose, bindBack, initialEventId }: {
               </span>
             </button>
 
-            <button className={styles.drawerClose} onClick={closeMenu}>CLOSE</button>
           </aside>
         </>
       )}

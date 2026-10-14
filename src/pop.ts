@@ -1,4 +1,4 @@
-import { postNativeEvent } from './nativeBridge'
+import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { isGateMuted } from './audioGate'
 import { shouldPlayPop, type PopSoundEvent } from './popSoundPolicy'
 import { ambientAllowed, onAmbientSleepChange } from './frameGovernor'
@@ -10,6 +10,40 @@ import { ambientAllowed, onAmbientSleepChange } from './frameGovernor'
 let audioCtx: AudioContext | null = null
 let popBuffer: AudioBuffer | null = null
 let popBufferLoading = false
+
+let notificationPlayer: HTMLAudioElement | null = null
+let notificationStopTimer: number | null = null
+let lastNotificationPopAt = -Infinity
+
+/** Real arrivals remain audible after idle. The native notification lane
+ * respects notification sound settings; browser playback is a bounded shot. */
+export function playNotificationPop() {
+  if (isGateMuted() || (typeof document !== 'undefined' && document.hidden)) return
+  const now = performance.now()
+  if (now - lastNotificationPopAt < 1_000) return
+  lastNotificationPopAt = now
+  if (isNativeShell() && postNativeEvent({ type: 'notificationPop' })) return
+  try {
+    if (notificationStopTimer !== null) window.clearTimeout(notificationStopTimer)
+    notificationPlayer?.pause()
+    const player = new Audio('pop.mp3')
+    notificationPlayer = player
+    player.volume = 0.6
+    const finish = () => {
+      player.pause()
+      player.removeAttribute('src')
+      player.load()
+      if (notificationPlayer !== player) return
+      notificationPlayer = null
+      if (notificationStopTimer !== null) window.clearTimeout(notificationStopTimer)
+      notificationStopTimer = null
+    }
+    player.onended = finish
+    player.onerror = finish
+    notificationStopTimer = window.setTimeout(finish, 2_000)
+    void player.play().catch(finish)
+  } catch { /* Browser audio may require a first user gesture. */ }
+}
 
 // Park the context when nobody is popping. A running AudioContext keeps the
 // audio render thread ticking forever to mix silence — the 6 Aug device trace

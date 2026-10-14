@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { presentableHandle, timelineRows, timelineStats } from '../messageTimelineRows'
-import { requestMessageTimeline, takeMessageTimelineRequest } from '../messageTimelineRequest'
 import { PROFILE_TABS } from '../profileMode'
 
 const post = (id: string, contentType: 'post' | 'message', createdAtMillis: number, reachKm?: number) =>
@@ -33,21 +32,6 @@ describe('the Pop Message timeline', () => {
     expect(presentableHandle('mark')).toBe('@mark')
     expect(presentableHandle('')).toBe('')
     expect(presentableHandle(null)).toBe('')
-  })
-})
-
-describe('whose timeline to open', () => {
-  it('is taken once and then gone, so a stale handle never becomes "your messages"', () => {
-    requestMessageTimeline('@harbourfront')
-    expect(takeMessageTimelineRequest()).toEqual({ handle: '@harbourfront' })
-    expect(takeMessageTimelineRequest()).toBeNull()
-  })
-
-  it('reads an empty or missing handle as your own', () => {
-    requestMessageTimeline('   ')
-    expect(takeMessageTimelineRequest()).toEqual({ handle: null })
-    requestMessageTimeline(undefined)
-    expect(takeMessageTimelineRequest()).toEqual({ handle: null })
   })
 })
 

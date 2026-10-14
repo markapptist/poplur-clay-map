@@ -43,10 +43,21 @@
 
 .scroll::-webkit-scrollbar { display: none; }
 
+.scroll[hidden], .detail[hidden] { display: none; }
+
+.messageProfile {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  transition: transform 0.24s cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+.messageProfile[data-control-side='left'] { --messages-content-left: 64px; }
+.messageProfile[data-control-side='right'] { --messages-content-right: 64px; }
+
 .scrollPushed { transform: translateX(min(78%, 300px)); }
 
 @media (prefers-reduced-motion: reduce) {
-  .scroll { transition-duration: 0.01ms; }
+  .scroll, .messageProfile { transition-duration: 0.01ms; }
 }
 
 /* ---- masthead ---- */
@@ -588,7 +599,7 @@
 .scrim {
   position: absolute;
   inset: 0;
-  z-index: 7;
+  z-index: 50;
   background: rgba(12, 6, 14, 0.5);
   -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
@@ -600,7 +611,7 @@
   left: 0;
   top: 0;
   bottom: 0;
-  z-index: 8;
+  z-index: 51;
   width: min(78%, 300px);
   /* Start BELOW the Poplur wordmark. It belongs to the home view and floats
      over every subscreen at z-index 270, so a drawer that starts at the top
@@ -695,19 +706,6 @@
   font: 500 11.5px/1 system-ui, -apple-system, sans-serif;
   font-style: normal;
   color: rgba(255, 226, 242, 0.6);
-}
-
-.drawerClose {
-  margin-top: auto;
-  padding: 12px;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
-  color: #fff4fa;
-  font: 950 11px/1 system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.14em;
-  cursor: pointer;
 }
 
 /* A search with no hits says so, rather than leaving a masthead over nothing. */
