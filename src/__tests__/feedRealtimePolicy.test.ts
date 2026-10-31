@@ -52,9 +52,9 @@ describe('production Feed realtime policy', () => {
     expect(source).toContain('No posts in this channel')
   })
 
-  // This asserted `ranked.find`, which the demo-media padding renamed to
-  // `withDemo` long before the logic moved out of FeedTwin at all, so it had
-  // been failing on a name while the rule it guards went unchecked. The rule
+  // This asserted `ranked.find`, then `withDemo` while demo media padded the
+  // channel (removed 30 Oct 2026); it once failed on a name while the rule it
+  // guards went unchecked. The rule
   // is unchanged and now lives in feedHandoffInjection.ts, where it is also
   // unit-tested in node (mapFeedHandoffInjection.test.ts): a handoff may
   // reorder a delivered post, and may recover one the newest-N pool has not
@@ -70,7 +70,7 @@ describe('production Feed realtime policy', () => {
     expect(injection).toContain('eligibility.hiddenPostIds?.includes(focusedId)')
     // ...and the feed has to actually supply them, or the gates are decorative.
     expect(source).toContain('hiddenPostIds: discovery.hiddenPostIds')
-    expect(source).toMatch(/withHandoffPost\(withDemo, channel\.id, focusedContent, \{/)
+    expect(source).toMatch(/withHandoffPost\(ranked, channel\.id, focusedContent, \{/)
     // FeedTwin itself still fabricates no post of its own.
     expect(source).not.toContain('const focusedPost: ChannelPost = {')
   })
