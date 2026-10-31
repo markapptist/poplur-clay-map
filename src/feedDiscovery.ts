@@ -1,5 +1,4 @@
 import { isWorldRadiusMeters } from './worldRadius'
-import { isLiveSimulationEnabled } from './simulationControl'
 import { accountSnapshot } from './accountStore'
 
 export type FeedDiscoveryMode = 'radius' | 'local' | 'trending'
@@ -260,12 +259,9 @@ export function feedPostReachesViewer(
     'ownerId' | 'radiusMeters' | 'locationVisibility' | 'originLatitude' | 'originLongitude' | 'syntheticCohort'>,
   viewerCoords: readonly [number, number] | null | undefined,
 ): boolean {
-  // Test mode: the synthetic beta cohort's pops reach every viewer, wherever
-  // they stand, while the simulation switch is on. The cohort's pops are a few
-  // kilometres wide and posted around the world, so by the earned-reach rule a
-  // reviewer anywhere would see nothing at all — a board with no content is
-  // not a test of anything. Real pops keep the earned rule unchanged.
-  if (post.syntheticCohort === true && isLiveSimulationEnabled()) return true
+  // A synthetic-cohort pop gets no special reach: it follows the earned rule
+  // below like any other pop. No switch may widen it (App Review 2.5.19 /
+  // 5.6, 29 Oct 2026).
   // Your own pops always reach you. The Map already stands your pins whatever
   // their radius ("your own pops always stand", MapApp), but the Feed dropped
   // them by the earned-reach rule the moment a pop was aimed anywhere but

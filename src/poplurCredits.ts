@@ -333,25 +333,11 @@ export async function claimDailyMapRoll(): Promise<MapRollClaim & { alreadyClaim
   return { ...roll, alreadyClaimed: (result.roll as { alreadyClaimed?: unknown }).alreadyClaimed === true }
 }
 
-/** The casino's free daily spin. The server decides the line and pays it
-    before answering; the reels only show what it decided. */
-export async function spinDailyCasino(): Promise<CasinoClaim & { alreadySpun: boolean }> {
-  const { result } = await act({ action: 'casinoSpin' })
-  const spin = readCasino(result.spin)
-  if (!spin) throw new CreditsUnavailable('The spin could not be read. Try again in a moment.')
-  return { ...spin, alreadySpun: (result.spin as { alreadySpun?: unknown }).alreadySpun === true }
-}
-
 /** A new account enters a friend's code; the server pays both sides. */
 export async function redeemReferralCode(code: string): Promise<{ creditsAdded: number }> {
   const { result } = await act({ action: 'redeemReferral', code: code.trim().toUpperCase() })
   const added = (result.referral as { creditsAdded?: unknown } | undefined)?.creditsAdded
   return { creditsAdded: isCount(added) ? added : 0 }
-}
-
-/** The casino's free spin was already used on the server's current day. */
-export function casinoSpunToday(wallet = creditsWallet()): boolean {
-  return Boolean(wallet?.casino && wallet.casino.day === wallet.today.casino)
 }
 
 export function onCreditsChange(listener: () => void): () => void {

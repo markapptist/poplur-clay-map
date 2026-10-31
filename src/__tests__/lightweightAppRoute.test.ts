@@ -22,7 +22,7 @@ describe('lightweight application routing', () => {
     expect(app).not.toContain('useLiveNews()')
     expect(app).not.toContain('startRadioForMap')
     expect(app).not.toContain('setInterval')
-    expect(app).toContain('startEngagementChips({ demo: false })')
+    expect(app).toContain('startEngagementChips()')
 
     const home = source('HomeTwin.tsx')
     expect(home).toContain("import WeatherMark from './WeatherMark'")

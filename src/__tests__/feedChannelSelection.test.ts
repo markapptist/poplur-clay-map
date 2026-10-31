@@ -115,7 +115,7 @@ describe('HomeTwin wiring', () => {
     expect(home).toContain('feedPostReachesViewer(post, viewer)')
     expect(home).toMatch(/const viewer = currentViewerCoords\(\)\s+return posts\.filter/)
     expect(home).toContain('autoTunedFeedChannelIndex(CHANNELS, reaching, current, visit, false)')
-    expect(home).toMatch(/\[activeTab, interceptingFeedPosts, feedPostsReachingViewer, liveSimulationForTune, accountUidForTune, blockedUsersForTune, viewerFixRevision\]/)
+    expect(home).toMatch(/\[activeTab, interceptingFeedPosts, feedPostsReachingViewer, accountUidForTune, blockedUsersForTune, viewerFixRevision\]/)
   })
 
   it('reads 0, not the account total, under POST RADIUS when the Feed has no playing post', () => {

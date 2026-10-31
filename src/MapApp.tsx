@@ -327,7 +327,6 @@ import { currentViewerCoords, mayAskBrowserForLocation, normalizeViewerFix, publ
 import { playClaimDecay, playClaimGrowth } from './motionEffectsAudio'
 import styles from './App.module.css'
 import dropStyles from './ClayMap.module.css'
-import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
 import { blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange } from './blockedUsers'
 
 
@@ -1181,10 +1180,6 @@ export default function MapApp() {
           gestureEvents.forEach(name => map.off(name, onGesture))
         }
         stopChips = startEngagementChips({
-          // The authenticated closed-beta feed is the only simulation source.
-          // The top-level shell forwards those arrivals here, which keeps the
-          // app and private Control Room on the same stable event stream.
-          demo: false,
           // The embed generates but does not draw: its PopupHost is inside the
           // map iframe, and the shell renders one above it. Drawing in both
           // would double every notice on the map surface.
@@ -2822,7 +2817,6 @@ export default function MapApp() {
   // Resolved once: inside a native shell the Map is fed by the shell, not by
   // its own Firestore client (see the forwarded-posts listener below).
   const nativeShell = isNativeShell()
-  const liveSimulation = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
   const [notificationFocusId, setNotificationFocusId] = useState<string | null>(null)
   const [discoveryFocusPostId, setDiscoveryFocusPostId] = useState<string | null>(null)
   const discovery = useMapDiscovery(mapRef, mapLive, ownUid, true, mapFrontRef, rnWebShellRoute, discoveryFocusPostId, notificationFocusId)
@@ -3115,18 +3109,13 @@ export default function MapApp() {
     // as before. (The governor's 15s ambient lease is too short for this: a
     // person can stare at the map for a minute without touching it.)
     //
-    // In the test build (live simulation on) a student's radius grows because
-    // the synthetic cohort answered their pop, and that growth IS the lesson:
-    // while the map is on screen, every gain flies to the pin and plays the
-    // whole moment — the count from the old number to the new one included —
-    // whether or not they touched the board recently. Losses keep the
-    // attention rule so the hourly decay never flies a parked map.
+    // A gain or loss flies to the pin only while the board has the viewer's
+    // attention, so the hourly decay never flies a parked map.
     const map = mapRef.current
     const ownPin = best.mine ? liveMapPosts.find(pin => pin.id === best.id) : undefined
     const visible = typeof document !== 'undefined' && !document.hidden
     const attended = visible && now - lastGestureRef.current < OWN_RADIUS_FOCUS_ATTENTION_MS
-    const lesson = visible && best.deltaKm > 0 && isLiveSimulationEnabled()
-    if (ownPin && map && (attended || lesson) && !tourOnRef.current && !map.isMoving() && focusPinCameraRef.current) {
+    if (ownPin && map && attended && !tourOnRef.current && !map.isMoving() && focusPinCameraRef.current) {
       focusPinCameraRef.current(ownPin, {
         postId: ownPin.id, deltaKm: best.deltaKm, pulse: best.deltaKm < 0 ? 'loss' : 'gain',
         beforeKm: best.beforeKm, afterKm: best.afterKm,
@@ -3220,7 +3209,6 @@ export default function MapApp() {
   // Someone you blocked leaves the board at once (blockedUsers.ts).
   const blockedUsers = useSyncExternalStore(onBlockedUsersChange, blockedUsersSnapshot, blockedUsersSnapshot)
   const mapPins = useMemo(() => {
-    void liveSimulation // test mode changes what reaches the viewer
     // Every colour you are already using, so nobody else can be handed one.
     const myPinColours = new Set<PinColorId | 'default'>(
       liveMapPosts.filter(pin => pin.mine).map(pin => pin.pinColor ?? 'default'),
@@ -3283,7 +3271,7 @@ export default function MapApp() {
         pinColor,
       })
       })
-  }, [discoveryEnabled, blockedUsers, currentLocation, liveMapPosts, liveSimulation, myColor, ownAvatar, ownPinColor, ownSelfieVideo, pinRadiusPulse, popLevel])
+  }, [discoveryEnabled, blockedUsers, currentLocation, liveMapPosts, myColor, ownAvatar, ownPinColor, ownSelfieVideo, pinRadiusPulse, popLevel])
 
   // One route powers the horizontal arrows at every zoom. It comes from the
   // authoritative data, not the handful of DOM markers ClayMap keeps mounted
@@ -3949,13 +3937,13 @@ export default function MapApp() {
   // Read actual reach even when Discovery supplies viewport-ranked pins.
   // Level/filter changes and marker mounting do not count as delivery.
   const arrivalPins = useMemo(() => {
-    void currentLocation; void liveSimulation; void blockedUsers
+    void currentLocation; void blockedUsers
     const viewer = currentViewerCoords()
     const posts = discoveryEnabled === true ? discovery.page!.pins : liveMapPosts
     return posts.filter(pin => !pin.mine && !liveMapPinGhost(pin, viewer)
       && !isUserBlocked(pin.ownerId, pin.user))
       .sort((a, b) => b.createdAtMs - a.createdAtMs || a.id.localeCompare(b.id))
-  }, [liveMapPosts, discoveryEnabled, discovery.page, currentLocation, liveSimulation, blockedUsers])
+  }, [liveMapPosts, discoveryEnabled, discovery.page, currentLocation, blockedUsers])
   const arrivalPinsRef = useRef(arrivalPins)
   arrivalPinsRef.current = arrivalPins
   useMapPinArrival({

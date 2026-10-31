@@ -1,5 +1,4 @@
 import { isNativeShell, postNativeEvent } from './nativeBridge'
-import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
 
 /**
  * Firebase Analytics, page side.
@@ -143,18 +142,7 @@ let initialized = false
 export function initAnalytics(): () => void {
   if (initialized || !isTopDocument()) return () => {}
   initialized = true
-  const publishSimulation = (enabled: boolean) => {
-    setAnalyticsUserProperty('simulation', enabled)
-  }
-  publishSimulation(isLiveSimulationEnabled())
-  let unsubscribe = () => {}
-  try {
-    unsubscribe = onLiveSimulationChange(publishSimulation)
-  } catch {
-    // No window event target: the initial value above is all there is.
-  }
   return () => {
-    unsubscribe()
     initialized = false
   }
 }

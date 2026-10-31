@@ -58,7 +58,7 @@ const ENTRY_LABEL: Record<string, string> = {
   welcome_grant: 'Welcome credits',
   store_card_purchase: 'Bought credits',
   map_daily_roll: 'Map reward',
-  casino_daily_spin: 'Casino win',
+  casino_daily_spin: 'Daily reward',
   referral_reward: 'Referral reward',
   meshy_generation: 'Avatar cube',
   meshy_refund: 'Refund',

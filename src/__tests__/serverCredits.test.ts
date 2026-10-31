@@ -100,20 +100,12 @@ describe('the page mirrors the account\'s credits', () => {
     expect(credits.canAfford(56)).toBe(false)
   })
 
-  it('takes the daily roll, the spin and a friend\'s code from the server\'s answers', async () => {
+  it('takes the daily roll and a friend\'s code from the server\'s answers', async () => {
     const credits = await import('../poplurCredits')
     fetchMock
       .mockResolvedValueOnce(answer({
         roll: { day: '2026-10-01', face: 6, credits: 25, title: 'Community chest', alreadyClaimed: false },
         wallet: serverWallet({ balance: 80 }),
-      }))
-      .mockResolvedValueOnce(answer({
-        spin: { day: '2026-10-02', count: 3, symbolId: 'p', amount: 6, doubled: true, line: 'Slots 3× POPLUR · Friday 2× credits', alreadySpun: false },
-        wallet: serverWallet({
-          balance: 86,
-          today: { mapRoll: '2026-10-02', casino: '2026-10-02' },
-          casino: { day: '2026-10-02', count: 3, symbolId: 'p', amount: 6, doubled: true, line: 'Slots 3× POPLUR · Friday 2× credits' },
-        }),
       }))
       .mockResolvedValueOnce(answer({
         referral: { creditsAdded: 10, referrerPaid: true },
@@ -125,14 +117,9 @@ describe('the page mirrors the account\'s credits', () => {
     expect(roll).toMatchObject({ face: 6, credits: 25, alreadyClaimed: false })
     expect(credits.creditBalance()).toBe(80)
 
-    const spin = await credits.spinDailyCasino()
-    expect(sent(1)).toEqual({ data: { action: 'casinoSpin' } })
-    expect(spin).toMatchObject({ count: 3, symbolId: 'p', amount: 6, alreadySpun: false })
-    expect(credits.casinoSpunToday()).toBe(true)
-
     const before = Date.now()
     const redeemed = await credits.redeemReferralCode(' abc234 ')
-    expect(sent(2)).toEqual({ data: { action: 'redeemReferral', code: 'ABC234' } })
+    expect(sent(1)).toEqual({ data: { action: 'redeemReferral', code: 'ABC234' } })
     expect(redeemed).toEqual({ creditsAdded: 10 })
     expect(credits.creditBalance()).toBe(96)
     // The day of worldwide radius is carried over to this device's clock.
@@ -158,7 +145,7 @@ describe('the page mirrors the account\'s credits', () => {
     fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'))
     await expect(credits.refreshCredits()).rejects.toBeInstanceOf(credits.CreditsUnavailable)
     fetchMock.mockResolvedValueOnce(new Response('Rate exceeded.', { status: 429 }))
-    await expect(credits.spinDailyCasino()).rejects.toBeInstanceOf(credits.CreditsUnavailable)
+    await expect(credits.claimDailyMapRoll()).rejects.toBeInstanceOf(credits.CreditsUnavailable)
     expect(credits.creditsWallet()).toBeNull()
 
     auth.token = null
@@ -191,8 +178,8 @@ describe('the page mirrors the account\'s credits', () => {
       'spendCredits', 'refundCredits', 'transferCreditsOut', 'receiveCredits', 'cashOutCredits',
     ]) expect(credits).not.toHaveProperty(name)
     const source = (name: string) => readFileSync(resolve(process.cwd(), 'src', name), 'utf8')
-    expect(source('CasinoScreen.tsx')).toContain('await spinDailyCasino()')
-    expect(source('CasinoScreen.tsx')).not.toMatch(/rollOutcome|grantCasinoWin|isDoubleCreditDay/)
+    // The Casino left the app (App Review 2.5.19 / 5.3.4, 30 Oct 2026); nothing may spin.
+    expect(credits).not.toHaveProperty('spinDailyCasino')
     expect(source('SettingsScreen.tsx')).not.toMatch(/grantReferralCredits|grantWorldRadius/)
     expect(source('WalletScreen.tsx')).not.toMatch(/transferCreditsOut|cashOutCredits|walletSendCredits|walletCashOut/)
     expect(source('AvatarScreen.tsx')).not.toMatch(/spendCredits|refundCredits/)
@@ -210,18 +197,7 @@ describe('the invite', () => {
 describe('the screens print what the server pays', () => {
   // Vitest runs from the clay-map root; the functions live in the iOS repo beside it.
   const server = readFileSync(resolve(process.cwd(), '../Poplur2025-iOS/functions/src/credits.ts'), 'utf8')
-  const casino = readFileSync(resolve(process.cwd(), 'src/CasinoScreen.tsx'), 'utf8')
   const meshy = readFileSync(resolve(process.cwd(), '../Poplur2025-iOS/functions/src/meshyModels.ts'), 'utf8')
-
-  it('the reels\' pay table is the server\'s', () => {
-    const table = casino.slice(casino.indexOf('const SYMBOLS: SlotSymbol[] = ['), casino.indexOf('const WILD'))
-    const drawn = [...table.matchAll(/\{ id: '([^']+)', name: '([^']+)',[^}]*?pays: \[(\d+), (\d+), (\d+)\] \}/g)]
-      .map(match => match.slice(1).join(' '))
-    const paid = [...server.matchAll(/\{ id: "([^"]+)", name: "([^"]+)", pays: \[(\d+), (\d+), (\d+)\] \}/g)]
-      .map(match => match.slice(1).join(' '))
-    expect(drawn).toHaveLength(10)
-    expect(paid).toEqual(drawn)
-  })
 
   it('the die\'s faces are the server\'s', () => {
     const paid = [...server.matchAll(/\{ face: (\d), title: "([^"]+)", credits: (\d+) \}/g)]

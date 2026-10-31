@@ -247,6 +247,17 @@
 .colCat { width: 104px; flex: none; }
 .colNow { flex: 1; }
 
+/* What the channel's preview is showing — a description, never a standing. */
+.nowCaption {
+  flex: 1;
+  min-width: 0;
+  font: 700 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgba(255, 255, 255, 0.72);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---- rows ---- */
 
 .rows {

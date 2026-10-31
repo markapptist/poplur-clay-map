@@ -173,22 +173,13 @@ describe('analytics transport', () => {
 })
 
 describe('initAnalytics', () => {
-  it('publishes the simulation user property once and keeps it current', async () => {
+  it('publishes no simulation property: the app has no simulation mode', async () => {
     const { posted } = installWindow()
     const { initAnalytics } = await import('../analytics')
-    const { setLiveSimulationEnabled } = await import('../simulationControl')
     const teardown = initAnalytics()
-    expect(posted).toEqual([{ type: 'analyticsUserProperty', name: 'simulation', value: '0' }])
-    // A second init is a no-op: one owner, one subscription.
     initAnalytics()
-    expect(posted).toHaveLength(1)
-    setLiveSimulationEnabled(true)
-    expect(posted[1]).toEqual({ type: 'analyticsUserProperty', name: 'simulation', value: '1' })
-    setLiveSimulationEnabled(false)
-    expect(posted[2]).toEqual({ type: 'analyticsUserProperty', name: 'simulation', value: '0' })
+    expect(posted).toEqual([])
     teardown()
-    setLiveSimulationEnabled(true)
-    expect(posted).toHaveLength(3)
   })
 })
 

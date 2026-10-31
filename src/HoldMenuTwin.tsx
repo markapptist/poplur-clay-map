@@ -9,8 +9,6 @@ import NewsPaper from './NewsPaper'
 import RadioScreen from './RadioScreen'
 import MapIpod from './MapIpod'
 import PhoneScreen from './PhoneScreen'
-import CasinoScreen from './CasinoScreen'
-import { primeCasinoAudio } from './casinoAudio'
 import MapShowMe from './MapShowMe'
 import NotificationsScreen from './NotificationsScreen'
 import { followNotification } from './notificationBanner'
@@ -140,10 +138,6 @@ const TAB_MENUS: Record<CubeTab, Item[]> = {
     // TV GUIDE wears the remote — what you'd actually reach for to change the
     // channel — rather than a second copy of the TV set above.
     { icon: 'TvRemote', title: 'TV GUIDE', screen: 'feed-tvguide', native: true },
-    // The daily casino: one free slots spin a day, paid in Poplur Credits.
-    // It lives in the feed like TV and NEWS — a channel you visit, not a
-    // tool. Its own icon now (a supplied clay slot machine).
-    { icon: 'Casino', title: 'CASINO', screen: 'feed-casino', native: true },
     // Links from feed ads land on this app-owned Browser page rather than
     // sending people to Safari or a fresh tab.
     { icon: HOLD_MENU_ICON_ASSETS.browser, title: 'BROWSER', screen: 'feed-browser', native: true },
@@ -1005,10 +999,6 @@ export default function HoldMenuTwin({
       onClose('action')
       return
     }
-    // The daily Casino spin starts on the next render. Prime its AudioContext
-    // while this tile click is still a trusted gesture so iOS can play the
-    // mechanical reel sounds when the opening shuffle begins.
-    if (item.screen === 'feed-casino') primeCasinoAudio()
     playSubscreenNavigationPop()
     // Notify Home before mounting the destination. Parent and child updates
     // are batched into one commit, so the outgoing heavy tab is removed rather
@@ -1370,13 +1360,6 @@ export default function HoldMenuTwin({
           <React.Suspense fallback={<div role="status" aria-live="polite">Loading games…</div>}>
             <GamesScreen onClose={() => { playSubscreenNavigationPop(); onClose() }} />
           </React.Suspense>
-        </div>
-      )
-    }
-    if (activeScreen.native && activeScreen.screen === 'feed-casino') {
-      return (
-        <div className={styles.subscreenStage} role="dialog" aria-label="Poplur Casino">
-          <CasinoScreen onClose={() => { playSubscreenNavigationPop(); onClose() }} />
         </div>
       )
     }

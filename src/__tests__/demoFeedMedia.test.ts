@@ -1,16 +1,14 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   DEMO_CREATIVES,
   DEMO_PHOTOS,
   DEMO_PHOTO_FILES_AVAILABLE,
   availableDemoPhotos,
   blendedDemoPostsForChannel,
-  demoFeedEnabled,
   demoPhotosForChannel,
   demoPosterFile,
   demoPostsForChannel,
 } from '../demoFeedMedia'
-import { setLiveSimulationEnabled } from '../simulationControl'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -21,8 +19,6 @@ const FEED_CHANNEL_IDS = new Set(
   [...readFileSync(resolve(__dirname, '../FeedTwin.tsx'), 'utf8')
     .matchAll(/\{\s*id:\s*'([a-z-]+)',\s*number:\s*\d+/g)].map(match => match[1]),
 )
-
-afterEach(() => setLiveSimulationEnabled(false))
 
 const FOOD = { id: 'food', user: '@sauceboss', caption: 'late-night poutine run downtown' }
 
@@ -85,12 +81,6 @@ describe('demo feed posts', () => {
   it('leaves a channel with no creative genuinely empty', () => {
     expect(demoPostsForChannel({ id: 'live', user: '@you', caption: 'live' })).toEqual([])
     expect(demoPostsForChannel({ id: 'beauty', user: '@glowgetter', caption: 'x' })).toEqual([])
-  })
-
-  it('stays off until the workbench simulation is explicitly enabled', () => {
-    expect(demoFeedEnabled()).toBe(false)
-    setLiveSimulationEnabled(true)
-    expect(demoFeedEnabled()).toBe(true)
   })
 })
 

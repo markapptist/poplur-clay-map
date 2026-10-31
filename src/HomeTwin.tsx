@@ -246,9 +246,7 @@ import {
 } from './testActivity'
 import { EARTH_RADIUS_KM } from './worldRadius'
 import { currentViewerCoords, publishViewerFix } from './viewerFix'
-import { loadTestSimulation } from './testActivity'
 import { feedPostReachesViewer } from './feedDiscovery'
-import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
 
 
 /**
@@ -580,12 +578,6 @@ const SUBSCREEN_CUBE_MODEL: Record<string, string> = {
   'profile-trophies': 'poplur_cube_trophy.glb',
   // The mini-app folder is, fittingly, a folder.
   'feed-apps': 'poplur_cube_folder.glb',
-  // The casino wears the machine itself. 86MB Meshy export decimated to 455KB
-  // by the standard recipe (Draco + simplify 0.0005 + 256px webp) — the
-  // heaviest in this set (the newspaper is 385KB), carried because the
-  // cabinet's lever, marquee and button deck are what make it read as a slot
-  // machine at navigator size.
-  'feed-casino': 'poplur_cube_slot_machine.glb',
   // In the bundle and deliberately unwired, for want of a screen to stand on:
   // ar, video, search, directions, map, tour, comment, live, heypoplur.
   // (cameraroll left this list when the roll became a page.) 'camera-capture' in particular is NOT a destination — PHOTO,
@@ -2219,7 +2211,6 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   // ownership and is never retuned. The old one-shot retune read Home's radio
   // fix and fired only on a post snapshot, so a late fix or account left the
   // demo account on an empty CH 110 (14 Oct 2026).
-  const liveSimulationForTune = useSyncExternalStore(onLiveSimulationChange, isLiveSimulationEnabled, () => false)
   const accountUidForTune = useSyncExternalStore(subscribeAccountUidForTune, accountUidSnapshot, () => null)
   const blockedUsersForTune = useSyncExternalStore(onBlockedUsersChange, blockedUsersSnapshot, blockedUsersSnapshot)
   const [viewerFixRevision, setViewerFixRevision] = useState(0)
@@ -2233,7 +2224,6 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
     }
   }, [])
   useEffect(() => {
-    void liveSimulationForTune
     void accountUidForTune
     void blockedUsersForTune
     void viewerFixRevision
@@ -2247,7 +2237,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       autoTunedFeedChannelRef.current = next
       return next
     })
-  }, [activeTab, interceptingFeedPosts, feedPostsReachingViewer, liveSimulationForTune, accountUidForTune, blockedUsersForTune, viewerFixRevision])
+  }, [activeTab, interceptingFeedPosts, feedPostsReachingViewer, accountUidForTune, blockedUsersForTune, viewerFixRevision])
   // Cube size follows the viewport so the bottom cluster never overlaps.
   const [cubeSize, setCubeSize] = useState(cubeSizeFor)
   const mapFrameRef = useRef<HTMLIFrameElement>(null)
@@ -3762,12 +3752,6 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
   const [selfieRevision, setSelfieRevision] = useState(0)
   const mapSelfieVideo = useMapSelfieVideo(ownSelfieVideo, selfieRevision)
   const [ownUid, setOwnUid] = useState<string | null>(() => accountSnapshot().uid)
-  // The private desk owns the simulation switch; mirror it here once the
-  // account is known so a reviewer's fresh install sees test mode too.
-  useEffect(() => {
-    if (!ownUid) return
-    void loadTestSimulation().catch(() => { /* offline or not a tester: local state stands */ })
-  }, [ownUid])
   useEffect(() => onAccountChange(account => setOwnUid(account.uid)), [])
   useEffect(() => {
     const onPhoto = (event: Event) => {

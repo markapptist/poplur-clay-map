@@ -35,7 +35,7 @@ function HarnessApp({ initialView }: { initialView: HarnessView }) {
   // The shell is the one notice host for engagement forwarded by the map and
   // native surfaces. Keep this lightweight relay on non-map routes without
   // mounting the Map application's own camera/data controller graph.
-  React.useEffect(() => startEngagementChips({ demo: false }), [])
+  React.useEffect(() => startEngagementChips(), [])
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>

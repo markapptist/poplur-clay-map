@@ -2,21 +2,16 @@
 // up AT the post and disappearing again — the map is your takeover, and this
 // is the takeover breathing.
 //
-// Two sources feed one surface:
-//   REAL   — native (or any host) dispatches
+// One source feeds the surface: native (or any host) dispatches
 //              window.dispatchEvent(new CustomEvent('poplur-engagement',
 //                { detail: { user, kind, coords?, radiusKm?, place? } }))
 //            or posts { type: 'poplur-engagement', user, kind, coords?, … }.
-//            This is the wire the Aug-2026 live service plugs into; the shape
-//            is the whole contract.
-//   DEMO   — until then, a generator emits plausible engagement on a human
-//            cadence using the SAME path, so the surface, its pacing and its
-//            cost are all real today. Identities come from the feed's own
-//            sample cast — no invented population.
+//            This is the wire the live service plugs into; the shape is the
+//            whole contract. Nothing in the app invents an engagement.
 //
 // Presentation lives in popups.tsx — the shared centred layer that suggestions
-// use too. This module is now only the SOURCE of engagement (real wire + demo
-// cadence); it no longer owns where a notice appears or how long it lives.
+// use too. This module is now only the SOURCE of engagement (the real wire);
+// it no longer owns where a notice appears or how long it lives.
 //
 // It does not own the CAMERA either. An engagement carries the coordinates of
 // the post it landed on, and the map answers by travelling there — the notice
@@ -26,15 +21,10 @@
 //
 // Thermal rules (the 6 Aug device trace is why): the layer animates
 // transform/opacity ONLY, one-shot keyframes, a hard cap on how many are
-// alive, and the generator here idles whenever the page is hidden or the
-// quality ladder has dropped ambient decoration.
+// alive, and nothing is drawn while the page is hidden.
 
-import { POIS } from './data'
-import { ambientAllowed, onTick } from './frameGovernor'
 import { showPopup, clearPopups } from './popups'
 import { recordEngagement } from './engagementLog'
-import { isLiveSimulationEnabled } from './simulationControl'
-import { reportSimulationPulse } from './testActivity'
 
 export interface EngagementEvent {
   user: string
@@ -53,7 +43,7 @@ export interface EngagementEvent {
 
 export interface EngagementOptions {
   /**
-   * Called for every engagement this surface actually SHOWS — real or demo, in
+   * Called for every engagement this surface actually SHOWS, in
    * emission order. App registers the camera here; anything else that wants to
    * answer engagement can register too. Deliberately a callback rather than
    * another window event: the decision to move the camera belongs to the one
@@ -61,21 +51,14 @@ export interface EngagementOptions {
    */
   onEngagement?: (event: EngagementEvent) => void
   /**
-   * Emit the demo trickle. Exactly ONE document may: the map embed owns it,
-   * because it has the POIs an engagement lands on and the camera that answers.
-   * The shell passes false and runs relay-only, or the two generators would
-   * double the cadence.
-   */
-  demo?: boolean
-  /**
    * Post engagement up to the parent instead of drawing it here. Set by the map
    * embed — see the note in `show`. Ignored when there is no parent.
    */
   forwardToParent?: boolean
   /**
    * Subscribe to the REAL wire (the `poplur-engagement` event and the
-   * `poplur-engagement` postMessage). Exactly ONE instance per document may,
-   * for the same reason exactly one may run the demo: `show` both records the
+   * `poplur-engagement` postMessage). Exactly ONE instance per document may:
+   * `show` both records the
    * event and draws a notice, so a second subscriber writes the row twice and
    * pops the notice twice off a single arrival.
    *
@@ -88,13 +71,6 @@ export interface EngagementOptions {
    */
   wire?: boolean
 }
-
-// The feed's sample cast (FeedTwin comments + profile) — reused, not invented.
-const CAST = [
-  'SAUCEBOSS', '@nightmarket', '@poutine.patrol', '@alpastor', '@baristabit',
-  '@basement.set', '@citydesk', '@boulangerie', '@bpm', '@blanketfort',
-  '@benchmark', '@atelier', '@backstage', '@bitmerchant',
-] as const
 
 const VERB: Record<EngagementEvent['kind'], string> = {
   like: 'liked your post',
@@ -187,53 +163,8 @@ export function startEngagementChips(options: EngagementOptions = {}): () => voi
     window.addEventListener('message', onMessage)
   }
 
-  // ── the demo cadence ──────────────────────────────────────────────────────
-  // A believable trickle: one engagement every 6–14s, likes twice as common as
-  // views, comments rare. Skips entirely while hidden or thermally throttled.
-  //
-  // Each one lands on a POP — a real post standing somewhere on the map, from
-  // the same list the channel arrows walk — because an engagement with no post
-  // behind it has nowhere for the camera to go, and "somewhere plausible" is
-  // the whole point of the demo. No invented coordinates: the live wire will
-  // carry the real post's own.
-  // Use the governed clock rather than a self-rescheduling timeout. Once the
-  // map's 15-second activity lease closes this subscriber creates no timer/rAF
-  // wakeups at all; a real touch resumes the believable 6–14s cadence. The real
-  // engagement wire above remains event-driven and available while parked.
-  let nextDemoAt = performance.now() + 6_000 + Math.random() * 8_000
-  const stopDemoTick = options.demo === false
-    ? null
-    : onTick((_dtMs, now) => {
-      if (now < nextDemoAt) return
-      nextDemoAt = now + 6_000 + Math.random() * 8_000
-      if (!isLiveSimulationEnabled() || document.visibilityState !== 'visible' || !ambientAllowed()) return
-      const roll = Math.random()
-      const poi = POIS[Math.floor(Math.random() * POIS.length)]
-      const event: EngagementEvent = {
-        user: CAST[Math.floor(Math.random() * CAST.length)],
-        // 45 / 35 / 20. Likes still lead, as they would in life, but comments
-        // at the old 10% were rare enough that the surface read as likes-only
-        // — which is exactly how it was reported.
-        kind: roll < 0.45 ? 'like' : roll < 0.8 ? 'view' : 'comment',
-        coords: poi.coords,
-        radiusKm: poi.radiusKm,
-        place: poi.name,
-      }
-      show(event)
-      // The private Test Control Center receives this exact simulation pulse,
-      // so its newsroom map and the in-app demo never drift apart. It is a
-      // labelled synthetic event, not a real-person activity record.
-      reportSimulationPulse({
-        actor: event.user,
-        kind: event.kind,
-        place: event.place,
-        radiusKm: event.radiusKm,
-      })
-    }, 1_000)
-
   return () => {
     stopped = true
-    stopDemoTick?.()
     if (onWire) {
       window.removeEventListener('poplur-engagement', onEvent)
       window.removeEventListener('message', onMessage)

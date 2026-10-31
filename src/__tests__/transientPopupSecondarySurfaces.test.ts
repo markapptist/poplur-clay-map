@@ -5,17 +5,13 @@ import { describe, expect, it } from 'vitest'
 const source = (name: string) => readFileSync(resolve(process.cwd(), 'src', name), 'utf8')
 
 describe('secondary transient popup surfaces', () => {
-  it('shares News-style paint with directions and casino cards', () => {
+  it('shares News-style paint with directions cards', () => {
     const directions = source('ClayNav.tsx')
-    const casino = source('CasinoScreen.tsx')
 
     expect(directions).toContain('`${styles.searchCard} ${surfaceStyles.surface}`')
     expect(directions).toContain('`${styles.previewCard} ${surfaceStyles.surface}`')
     expect(directions).toContain('`${styles.goBtn} ${surfaceStyles.primary}`')
     expect(directions).toContain('`${styles.ghostBtn} ${surfaceStyles.secondary}`')
-    expect(casino).toContain('`${styles.paysCard} ${surfaceStyles.surface}`')
-    expect(casino).toContain('`${styles.promoScrim} ${surfaceStyles.scrim}`')
-    expect(casino).toContain('`${styles.promoCard} ${surfaceStyles.surface}`')
   })
 
   it('shares the transient contract with trophy, AI, House and posted cards', () => {

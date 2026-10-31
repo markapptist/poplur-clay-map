@@ -11,14 +11,11 @@ vi.mock('../nativeBridge', () => ({ isNativeShell: () => true, postNativeEvent: 
 vi.mock('../nativeAuth', () => ({ authToken: () => 'id-token', requestAuthToken: vi.fn() }))
 
 import { resetAccountStoreForTests, setAccountAuth } from '../accountStore'
-import { isLiveSimulationEnabled, setLiveSimulationEnabled } from '../simulationControl'
 import {
   SYNTHETIC_ACCOUNT_UID_PATTERN,
   isSyntheticAccountUid,
   isTestActivityConsentEnabled,
   loadTestActivityConsent,
-  loadTestSimulation,
-  reportSimulationPulse,
   reportTestActivity,
   reportTestPost,
   reportTestRadius,
@@ -70,7 +67,6 @@ beforeEach(() => {
 afterEach(() => {
   resetTestActivityForTests()
   resetAccountStoreForTests()
-  setLiveSimulationEnabled(false)
   vi.unstubAllGlobals()
 })
 
@@ -101,25 +97,13 @@ describe('synthetic accounts never take part in closed-beta telemetry', () => {
     window.localStorage.setItem(`poplur.testing.activity-consent.${ACTOR}`, 'on')
     expect(isTestActivityConsentEnabled()).toBe(false)
     expect(await loadTestActivityConsent()).toBe(false)
-    expect(await loadTestSimulation()).toBe(false)
-    expect(isLiveSimulationEnabled()).toBe(false)
     reportTestActivity('feed')
     reportTestPost('post-0123456789abcdef0123', 43.6532, -79.3832, 5)
     reportTestRadius('post-0123456789abcdef0123', 5, 1, 'like')
-    reportSimulationPulse({ actor: 'sim-news-005', kind: 'like', place: 'Toronto region', radiusKm: 5 })
     const unmount = await mountReporter()
     await settle()
     expect(fetchMock).not.toHaveBeenCalled()
     await unmount()
-  })
-
-  it('does not ask for the desk switch while the store holds no account, and answers locally', async () => {
-    // HomeTwin's effect can run after a null auth event emptied the store.
-    setLiveSimulationEnabled(true)
-    expect(await loadTestSimulation()).toBe(true)
-    setLiveSimulationEnabled(false)
-    expect(await loadTestSimulation()).toBe(false)
-    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('keeps the actor silent when it signs in after the reporter mounted', async () => {
@@ -133,13 +117,14 @@ describe('synthetic accounts never take part in closed-beta telemetry', () => {
   it('still asks the desk for a person, so the gate is the only difference', async () => {
     setAccountAuth({ uid: PERSON, source: 'native' })
     const unmount = await mountReporter()
-    await act(() => settleUntil(() => fetchMock.mock.calls.length >= 4))
+    await act(() => settleUntil(() => fetchMock.mock.calls.length >= 2))
+    await act(settle)
     const sent = actionsSent()
     expect(sent).toContain('heartbeat')
     expect(sent).toContain('getConsent')
-    expect(sent).toContain('simulation')
-    expect(sent).toContain('simulationFeed')
-    expect(isLiveSimulationEnabled()).toBe(true)
+    // No simulation switch and no synthetic feed (App Review 2.5.19 / 5.6).
+    expect(sent).not.toContain('simulation')
+    expect(sent).not.toContain('simulationFeed')
     await unmount()
   })
 })

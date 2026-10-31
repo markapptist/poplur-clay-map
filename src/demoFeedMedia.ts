@@ -1,8 +1,6 @@
-import { useEffect, useState } from 'react'
 import { feedUrl } from './assetPacks'
-import { isLiveSimulationEnabled, onLiveSimulationChange } from './simulationControl'
 import { isNativeShell } from './nativeBridge'
-import { feedMixSequence, onFeedMixChange, readFeedMix, type FeedMix } from './feedMixControl'
+import { feedMixSequence, readFeedMix, type FeedMix } from './feedMixControl'
 
 /**
  * The Feed's demo creatives — the same curated set the native iOS feed carries
@@ -134,26 +132,6 @@ export function demoPostsForChannel(
       }
     })
     .sort((left, right) => right.reachKm - left.reachKm)
-}
-
-/** Demo rows exist only while the workbench simulation is on. */
-export function demoFeedEnabled(): boolean {
-  return isLiveSimulationEnabled()
-}
-
-/** Re-renders the caller when the simulation switch flips, so toggling it
- *  takes effect without a reload. The media itself ships in the asset pack,
- *  so there is nothing to fetch. */
-export function useDemoFeedMedia(): boolean {
-  const [enabled, setEnabled] = useState(demoFeedEnabled)
-  const [, forceBlendRefresh] = useState(0)
-  useEffect(() => {
-    const offSimulation = onLiveSimulationChange(() => setEnabled(demoFeedEnabled()))
-    // A mix change reorders the blend, so the feed has to re-read it too.
-    const offMix = onFeedMixChange(() => forceBlendRefresh(value => value + 1))
-    return () => { offSimulation(); offMix() }
-  }, [])
-  return enabled
 }
 
 /**

@@ -17,8 +17,7 @@ import { PoplurPerformanceManager } from './poplurPerformanceManager'
 //   TV GUIDE / LIVE CHANNELS header in phosphor-green monospace
 //   a PiP band that previews the highlighted channel (live video where we have it)
 //   CH · CATEGORY · ON NOW columns
-//   62px rows: channel logo, number, category, a marquee of the users on that
-//   channel, and a LIVE capsule
+//   62px rows: channel logo, number, category and what the preview is showing
 //
 // Interaction matches the app: one tap selects/previews a channel in the PiP
 // band, then pressing that selected row tunes to it. Escape dismisses.
@@ -33,24 +32,6 @@ export interface TVGuideChannel {
   /** [deep, mid, bright] — the channel's own palette, from FeedTwin */
   theme?: string[]
   videos?: string[]
-}
-
-// Every channel carries a handful of users, so "ON NOW" has something to scroll.
-const COMPANIONS: Record<string, string[]> = {
-  food: ['@sauceboss', '@nightmarket', '@poutine.patrol'],
-  beauty: ['@glowgetter', '@softglam', '@lash.lab'],
-  sports: ['@pitchside', '@extratime', '@thekop'],
-  modelling: ['@runwayraw', '@backstage', '@lookbook'],
-  fashion: ['@fitcheckdaily', '@thriftking', '@atelier'],
-  music: ['@basement.set', '@warehouse', '@bpm'],
-  tech: ['@shipit', '@desksetup', '@benchmark'],
-  news: ['@localwire', '@harbourfront', '@citydesk'],
-  french: ['@paris.pov', '@terrasse', '@boulangerie'],
-  spanish: ['@vibra.cdmx', '@alpastor', '@mercado'],
-  shopping: ['@hauls', '@samplesale', '@under20'],
-  cartoon: ['@doodlecast', '@clayoc', '@keyframe'],
-  kids: ['@playtime', '@blanketfort', '@snacktime'],
-  comedy: ['@bitmerchant', '@openmic', '@baristabit'],
 }
 
 // Not every channel ships its own clip yet, but the set must never sit empty —
@@ -73,43 +54,6 @@ function clipFor(channel: TVGuideChannel): string {
   return channel.videos?.[0] ?? STOCK_CLIPS[channel.number % STOCK_CLIPS.length]
 }
 
-function usersFor(channel: TVGuideChannel): string[] {
-  return COMPANIONS[channel.id] ?? [channel.user]
-}
-
-export interface Leader {
-  user: string
-  views: number
-}
-
-// Who is leading this channel INSIDE YOUR RADIUS. Only posts whose radius
-// intercepts your current location count, so these standings are local, not
-// global — the same rule that orders the feed.
-//
-// Views are seeded off the channel number and the user's slot so the standings
-// stay stable between renders (Math.random would reshuffle constantly). Swap
-// for real per-post view counts when the backend lands.
-function leadersFor(channel: TVGuideChannel): Leader[] {
-  return usersFor(channel)
-    .map((user, i) => {
-      const seed = (channel.number * 2654435761 + (i + 1) * 40503) % 1000003
-      return { user, views: 4_200 + (seed % 138_000) }
-    })
-    .sort((a, b) => b.views - a.views)
-}
-
-// A channel's standing is set by its leader — "who is doing the best on each
-// channel" — so channels rank by their top user's views.
-function scoreFor(channel: TVGuideChannel): number {
-  return leadersFor(channel)[0]?.views ?? 0
-}
-
-function formatScore(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`
-  return String(n)
-}
-
 export default function TVGuide({
   currentChannelId,
   onTune,
@@ -119,7 +63,9 @@ export default function TVGuide({
   onTune?: (channelId: string) => void
   onClose: () => void
 }) {
-  // Ranked best-performing first — position 1 at the top.
+  // In channel-number order. The guide used to rank channels by invented
+  // "leading" users and view counts; it shows no standings until real
+  // per-channel numbers exist (App Review 2.5.19 / 5.6, 29 Oct 2026).
   //
   // MEMOISED, and that is load-bearing, not tidiness: this array used to be
   // rebuilt (and re-sorted) on every render, so anything depending on it got a
@@ -128,7 +74,7 @@ export default function TVGuide({
   // transform. The curtain visibly started and collapsed two moves in. The
   // source is a static import, so one sort is also simply correct.
   const channels = useMemo(
-    () => [...(CHANNELS as unknown as TVGuideChannel[])].sort((a, b) => scoreFor(b) - scoreFor(a)),
+    () => [...(CHANNELS as unknown as TVGuideChannel[])].sort((a, b) => a.number - b.number),
     [],
   )
   const [previewId, setPreviewId] = useState(currentChannelId ?? channels[0]?.id)
@@ -142,12 +88,9 @@ export default function TVGuide({
   const pullInner = useRef<HTMLDivElement>(null)
   const pullPanel = useRef<HTMLDivElement>(null)
   const pullHead = useRef<HTMLDivElement>(null)
-  /** Re-read what is on now. The ranking itself is derived from seeded, static
-      channel data (leadersFor), so this deliberately does NOT re-sort and
-      pretend something moved — it re-reads the live bits that CAN change: the
-      channel the feed is tuned to, and the mute state, then restarts the
-      preview so "on now" is actually showing again. Ranking becomes a real
-      refresh the moment live channel data lands. */
+  /** Re-read what is on now: the channel the feed is tuned to and the mute
+      state, then restart the preview so "on now" is actually showing again.
+      The channel list is static, so nothing is re-sorted. */
   const refresh = useCallback(() => {
     setMuted(isUserMuted())
     setPreviewId(currentChannelId ?? channels[0]?.id)
@@ -363,34 +306,25 @@ export default function TVGuide({
                 <span className={styles.pipCh}>CH {preview?.number}</span>
               </div>
               <p className={styles.pipProgram}>{preview?.caption}</p>
-              {preview && (
-                <p className={styles.pipUser}>
-                  <span className={styles.pipLeaderTag}>LEADING</span>
-                  {leadersFor(preview)[0]?.user} · {formatScore(leadersFor(preview)[0]?.views ?? 0)} views
-                </p>
-              )}
             </div>
           </div>
         </div>
       </div>
 
       <div className={styles.columns}>
-        <span className={styles.colRank}>#</span>
         <span className={styles.colCh}>CH</span>
         <span className={styles.colCat}>CATEGORY</span>
-        <span className={styles.colNow}>LEADING IN YOUR RADIUS</span>
+        <span className={styles.colNow}>ON NOW</span>
       </div>
 
       <div className={styles.rows}>
-        {channels.map((channel, i) => {
+        {channels.map(channel => {
           const selected = channel.id === previewId
-          const leaders = leadersFor(channel)
-          const medal = i === 0 ? styles.gold : i === 1 ? styles.silver : i === 2 ? styles.bronze : ''
           return (
             <button
               key={channel.id}
               type="button"
-              className={[styles.row, medal, selected ? styles.rowOn : ''].filter(Boolean).join(' ')}
+              className={[styles.row, selected ? styles.rowOn : ''].filter(Boolean).join(' ')}
               onClick={() => onRowTap(channel)}
               aria-label={`Channel ${channel.number} ${channel.name}`}
               style={{
@@ -399,7 +333,6 @@ export default function TVGuide({
                 '--ch-bright': channel.theme?.[2] ?? '#4fff40',
               } as React.CSSProperties}
             >
-              <span className={styles.rank}>{i + 1}</span>
               <span className={styles.rowCh}>
                 {/* the logo sits on a moulded clay pad in the channel's colour */}
                 <span className={styles.rowIconPad}>
@@ -408,29 +341,7 @@ export default function TVGuide({
                 <span className={styles.rowNum}>{channel.number}</span>
               </span>
               <span className={styles.rowCat}>{channel.name.toUpperCase()}</span>
-              <span className={styles.marquee}>
-                {/* doubled so the loop has no seam */}
-                <span className={styles.marqueeTrack}>
-                  {[0, 1].map(copy => (
-                    <span className={styles.leaders} key={copy} aria-hidden={copy === 1}>
-                      {leaders.map((leader, place) => {
-                        // podium within the channel: gold / silver / bronze
-                        const metal = place === 0 ? styles.leaderGold
-                          : place === 1 ? styles.leaderSilver
-                          : place === 2 ? styles.leaderBronze
-                          : ''
-                        return (
-                          <span className={[styles.leader, metal].filter(Boolean).join(' ')} key={`${copy}-${leader.user}`}>
-                            <span className={styles.place}>{place + 1}</span>
-                            <span className={styles.leaderName}>{leader.user}</span>
-                            <span className={styles.leaderViews}>{formatScore(leader.views)}</span>
-                          </span>
-                        )
-                      })}
-                    </span>
-                  ))}
-                </span>
-              </span>
+              <span className={styles.nowCaption}>{channel.caption}</span>
             </button>
           )
         })}

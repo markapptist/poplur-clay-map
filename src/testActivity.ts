@@ -2,12 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { accountSnapshot, onAccountChange } from './accountStore'
 import { isNativeShell } from './nativeBridge'
 import { authToken, requestAuthToken } from './nativeAuth'
-import { isLiveSimulationEnabled, setLiveSimulationEnabled } from './simulationControl'
-import {
-  normalizeSimulationFeed,
-  unseenSimulationEngagements,
-  type BetaSimulationFeed,
-} from './betaSyntheticCohort'
 
 /**
  * The Test Control Center is deliberately narrow. It reports a tester's
@@ -18,22 +12,16 @@ import {
  */
 
 const CONSENT_KEY_PREFIX = 'poplur.testing.activity-consent.'
-const SIMULATION_CURSOR_KEY_PREFIX = 'poplur.testing.simulation-feed-cursor.'
 const CONSENT_EVENT = 'poplur-testing-activity-consent'
 const FUNCTION_URL = 'https://us-central1-poplur2025.cloudfunctions.net/testActivityControl'
 const HEARTBEAT_MS = 60_000
 const DASHBOARD_REFRESH_MS = 15_000
-const SIMULATION_SYNC_MS = 30_000
-const SIMULATION_PULSE_MS = 15_000
-export const SIMULATION_FEED_REFRESH_MS = 15_000
-const MAX_SEEN_SIMULATION_EVENTS = 256
 
 /**
  * The synthetic cohort never takes part in closed-beta telemetry. Its
  * accounts (`sim-…`, driven by the live runner; `synthetic-…`, the Radius Lab
  * posters) are the pre-launch harness, not testers: a heartbeat would seat one
- * on the desk's tester table, the simulation switch would widen what its feed
- * discovers, and the simulation feed it would poll is its own output. Auth
+ * on the desk's tester table. Auth
  * uids are random, so the prefix cannot collide with a person; postSpotGate
  * and the runner's live ledger apply the same rule.
  */
@@ -52,7 +40,7 @@ export const TEST_ACTIVITY_SCREENS = [
   'home', 'map', 'feed', 'camera', 'camera-roll', 'profile',
   'hold-menu', 'upload-flows', 'arcade', 'games', 'battle',
   'map-conquer', 'map-directions', 'map-ipod', 'map-radio', 'map-show-me',
-  'feed-apps', 'feed-browser', 'feed-casino', 'feed-games', 'feed-news', 'feed-tvguide',
+  'feed-apps', 'feed-browser', 'feed-games', 'feed-news', 'feed-tvguide',
   'camera-ai-chat', 'camera-studio',
   'profile-avatar', 'profile-house', 'profile-messages', 'profile-notifications',
   'profile-phone', 'profile-settings', 'profile-stats', 'profile-store',
@@ -103,12 +91,6 @@ const memoryConsentByUid = new Map<string, boolean>()
 let heartbeatTimer = 0
 let lastHeartbeatAt = 0
 let lastHeartbeatKey = ''
-let lastSimulationSyncAt = 0
-const lastPulseAt = new Map<string, number>()
-const seenSimulationEventIds = new Set<string>()
-const seenSimulationEventOrder: string[] = []
-const simulationCursorByUid = new Map<string, number>()
-let simulationFeedInFlight = false
 
 function storage(): Storage | null {
   if (typeof window === 'undefined') return null
@@ -223,107 +205,6 @@ export async function loadTestActivityConsent(): Promise<boolean> {
   return rememberConsent(result.enabled === true, uid)
 }
 
-/** The private desk owns synthetic activity, so every test device agrees. */
-export async function loadTestSimulation(): Promise<boolean> {
-  // The cohort never asks for its own desk switch: the answer would only widen
-  // what a synthetic actor's feed discovers and start ambient pulse writes.
-  // Gate on the account the store holds NOW, not on the caller's memory of it:
-  // a caller's effect can run after a null auth event emptied the store, and
-  // "no account" must read as "do not ask", never as "not synthetic".
-  if (!telemetryUid()) return isLiveSimulationEnabled()
-  const result = await callTestActivity<{ enabled?: boolean }>({ action: 'simulation' })
-  const enabled = result.enabled === true
-  setLiveSimulationEnabled(enabled)
-  return enabled
-}
-
-/**
- * Read the same synthetic stream the private Beta Control Room displays. This
- * is incoming labelled test data, so it does not depend on a human tester's
- * optional telemetry consent; authentication is still mandatory.
- */
-export async function loadTestSimulationFeed(): Promise<BetaSimulationFeed> {
-  const uid = consentUid()
-  const afterEventAtMs = uid ? readSimulationCursor(uid) : 0
-  const result = await callTestActivity<unknown>({ action: 'simulationFeed', afterEventAtMs })
-  const feed = normalizeSimulationFeed(result)
-  // This endpoint controls delivery of private runner events, not whether
-  // tester posts are enabled. Its disabled response must not override the
-  // separate simulation configuration and empty Feed every time it polls.
-  return feed
-}
-
-function simulationCursorStorageKey(uid: string): string {
-  return `${SIMULATION_CURSOR_KEY_PREFIX}${uid}`
-}
-
-function readSimulationCursor(uid: string): number {
-  const memory = simulationCursorByUid.get(uid) ?? 0
-  let persisted = 0
-  try { persisted = Number(storage()?.getItem(simulationCursorStorageKey(uid)) ?? 0) } catch { /* memory remains available */ }
-  const safePersisted = Number.isFinite(persisted) && persisted > 0 ? persisted : 0
-  return Math.max(memory, safePersisted)
-}
-
-function rememberSimulationCursor(uid: string, value: number): void {
-  if (!Number.isFinite(value) || value <= 0) return
-  const next = Math.max(readSimulationCursor(uid), value)
-  simulationCursorByUid.set(uid, next)
-  try { storage()?.setItem(simulationCursorStorageKey(uid), String(next)) } catch { /* memory remains available */ }
-}
-
-function rememberSimulationEvent(eventId: string): void {
-  if (seenSimulationEventIds.has(eventId)) return
-  seenSimulationEventIds.add(eventId)
-  seenSimulationEventOrder.push(eventId)
-  while (seenSimulationEventOrder.length > MAX_SEEN_SIMULATION_EVENTS) {
-    const oldest = seenSimulationEventOrder.shift()
-    if (oldest) seenSimulationEventIds.delete(oldest)
-  }
-}
-
-/** @internal exported so focused tests can prove stable de-duplication. */
-export function dispatchSimulationFeed(feed: BetaSimulationFeed, now = Date.now()): number {
-  const arrivals = unseenSimulationEngagements(feed, seenSimulationEventIds, now)
-  arrivals.forEach(arrival => {
-    rememberSimulationEvent(arrival.eventId)
-    window.dispatchEvent(new CustomEvent('poplur-engagement', { detail: arrival.engagement }))
-  })
-  return arrivals.length
-}
-
-async function pollSimulationFeed(): Promise<void> {
-  // The top-level shell owns notices and forwards their map destination into
-  // the Map iframe. Polling inside that iframe too would display every event
-  // twice and run a second network timer for no benefit.
-  if (window.parent !== window || document.hidden || !telemetryUid() || simulationFeedInFlight) return
-  simulationFeedInFlight = true
-  const uid = telemetryUid()
-  if (!uid) {
-    simulationFeedInFlight = false
-    return
-  }
-  try {
-    const feed = await loadTestSimulationFeed()
-    if (window.parent === window && !document.hidden && consentUid() === uid) {
-      dispatchSimulationFeed(feed)
-      rememberSimulationCursor(uid, feed.latestEventAtMs)
-    }
-  } catch {
-    // Closed-beta activity is optional. Offline testers retain the real app;
-    // a failed poll never falls back to a different fake population.
-  } finally {
-    simulationFeedInFlight = false
-  }
-}
-
-export async function setTestSimulationEnabled(enabled: boolean): Promise<boolean> {
-  const result = await callTestActivity<{ enabled?: boolean }>({ action: 'simulation', enabled: enabled === true })
-  const next = result.enabled === true
-  setLiveSimulationEnabled(next)
-  return next
-}
-
 /** A real post reports a coarse map cell and its radius — never coordinates. */
 export function reportTestPost(postKey: string, latitude: number, longitude: number, radiusKm: number): void {
   if (!telemetryUid() || !isTestActivityConsentEnabled()) return
@@ -345,22 +226,6 @@ export function reportTestRadius(postKey: string, radiusKm: number, deltaKm: num
     deltaKm: Number.isFinite(deltaKm) ? deltaKm : 0,
     signal,
   }).catch(() => { /* Optional beta telemetry never interrupts interaction. */ })
-}
-
-/** Simulator activity appears beside real tester activity, explicitly labelled. */
-export function reportSimulationPulse(input: { actor: string; kind: 'like' | 'view' | 'comment'; place?: string; radiusKm?: number }): void {
-  if (!telemetryUid() || document.visibilityState === 'hidden') return
-  const key = `${input.actor}:${input.kind}`
-  const now = Date.now()
-  if (now - (lastPulseAt.get(key) ?? 0) < SIMULATION_PULSE_MS) return
-  lastPulseAt.set(key, now)
-  void callTestActivity({
-    action: 'simulationPulse',
-    actor: input.actor,
-    kind: input.kind,
-    place: input.place ?? 'Private beta region',
-    radiusKm: Number.isFinite(input.radiusKm) ? Math.max(0, input.radiusKm ?? 0) : 0,
-  }).catch(() => { /* A paused/offline desk simply omits the synthetic pulse. */ })
 }
 
 export async function loadTestActivityDashboard(): Promise<TestActivityDashboard> {
@@ -445,55 +310,23 @@ export function useTestActivityReporter(screen: string): void {
       }
       void loadTestActivityConsent().catch(() => rememberConsent(false))
     }
-    const syncSimulation = () => {
-      if (!telemetryUid() || document.hidden) return
-      const now = Date.now()
-      if (now - lastSimulationSyncAt < SIMULATION_SYNC_MS) return
-      lastSimulationSyncAt = now
-      void loadTestSimulation().catch(() => { /* retain the last confirmed configuration while offline */ })
-    }
-    let simulationFeedTimer = 0
-    const syncSimulationFeedTimer = () => {
-      window.clearInterval(simulationFeedTimer)
-      simulationFeedTimer = 0
-      if (window.parent !== window || document.hidden || !telemetryUid()) return
-      void pollSimulationFeed()
-      // A single bounded poll belongs to the visible, authenticated shell.
-      // Logging out, backgrounding, navigating into an iframe, or unmounting
-      // clears it immediately.
-      simulationFeedTimer = window.setInterval(() => { void pollSimulationFeed() }, SIMULATION_FEED_REFRESH_MS)
-    }
     send()
     syncConsent()
-    syncSimulation()
-    syncSimulationFeedTimer()
     const offAccount = onAccountChange(() => {
       syncConsent()
-      syncSimulation()
-      syncSimulationFeedTimer()
       send()
     })
-    const onVisibility = () => {
-      send()
-      syncSimulation()
-      syncSimulationFeedTimer()
-    }
-    document.addEventListener('visibilitychange', onVisibility)
+    document.addEventListener('visibilitychange', send)
     window.addEventListener(CONSENT_EVENT, send)
     heartbeatTimer = window.setInterval(() => {
-      if (!document.hidden) {
-        reportTestActivity(screen, 'foreground')
-        syncSimulation()
-      }
+      if (!document.hidden) reportTestActivity(screen, 'foreground')
     }, HEARTBEAT_MS)
     return () => {
       offAccount()
-      document.removeEventListener('visibilitychange', onVisibility)
+      document.removeEventListener('visibilitychange', send)
       window.removeEventListener(CONSENT_EVENT, send)
       window.clearInterval(heartbeatTimer)
-      window.clearInterval(simulationFeedTimer)
       heartbeatTimer = 0
-      simulationFeedTimer = 0
     }
   }, [screen])
 }
@@ -538,18 +371,12 @@ export function resetTestActivityForTests(): void {
   memoryConsentByUid.clear()
   lastHeartbeatAt = 0
   lastHeartbeatKey = ''
-  lastSimulationSyncAt = 0
-  lastPulseAt.clear()
-  seenSimulationEventIds.clear()
-  seenSimulationEventOrder.splice(0)
-  simulationCursorByUid.clear()
-  simulationFeedInFlight = false
   try {
     const store = storage()
     if (store) {
       for (let index = store.length - 1; index >= 0; index -= 1) {
         const key = store.key(index)
-        if (key?.startsWith(CONSENT_KEY_PREFIX) || key?.startsWith(SIMULATION_CURSOR_KEY_PREFIX)) {
+        if (key?.startsWith(CONSENT_KEY_PREFIX)) {
           store.removeItem(key)
         }
       }

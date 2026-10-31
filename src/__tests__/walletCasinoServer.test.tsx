@@ -19,11 +19,6 @@ vi.mock('../nativeAuth', () => ({
 }))
 vi.mock('../pop', () => ({ playPop: () => {} }))
 vi.mock('../cubeNavigationSound', () => ({ playCubeNavigationPop: () => {}, markCubeNavigationPop: () => {} }))
-vi.mock('../casinoAudio', () => ({
-  beginCasinoAudio: () => {}, endCasinoAudio: () => {}, primeCasinoAudio: () => {},
-  playCasinoLever: () => {}, playCasinoSpin: () => {}, playCasinoReelStop: () => {},
-  playCasinoWin: () => {}, playCasinoJackpot: () => {}, playCasinoNoWin: () => {},
-}))
 vi.mock('../nearbyLocation', () => ({ useNearbyLocation: () => null }))
 vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
 
@@ -149,56 +144,6 @@ describe('the Wallet shows the account', () => {
       expect(container.textContent).toContain('55 Credits')
       expect(container.textContent).toContain('Swoosh Card')
       expect(actions()).toEqual(['wallet'])
-    })
-  })
-})
-
-describe('the casino plays the server\'s spin', () => {
-  it('spins once, shows the server\'s win when the reels stop, then waits for tomorrow', async () => {
-    const { default: CasinoScreen } = await import('../CasinoScreen')
-    fetchMock
-      .mockResolvedValueOnce(answer({ wallet: wallet() }))
-      .mockResolvedValueOnce(answer({
-        spin: { day: '2026-10-01', count: 4, symbolId: 'star', amount: 8, doubled: false, line: 'Slots 4× STAR', alreadySpun: false },
-        wallet: wallet({ balance: 63, casino: { day: '2026-10-01', count: 4, symbolId: 'star', amount: 8, doubled: false, line: 'Slots 4× STAR' } }),
-      }))
-    await mounted(<CasinoScreen onClose={() => {}} />, async container => {
-      expect(container.textContent).toContain('YOUR FREE DAILY SPIN IS READY')
-      await act(async () => button(container, 'SPIN').click())
-      await settle()
-      expect(actions()).toEqual(['wallet', 'casinoSpin'])
-      // The win is paid, but the readout waits for the reels.
-      expect(container.textContent).not.toContain('WIN +8')
-      // happy-dom runs no CSS transitions; the settle ceiling lands the reels.
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 3_500)) })
-      expect(container.textContent).toContain('WIN +8 CREDITS')
-      expect(container.textContent).toContain('63.00')
-      expect(button(container, 'TOMORROW').disabled).toBe(true)
-    })
-  }, 10_000)
-
-  it('keeps the spin when the server cannot be reached', async () => {
-    const { default: CasinoScreen } = await import('../CasinoScreen')
-    fetchMock
-      .mockResolvedValueOnce(answer({ wallet: wallet() }))
-      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
-    await mounted(<CasinoScreen onClose={() => {}} />, async container => {
-      await act(async () => button(container, 'SPIN').click())
-      await settle()
-      expect(container.textContent).toContain('COULDN’T REACH POPLUR — YOUR SPIN IS STILL HERE, TRY AGAIN')
-      expect(button(container, 'SPIN').disabled).toBe(false)
-      expect(container.textContent).toContain('55')
-    })
-  })
-
-  it('shows today\'s spin as used when the server says so', async () => {
-    const { default: CasinoScreen } = await import('../CasinoScreen')
-    fetchMock.mockResolvedValueOnce(answer({
-      wallet: wallet({ casino: { day: '2026-10-01', count: 0, symbolId: null, amount: 0, doubled: false, line: '' } }),
-    }))
-    await mounted(<CasinoScreen onClose={() => {}} />, async container => {
-      expect(container.textContent).toContain('COME BACK TOMORROW — ONE FREE SPIN A DAY')
-      expect(button(container, 'TOMORROW').disabled).toBe(true)
     })
   })
 })

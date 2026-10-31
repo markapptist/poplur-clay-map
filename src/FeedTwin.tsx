@@ -7,7 +7,6 @@ import { currentAudioOwner, onAudioFocusChange, registerAudioOwner, releaseAudio
 import { feedSuggestionFor } from './tourSmarts'
 import { feedUrl, channelUrl } from './assetPacks'
 import { feedPostIdFromPinId, markPostsSeen, onSeenPostsChange, seenPostsSnapshot } from './seenPosts'
-import { blendedDemoPostsForChannel, demoFeedEnabled, useDemoFeedMedia } from './demoFeedMedia'
 import { poplurResourcePool, type PoplurResourceLease } from './resourcePool'
 import { setMusicPlayback } from './musicPlayback'
 import {
@@ -337,15 +336,9 @@ function rankedPostsFor(
     radiusMeters: (post.reachKm ?? 0) * 1_000,
     syntheticCohort: post.syntheticCohort === true,
   })), discovery, Date.now(), viewer)
-  // Licensed demo media pads a channel that real uploads have not reached
-  // yet. It is appended AFTER the ranked authentic posts and never mixed into
-  // the ranking, so a stock clip cannot outrank, displace or renumber
-  // somebody's upload. With the simulation switch off this is a no-op and the
-  // channel stays honestly empty, exactly as before.
-  const withDemo = demoFeedEnabled()
-    ? [...ranked, ...blendedDemoPostsForChannel(channel)]
-    : ranked
-  return withHandoffPost(withDemo, channel.id, focusedContent, {
+  // Only real posts fill a channel; one nobody has reached stays honestly
+  // empty. Demo media never pads it (App Review 2.5.19 / 5.6, 29 Oct 2026).
+  return withHandoffPost(ranked, channel.id, focusedContent, {
     viewer,
     hiddenPostIds: discovery.hiddenPostIds,
   })
@@ -567,9 +560,6 @@ export default function FeedTwin({
   // bundled clip; treating URL equality as readiness briefly exposes the new
   // decoder before it has painted its own first frame.
   const [readyPlaybackKey, setReadyPlaybackKey] = useState<string | null>(null)
-  // Loads the licensed demo manifest and re-renders when the workbench
-  // simulation switch flips, so toggling it takes effect without a reload.
-  useDemoFeedMedia()
 
   const ch = CHANNELS[index]
   const storedDiscovery = useSyncExternalStore(
