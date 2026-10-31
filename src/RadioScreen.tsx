@@ -85,6 +85,10 @@ function StationArt({ logo }: { logo?: string | null }) {
 }
 
 const compact = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n))
+// Holiday streams are mostly online-only: name the holiday, not a distance.
+const stationReach = (station: LocalStation, suffix = '') => (Number.isFinite(station.distanceKm)
+  ? `${station.distanceKm} km${suffix}`
+  : `${station.holiday ?? 'Online'} station`)
 
 export default function RadioScreen({ onClose }: { onClose: () => void }) {
   const location = useNearbyLocation()
@@ -489,8 +493,8 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
                 <div className={styles.segStats}>
                   {tuned
                     ? tuned.source === 'poplur'
-                      ? `${compact(tuned.listeners)} LISTENERS · ${tuned.distanceKm} KM`
-                      : `${compact(tuned.listeners)} DIRECTORY CLICKS · ${tuned.distanceKm} KM`
+                      ? `${compact(tuned.listeners)} LISTENERS · ${stationReach(tuned).toUpperCase()}`
+                      : `${compact(tuned.listeners)} DIRECTORY CLICKS · ${stationReach(tuned).toUpperCase()}`
                     : source === 'poplur-live'
                       ? 'LIVE PODCASTS IN YOUR AREA'
                       : `INTERNET RADIO AROUND YOU${location?.source === 'fallback' ? ' · TORONTO FALLBACK' : ''}`}
@@ -541,7 +545,7 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
                     <span className={styles.lcdName}>{st.name.toUpperCase()}</span>
                     <span className={styles.lcdGenre}>{st.genre.toUpperCase()}</span>
                   </span>
-                  <span className={styles.lcdReach}>{st.distanceKm}</span>
+                  <span className={styles.lcdReach}>{Number.isFinite(st.distanceKm) ? st.distanceKm : '★'}</span>
                 </button>
               ))}
             </div>
@@ -627,7 +631,7 @@ export default function RadioScreen({ onClose }: { onClose: () => void }) {
           <div className={styles.barName}>{tuned?.name ?? 'Nothing tuned'}</div>
           <div className={styles.barTag}>
             {tuned
-              ? `${tuned.source === 'poplur' ? 'Poplur Live' : 'Internet radio'} · ${tuned.distanceKm} km away`
+              ? `${tuned.source === 'poplur' ? 'Poplur Live' : 'Internet radio'} · ${stationReach(tuned, ' away')}`
               : source === 'poplur-live' ? 'Pick a live podcast' : 'Pick a local station'}
           </div>
         </div>

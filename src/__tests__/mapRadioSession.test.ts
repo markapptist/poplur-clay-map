@@ -3,9 +3,11 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { isMapRadioActive, nowPlayingStation, setMapRadioEnabled, startDefaultMapRadio, stopMapRadio, tuneMapRadioLocation } from '../mapRadio'
 import { isUserMuted, setUserMuted } from '../audioGate'
 
-afterEach(() => { stopMapRadio(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
+afterEach(() => { stopMapRadio(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
 
 it('starts audible by default, tunes selected coordinates, and preserves an explicit stop', async () => {
+  // An ordinary day: on a holiday the tuner leads with holiday stations.
+  vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-15T12:00:00') })
   const values = new Map<string, string>([['poplur.mapRadio.enabled', '0']])
   vi.stubGlobal('localStorage', {
     getItem: (key: string) => values.get(key) ?? null,

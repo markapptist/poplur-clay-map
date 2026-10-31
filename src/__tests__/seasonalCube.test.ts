@@ -5,7 +5,7 @@ import { HALLOWEEN_CUBE_MODEL, defaultCubeModel, halloweenCubeActive, seasonalDe
 // Local-time dates, the way the phone's clock reads them.
 const at = (iso: string) => new Date(iso)
 
-describe('Halloween 2026 default cube', () => {
+describe('Halloween default cube', () => {
   it('wears the jack-o-lantern from 1 October through all of 31 October', () => {
     expect(halloweenCubeActive(at('2026-10-01T00:00:00'))).toBe(true)
     expect(halloweenCubeActive(at('2026-10-11T12:00:00'))).toBe(true)
@@ -16,7 +16,11 @@ describe('Halloween 2026 default cube', () => {
   it('returns the plain cube from 1 November, and before October', () => {
     expect(halloweenCubeActive(at('2026-11-01T00:00:00'))).toBe(false)
     expect(halloweenCubeActive(at('2026-09-30T23:59:59'))).toBe(false)
-    expect(halloweenCubeActive(at('2027-10-15T12:00:00'))).toBe(false)
+  })
+
+  it('comes back every October now the calendar recurs (seasonalCalendar.ts)', () => {
+    expect(halloweenCubeActive(at('2027-10-15T12:00:00'))).toBe(true)
+    expect(halloweenCubeActive(at('2027-11-01T00:00:00'))).toBe(false)
   })
 
   it('resolves the worn default and the AVATAR fallback from the same window', () => {

@@ -4,6 +4,7 @@ import { setMusicPlayback } from './musicPlayback'
 import { isNativeShell, postNativeEvent } from './nativeBridge'
 import { musicShelf } from './musicPosts'
 import { HOME } from './reach'
+import { activeHoliday, type SeasonalHoliday } from './seasonalCalendar'
 import {
   createNearbyRadioController,
   createRadioPlaybackStore,
@@ -1409,6 +1410,9 @@ export interface LocalStation {
   status?: 'live' | 'recorded'
   /** Radio Browser's click-tracking endpoint, called only after a user tunes. */
   directoryClickUrl?: string
+  /** Set on a holiday station (seasonalCalendar.ts). Most are online-only,
+   *  so distanceKm is Infinity when the directory publishes no location. */
+  holiday?: string
 }
 
 export type RadioContentSource = 'local-radio' | 'poplur-live'
@@ -1447,15 +1451,125 @@ interface RadioBrowserStation {
   ssl_error?: unknown
 }
 
+function radioBrowserStation(
+  row: RadioBrowserStation,
+  host: string,
+  lat: number,
+  lng: number,
+): LocalStation | null {
+  const id = typeof row.stationuuid === 'string' ? row.stationuuid : ''
+  const url = typeof row.url_resolved === 'string' ? row.url_resolved : ''
+  const codec = typeof row.codec === 'string' ? row.codec : ''
+  if (!id || !url.startsWith('https://') || !/mp3|aac/i.test(codec) || (failedStationUrls.get(url) ?? 0) > Date.now()) return null
+  if (Number(row.lastcheckok) !== 1 || Number(row.ssl_error) === 1) return null
+
+  // Radio Browser sends empty geo fields as null, which Number() reads as 0.
+  const stationLat = row.geo_lat == null ? NaN : Number(row.geo_lat)
+  const stationLng = row.geo_long == null ? NaN : Number(row.geo_long)
+  const reportedDistance = row.geo_distance == null ? NaN : Number(row.geo_distance)
+  const distanceKm = Number.isFinite(stationLat) && Number.isFinite(stationLng)
+    ? +haversineKm(lat, lng, stationLat, stationLng).toFixed(1)
+    : Number.isFinite(reportedDistance)
+      ? +(reportedDistance / 1000).toFixed(1)
+      : Infinity
+
+  const name = typeof row.name === 'string' && row.name.trim() ? row.name.trim() : 'Unnamed station'
+  const tags = typeof row.tags === 'string' ? row.tags : ''
+  const favicon = typeof row.favicon === 'string' && row.favicon.startsWith('https://')
+    ? row.favicon
+    : null
+  return {
+    id,
+    name,
+    genre: tags.split(',')[0]?.trim() || 'Various',
+    bitrate: Number.isFinite(Number(row.bitrate)) ? Number(row.bitrate) : 0,
+    url,
+    logo: favicon,
+    listeners: Math.max(Number(row.clickcount) || 0, Number(row.votes) || 0),
+    distanceKm,
+    source: 'radio' as const,
+    directoryClickUrl: `${host}/json/url/${encodeURIComponent(id)}`,
+  }
+}
+
 /**
- * Real nearby radio streams from Radio Browser, restored from Poplur's earlier
- * provider. Radio Browser can include online-only stations, so the UI calls
- * these internet streams rather than pretending every result has an FM tower.
+ * Real holiday streams from Radio Browser, found by tag rather than by
+ * distance: almost none of them publish a location (14 Halloween stations on
+ * 31 Oct 2026, one with geo). Nearest first where known, then most played.
+ */
+export async function listHolidayRadioStations(
+  lat: number,
+  lng: number,
+  holiday: Pick<SeasonalHoliday, 'label' | 'radioTags'>,
+  signal?: AbortSignal,
+): Promise<LocalStation[]> {
+  if (typeof window === 'undefined' || signal?.aborted || !holiday.radioTags.length) return []
+  const hosts = await radioBrowserHosts(signal)
+  for (const host of hosts) {
+    if (signal?.aborted) return []
+    try {
+      const found = new Map<string, LocalStation>()
+      for (const tag of holiday.radioTags) {
+        const params = new URLSearchParams({
+          tag,
+          hidebroken: 'true',
+          is_https: 'true',
+          order: 'clickcount',
+          reverse: 'true',
+          limit: '50',
+        })
+        const response = await fetchWithTimeout(
+          `${host}/json/stations/search?${params}`,
+          { cache: 'no-store', headers: { Accept: 'application/json' } },
+          6_000,
+          signal,
+        )
+        if (!response.ok) throw new Error(`radio-browser ${response.status}`)
+        const rows = await response.json() as RadioBrowserStation[]
+        for (const row of rows) {
+          const station = radioBrowserStation(row, host, lat, lng)
+          if (station && !found.has(station.id)) found.set(station.id, { ...station, holiday: holiday.label })
+        }
+      }
+      return [...found.values()]
+        .sort((a, b) => a.distanceKm - b.distanceKm || b.listeners - a.listeners)
+    } catch {
+      if (signal?.aborted) return []
+    }
+  }
+  return []
+}
+
+/**
+ * The station list the map, the boot pick and the dial all read. On a holiday
+ * its real holiday streams lead, so the map tunes one by itself, and the
+ * ordinary local stations follow so the dial still has them.
  */
 export async function listLocalRadioStations(
   lat: number,
   lng: number,
   radiusM = 120_000,
+  signal?: AbortSignal,
+): Promise<LocalStation[]> {
+  const holiday = activeHoliday()
+  const [holidayStations, nearby] = await Promise.all([
+    holiday ? listHolidayRadioStations(lat, lng, holiday, signal).catch(() => []) : Promise.resolve([]),
+    listNearbyRadioStations(lat, lng, radiusM, signal),
+  ])
+  if (!holidayStations.length) return nearby
+  const seen = new Set(holidayStations.map(station => station.id))
+  return [...holidayStations, ...nearby.filter(station => !seen.has(station.id))]
+}
+
+/**
+ * Real nearby radio streams from Radio Browser, restored from Poplur's earlier
+ * provider. Radio Browser can include online-only stations, so the UI calls
+ * these internet streams rather than pretending every result has an FM tower.
+ */
+async function listNearbyRadioStations(
+  lat: number,
+  lng: number,
+  radiusM: number,
   signal?: AbortSignal,
 ): Promise<LocalStation[]> {
   if (typeof window === 'undefined' || signal?.aborted) return []
@@ -1486,41 +1600,10 @@ export async function listLocalRadioStations(
         if (!response.ok) continue
         const rows = await response.json() as RadioBrowserStation[]
         const stations = rows.flatMap(row => {
-          const id = typeof row.stationuuid === 'string' ? row.stationuuid : ''
-          const url = typeof row.url_resolved === 'string' ? row.url_resolved : ''
-          const codec = typeof row.codec === 'string' ? row.codec : ''
-          if (!id || !url.startsWith('https://') || !/mp3|aac/i.test(codec) || (failedStationUrls.get(url) ?? 0) > Date.now()) return []
-          if (Number(row.lastcheckok) !== 1 || Number(row.ssl_error) === 1) return []
-
-          const stationLat = Number(row.geo_lat)
-          const stationLng = Number(row.geo_long)
-          const reportedDistance = Number(row.geo_distance)
-          const distanceKm = Number.isFinite(stationLat) && Number.isFinite(stationLng)
-            ? haversineKm(lat, lng, stationLat, stationLng)
-            : Number.isFinite(reportedDistance)
-              ? reportedDistance / 1000
-              : Infinity
+          const station = radioBrowserStation(row, host, lat, lng)
           // The radius parameters are not documented by the public search
           // table, so enforce their contract locally too.
-          if (!Number.isFinite(distanceKm) || distanceKm > radius / 1000) return []
-
-          const name = typeof row.name === 'string' && row.name.trim() ? row.name.trim() : 'Unnamed station'
-          const tags = typeof row.tags === 'string' ? row.tags : ''
-          const favicon = typeof row.favicon === 'string' && row.favicon.startsWith('https://')
-            ? row.favicon
-            : null
-          return [{
-            id,
-            name,
-            genre: tags.split(',')[0]?.trim() || 'Various',
-            bitrate: Number.isFinite(Number(row.bitrate)) ? Number(row.bitrate) : 0,
-            url,
-            logo: favicon,
-            listeners: Math.max(Number(row.clickcount) || 0, Number(row.votes) || 0),
-            distanceKm: +distanceKm.toFixed(1),
-            source: 'radio' as const,
-            directoryClickUrl: `${host}/json/url/${encodeURIComponent(id)}`,
-          }]
+          return station && station.distanceKm <= radius / 1000 ? [station] : []
         })
           .sort((a, b) => a.distanceKm - b.distanceKm || b.listeners - a.listeners)
         if (stations.length) return stations

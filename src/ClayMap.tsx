@@ -450,6 +450,7 @@ let mapNightModeActive = false
 
 function renderedTheme(theme: MapTheme, night: boolean): MapTheme {
   if (!night) return theme
+  if (theme.night) return { ...theme, ...theme.night }
   return {
     ...theme,
     land: '#202747',

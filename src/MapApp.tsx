@@ -8,7 +8,7 @@ import { mapBoardPosts } from './mapDiscovery'
 import { MapDiscoveryLayers } from './MapDiscoveryLayers'
 import React, { useRef, useState, useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 import mapboxgl from 'mapbox-gl'
-import { MAP_THEMES, PALETTE, type POI, type PopLevel } from './data'
+import { PALETTE, seasonalMapTheme, type POI, type PopLevel } from './data'
 
 /** Takeover test mode — `?takeover=1`.
  *
@@ -866,8 +866,9 @@ export default function MapApp() {
   }), [])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   // Theme switching lives in the app's Profile → Settings; the prototype
-  // ships the default clay skin with the infrastructure in place.
-  const [theme] = useState(MAP_THEMES[0])
+  // ships the default clay skin with the infrastructure in place. On a
+  // holiday the map wears the holiday's palette (seasonalCalendar.ts).
+  const [theme] = useState(() => seasonalMapTheme())
   const [weather, setWeather] = useState<{ temp: number; code: number; wind: number } | null>(null)
   const [weatherForecast, setWeatherForecast] = useState<Array<{ date: string; high: number; low: number; code: number }>>([])
   const [weatherForecastStatus, setWeatherForecastStatus] = useState<'loading' | 'ready' | 'error'>('loading')

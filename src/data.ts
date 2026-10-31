@@ -1,4 +1,5 @@
 import { feedUrl } from './assetPacks'
+import { activeHoliday } from './seasonalCalendar'
 
 export const PALETTE = {
   bg: '#050407',
@@ -30,6 +31,9 @@ export interface MapTheme {
   road: string
   roadRim: string
   buildingDark: string
+  /** Ground for the night daypart. Without it night uses the shared dusk
+   *  palette; a holiday keeps its own colours after dark. */
+  night?: Pick<MapTheme, 'land' | 'park' | 'water' | 'road' | 'roadRim' | 'buildingDark'>
 }
 
 export const MAP_THEMES: MapTheme[] = [
@@ -70,6 +74,60 @@ export const MAP_THEMES: MapTheme[] = [
     road: '#0a0c0e', roadRim: '#26303a', buildingDark: '#131a20',
   },
 ]
+
+// ── Holiday maps ────────────────────────────────────────────────────────────
+// The live map wears these on their holidays (seasonalCalendar.ts). Colours
+// follow the holiday building themes and preview palettes already in the app
+// (buildingOwnershipTheme.ts, radiusPreviewMapPresentation.ts). Claimed ground
+// still wears its owner's colour, exactly as on the clay map.
+export const HOLIDAY_MAP_THEMES: MapTheme[] = [
+  {
+    id: 'halloween', name: 'Halloween',
+    accent: '#F28A25', accentHot: '#FF9D31', accentDeep: '#B8621A',
+    land: '#4A3260', park: '#55702A', water: '#231B55',
+    road: '#09080A', roadRim: '#3A2440', buildingDark: '#1A1024',
+    night: {
+      land: '#24173A', park: '#26381F', water: '#0E0C2A',
+      road: '#07060C', roadRim: '#4A2A50', buildingDark: '#120A1C',
+    },
+  },
+  {
+    id: 'christmas', name: 'Christmas',
+    accent: '#E9415F', accentHot: '#FF6B7F', accentDeep: '#A82B44',
+    land: '#C9D8D2', park: '#2F6E50', water: '#2B6FB3',
+    road: '#09080A', roadRim: '#2A2F2E', buildingDark: '#1B2A24',
+    night: {
+      land: '#3A4A5C', park: '#1D3A30', water: '#0B234F',
+      road: '#090812', roadRim: '#3C4654', buildingDark: '#111A20',
+    },
+  },
+  {
+    id: 'valentine', name: "Valentine's",
+    accent: '#F05A9D', accentHot: '#FF8FC6', accentDeep: '#B83A74',
+    land: '#C7AFC2', park: '#D98CAD', water: '#5B4A9E',
+    road: '#09080A', roadRim: '#4A2A3C', buildingDark: '#2A1420',
+  },
+  {
+    id: 'lunar-new-year', name: 'Lunar New Year',
+    accent: '#E8B84A', accentHot: '#FFD35B', accentDeep: '#B0862C',
+    land: '#9B2A2E', park: '#B8443A', water: '#2A3F7A',
+    road: '#09080A', roadRim: '#3A2418', buildingDark: '#2A0E10',
+  },
+  {
+    id: 'pride', name: 'Pride',
+    accent: '#F4D53E', accentHot: '#FFD95A', accentDeep: '#C9A82A',
+    land: '#4da42f', park: '#66c342', water: '#2b82dd',
+    road: '#09080A', roadRim: '#2A252B', buildingDark: '#161116',
+  },
+]
+
+/** The map palette for today: the holiday's on a holiday, else clay. The live
+ *  map has no per-person map theme yet, so there is nothing to override. */
+export function seasonalMapTheme(now?: Date): MapTheme {
+  const holiday = activeHoliday(now)
+  return (holiday && HOLIDAY_MAP_THEMES.find(theme => theme.id === holiday.mapThemeId))
+    ?? MAP_THEMES[0]
+}
 
 export interface POI {
   id: string
