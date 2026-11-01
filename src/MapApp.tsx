@@ -3448,8 +3448,8 @@ export default function MapApp() {
    *  and focuses this post (HomeTwin's poplur-map-open-feed-content handler).
    *  Only a pop that HAS media can travel — the feed drops a media-less row on
    *  the native path while the map still shows the pin, so callers keep the
-   *  card for those. Used by the card's VIEW IN FEED and, since the owner asked
-   *  for it on 11 Sep, by a plain press on the pin. */
+   *  card for those. Used by the card's VIEW IN FEED; a plain press on the pin
+   *  stays on the map (owner, 1 Nov). */
   const openPinInFeed = useCallback((pin: PopPin) => {
     window.parent?.postMessage({
       type: 'poplur-map-open-feed-content',
@@ -3874,20 +3874,22 @@ export default function MapApp() {
     // same pop's channel tile in the Feed.
     markPostsSeen([feedPostIdFromPinId(pin.id)])
     setCurrentPlace(displayPlaceName(pin.name))
+    // OWNER DECISION 1 Nov (replaces the 11 Sep hop to the Feed): a press
+    // keeps you on the map and selects this poster, so the gesture pad walks
+    // ONLY their pops, starting here — "it's doing the swipe on landmarks but
+    // not users posts". Arming, not toggling: a second press on the same
+    // poster's pin must not release the route; the point card still does.
+    // Automatic landings are already walking a route and never re-scope it.
+    if (!automatic) {
+      const ownerKey = pinOwnerKey(pin)
+      if (focusedUserKeyRef.current !== ownerKey) toggleOwnerFilter(ownerKey, pin.id)
+      else focusedMapPointKeyRef.current = `pin:${pin.id}`
+    }
     focusMapPointForPin(pin.id)
-    // OWNER DECISION 11 Sep: pressing a pin shows the post's media directly in
-    // the Feed, on its channel — no card in between. Automatic landings (the
-    // point arrows) and pops without media keep the card: the arrows are a
-    // survey, and a media-less pop cannot travel to the feed at all.
-    // A message's generated image is only a share preview. Open its actual
-    // words here instead of cropping that image into the video feed.
-    const directToFeed = !automatic && Boolean(pin.media) && pin.contentType !== 'message'
     // Show how much ground this pop holds: its radius painted on the land in
-    // the pin's own colour, cleared again when the card goes. Not on the
-    // direct-to-feed path — there is no card to clear it, and a stale
-    // spotlight would greet the user on the way back to the map.
+    // the pin's own colour, cleared again when the card goes.
     const live = mapRef.current
-    if (live && !directToFeed) {
+    if (live) {
       try {
         installPinSpotlight(live)
         updatePinSpotlight(live, pin)
@@ -3908,9 +3910,9 @@ export default function MapApp() {
       popId: pin.id,
     }, '*')
 
-    if (directToFeed) openPinInFeed(pin)
-    else showPinContentCard(pin)
-  }, [accountPostCount, accountRadiusKm, accountTotalReachKm, focusMapPointForPin, liveMapPosts, openPinInFeed, showPinContentCard])
+    // The card's VIEW IN FEED is the way into the Feed.
+    showPinContentCard(pin)
+  }, [accountPostCount, accountRadiusKm, accountTotalReachKm, focusMapPointForPin, liveMapPosts, showPinContentCard, toggleOwnerFilter])
 
   /** Where the radius bench has planted its pin, if it has. Dev-only; null in
    *  every shipped build because the bench that sets it cannot render there. */
