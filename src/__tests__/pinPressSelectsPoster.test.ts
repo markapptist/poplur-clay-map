@@ -36,4 +36,23 @@ describe('pressing a pin selects its poster on the map', () => {
     expect(src.match(/type: 'poplur-map-open-feed-content'/g)?.length).toBe(1)
     expect(src).toContain("onActivate: pin.media && pin.contentType !== 'message' ? () => { openPinInFeed(pin) } : undefined")
   })
+
+  // Mark, 1 Nov: "there needs to be a way to change between just my posts and
+  // other posts for swiping." The layers button is that switch.
+  it('walks only the picked level\'s pins on My pops or Other pops', () => {
+    expect(src).toMatch(/if \(popLevel !== 'all'\) \{\s*\n\s*return buildMapPointCycle\(\{ currentLocation: null, pins: mapPins\.filter\(pin => !pin\.ghost\), landmarks: \[\] \}\)/)
+    expect(src).toContain('}, [currentLocation, mapPins, focusedUserKey, popLevel])')
+  })
+
+  it('lets a level pick release a poster armed by a pin press', () => {
+    const i = src.indexOf('const lastPopLevelRef = useRef(popLevel)')
+    expect(i).toBeGreaterThan(0)
+    const block = src.slice(i, i + 400)
+    expect(block).toContain('setFocusedUserKey(null)')
+    expect(block).toContain('}, [popLevel])')
+  })
+
+  it('names what the swipe walks on the pad', () => {
+    expect(src).toContain("popLevel === 'mine' ? 'MY POPS' : popLevel === 'others' ? 'OTHER POPS' : 'ALL POINTS'")
+  })
 })

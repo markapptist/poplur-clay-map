@@ -3291,12 +3291,20 @@ export default function MapApp() {
       const userPins = mapPins.filter(pin => !pin.ghost && pinOwnerKey(pin) === focusedUserKey)
       return buildMapPointCycle({ currentLocation: null, pins: userPins, landmarks: [] })
     }
+    // Mark, 1 Nov: "there needs to be a way to change between just my posts
+    // and other posts for swiping." The layers button (My pops / Other pops /
+    // All pops) is that switch: on My or Other the pad walks only those pins —
+    // mapPins is already filtered to the level — with no landmark or
+    // current-location stops in between. All keeps the whole board.
+    if (popLevel !== 'all') {
+      return buildMapPointCycle({ currentLocation: null, pins: mapPins.filter(pin => !pin.ghost), landmarks: [] })
+    }
     return buildMapPointCycle({
       currentLocation,
       pins: mapPins,
       landmarks: MAP_POINT_LANDMARKS,
     })
-  }, [currentLocation, mapPins, focusedUserKey])
+  }, [currentLocation, mapPins, focusedUserKey, popLevel])
   const mapPointRouteRef = useRef(mapPointRoute)
   mapPointRouteRef.current = mapPointRoute
   const focusedMapPointKeyRef = useRef<string | null>(null)
@@ -3690,6 +3698,18 @@ export default function MapApp() {
       setFocusedUserKey(null)
     }
   }, [tourOn])
+
+  // Picking a level is choosing what to swipe through, so it releases a
+  // poster the last pin press armed; otherwise that one person's route would
+  // keep overriding the level just picked.
+  const lastPopLevelRef = useRef(popLevel)
+  useEffect(() => {
+    if (lastPopLevelRef.current === popLevel) return
+    lastPopLevelRef.current = popLevel
+    if (!focusedUserKeyRef.current) return
+    focusedUserKeyRef.current = null
+    setFocusedUserKey(null)
+  }, [popLevel])
 
   // The armed poster's last pop can vanish (deletion, privacy, dropping out of
   // reach). With nothing left to traverse, release the filter so the arrows
@@ -5389,6 +5409,13 @@ export default function MapApp() {
           aria-hidden={activeNewsStop ? true : undefined}
           size={channelControlSize}
           aria-label="Map point and zoom controls"
+          // What the swipe walks, so the layers switch reads on the pad itself.
+          label={tourMode === 'news' ? undefined : [
+            focusedUserKey
+              ? (focusedPointOwner?.key === focusedUserKey ? focusedPointOwner.handle ?? 'YOUR POPS' : 'ONE POSTER')
+              : popLevel === 'mine' ? 'MY POPS' : popLevel === 'others' ? 'OTHER POPS' : 'ALL POINTS',
+            mapPointPosition ? `${mapPointPosition.n}/${mapPointPosition.of}` : null,
+          ].filter(Boolean).join(' · ')}
           leftLabel={tourMode === 'news' ? 'Previous news story' : 'Previous map point'}
           rightLabel={tourMode === 'news' ? 'Next news story' : 'Next map point'}
           upLabel="Zoom in"
