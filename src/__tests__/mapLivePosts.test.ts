@@ -179,7 +179,20 @@ describe('live Firestore Map posts', () => {
 
     // And the effect asks this question per pop rather than rebuilding the board.
     const clayMap = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
-    expect(clayMap).toContain('if (held && pinMarkerNeedsRebuild(held.key, pin)) {')
+    expect(clayMap).toContain('return !held || pinMarkerNeedsRebuild(held.key, p)')
+  })
+
+  it('stands each pin as its own sprite lands, without emptying the board first', () => {
+    // A discovery page gives every forwarded pin its poster's picture, so
+    // every marker needs a rebuild at once. Retiring them up front and then
+    // waiting on the whole batch blanked the board until the slowest picture
+    // downloaded (1 Nov: "pins should load faster").
+    const clayMap = readFileSync(new URL('../ClayMap.tsx', import.meta.url), 'utf8')
+    const sync = clayMap.slice(clayMap.indexOf('const syncPins = () => {'), clayMap.indexOf('// A pop opened here or watched in the Feed'))
+    expect(sync).not.toContain('Promise.all(')
+    expect(sync).toContain('held?.marker.remove()')
+    expect(sync).toContain('if (syncing) { resyncQueued = true; return }')
+    expect(sync).toContain('if (resyncQueued) { resyncQueued = false; syncPins() }')
   })
 
   it('keeps production Map rendering on the realtime database boundary', () => {

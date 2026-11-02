@@ -6972,8 +6972,13 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
       }
     }
 
+    // A sync asked for while sprites are still compositing (the intro camera's
+    // moveend, above all) runs once they land. Dropping it left every pin that
+    // pass would have seated off the board until the next camera move.
+    let resyncQueued = false
     const syncPins = () => {
-      if (dropped || mapRef.current !== map || syncing) return
+      if (dropped || mapRef.current !== map) return
+      if (syncing) { resyncQueued = true; return }
       const want = visiblePins()
       const wanted = new Set(want.map(p => p.id))
       // Leaving the screen means leaving the DOM. A hidden marker still costs
@@ -6988,37 +6993,43 @@ function MapboxClayMap({ token, pois, airportPoints = [], selectedId, onSelectPo
         }
       }
       // A pop whose DRAWN identity changed (it moved, was recoloured, gained a
-      // radius badge) is retired here and rebuilt below; one whose card payload
-      // changed keeps its marker, because the click resolves the live pin.
-      for (const pin of want) {
-        const held = livePins.get(pin.id)
-        if (held && pinMarkerNeedsRebuild(held.key, pin)) {
-          held.marker.remove()
-          livePins.delete(pin.id)
-        }
-      }
-      const missing = want.filter(p => !livePins.has(p.id))
+      // radius badge or a face) is rebuilt below, and its old marker keeps
+      // standing until the new one is ready; one whose card payload changed
+      // keeps its marker, because the click resolves the live pin. Retiring it
+      // up front emptied the board whenever a discovery page arrived: every
+      // forwarded pin gains its poster's picture there, so every marker went
+      // at once and stayed gone until the slowest picture downloaded.
+      const missing = want.filter(p => {
+        const held = livePins.get(p.id)
+        return !held || pinMarkerNeedsRebuild(held.key, p)
+      })
       if (!missing.length) { applyPinSpread(); return }
       syncing = true
-      void Promise.all(missing.map(pin =>
+      let outstanding = missing.length
+      // Each pin stands as soon as ITS sprite is ready. Waiting on the whole
+      // batch held every pin back for the slowest face on the board.
+      missing.forEach(pin => {
         // Your profile media belongs above your pin as the video preview, not
         // composited into its face. Other people retain their static identity.
-        pinWithFace({ avatar: pin.mine ? null : pin.avatar, color: pin.color, pinColor: pin.pinColor ?? null, mode: tier })
-          .then(src => ({ pin, src }))
-          .catch(() => null),
-      )).then(built => {
-        syncing = false
-        // The map (or the level) moved on while the sprites composited.
-        if (dropped || mapRef.current !== map) return
-        built.forEach(entry => {
-          if (!entry) return
-          // The camera may have moved past this pop while it composited.
-          if (livePins.has(entry.pin.id)) return
-          livePins.set(entry.pin.id, { marker: buildMarker(entry.pin, entry.src), key: keyOf(entry.pin) })
-        })
-        pinMarkersRef.current = [...livePins.values()].map(held => held.marker)
-        applyPinSpread()
-        applyCrowdBadges()
+        void pinWithFace({ avatar: pin.mine ? null : pin.avatar, color: pin.color, pinColor: pin.pinColor ?? null, mode: tier })
+          .catch(() => null)
+          .then(src => {
+            // The map (or the level) moved on while the sprite composited.
+            if (dropped || mapRef.current !== map) return
+            const held = livePins.get(pin.id)
+            if (src && (!held || held.key !== keyOf(pin))) {
+              held?.marker.remove()
+              livePins.set(pin.id, { marker: buildMarker(pin, src), key: keyOf(pin) })
+              pinMarkersRef.current = [...livePins.values()].map(entry => entry.marker)
+              applyPinSpread()
+              applyCrowdBadges()
+            }
+            outstanding -= 1
+            if (outstanding > 0) return
+            syncing = false
+            // The camera may have moved past these pops while they composited.
+            if (resyncQueued) { resyncQueued = false; syncPins() }
+          })
       })
       pinMarkersRef.current = [...livePins.values()].map(held => held.marker)
       applyPinSpread()
