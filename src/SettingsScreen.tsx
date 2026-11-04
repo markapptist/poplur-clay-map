@@ -835,7 +835,9 @@ export default function SettingsScreen({ bindBack }: {
         {page === 'radio' && (
         <article className={styles.group} aria-label="Audio playback">
           <div className={styles.radioScope} role="radiogroup" aria-label="Where Radio and iPod keep playing">
-            {(Object.entries(RADIO_LABEL) as Array<[RadioScope, string]>).map(([scope, label]) => (
+            {(Object.entries(RADIO_LABEL) as Array<[RadioScope, string]>)
+              .filter(([scope]) => scope !== 'outside' || !isIOSNativeShell())
+              .map(([scope, label]) => (
               <button
                 type="button"
                 key={scope}

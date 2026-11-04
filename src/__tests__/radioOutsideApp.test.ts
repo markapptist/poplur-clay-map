@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getRadioPlaybackState, isMapRadioActive, nowPlayingStation, startDefaultMapRadio, stopMapRadio } from '../mapRadio'
+import { getRadioPlaybackState, isMapRadioActive, nowPlayingStation, readRadioScope, startDefaultMapRadio, stopMapRadio } from '../mapRadio'
 import { setUserMuted } from '../audioGate'
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8')
@@ -85,6 +85,24 @@ describe('the page', () => {
     window.dispatchEvent(new MessageEvent('message', { data: { type: 'poplurRadioStop' } }))
     expect(isMapRadioActive()).toBe(false)
     expect(getRadioPlaybackState()).toBe('off')
+  })
+})
+
+describe('the iPhone shell', () => {
+  // App Review 2.5.4: iOS declares no audio background mode, so nothing may
+  // promise or attempt playback once Poplur leaves the screen.
+  it('reads a saved outside scope as Across Poplur and silences it on leaving', async () => {
+    stubRadio('outside')
+    vi.stubGlobal('webkit', { messageHandlers: { poplur: { postMessage: () => {} } } })
+    expect(readRadioScope()).toBe('app')
+    await tuneIn()
+    setHidden(true)
+    expect(getRadioPlaybackState()).toBe('muted')
+  })
+
+  it('declares no background modes and offers no outside choice', () => {
+    expect(read('../Poplur2025-iOS/Poplur2025/Info.plist')).not.toContain('UIBackgroundModes')
+    expect(read('src/SettingsScreen.tsx')).toContain("scope !== 'outside' || !isIOSNativeShell()")
   })
 })
 

@@ -1,7 +1,7 @@
 import { isGateMuted, isUserMuted, onGateChange, setUserMuted } from './audioGate'
 import { currentAudioOwner, holdThroughSilence, registerAudioOwner, releaseAudioFocus, requestAudioFocus } from './audioFocus'
 import { setMusicPlayback } from './musicPlayback'
-import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { isIOSNativeShell, isNativeShell, postNativeEvent } from './nativeBridge'
 import { musicShelf } from './musicPosts'
 import { HOME } from './reach'
 import { activeHoliday, type SeasonalHoliday } from './seasonalCalendar'
@@ -103,7 +103,9 @@ let masterVolume = (() => {
 // is visible. App/outside scope is the explicit background-audio preference;
 // it keeps the station on the app's one audio floor while Feed runs
 // muted-with-picture underneath it and map ambience stays out of its way.
-// Outside scope additionally survives app backgrounding through audioGate.
+// Outside scope additionally survives app backgrounding through audioGate. It
+// does not exist on iPhone: the shell declares no audio background mode (App
+// Review 2.5.4), so a saved outside scope reads as app there.
 const RADIO_BG_KEY = 'poplur.radio.background'
 const RADIO_SCOPE_KEY = 'poplur.radio.scope'
 // Before screen-only became the default, app launch wrote `scope=app` on
@@ -116,7 +118,8 @@ export function readRadioScope(): RadioScope {
   try {
     const scope = window.localStorage.getItem(RADIO_SCOPE_KEY)
     const explicit = window.localStorage.getItem(RADIO_SCOPE_EXPLICIT_KEY) === '1'
-    if (scope === 'screen' || scope === 'outside') return scope
+    if (scope === 'outside') return isIOSNativeShell() ? 'app' : 'outside'
+    if (scope === 'screen') return scope
     if (scope === 'app') return explicit ? 'app' : 'screen'
     // A boolean-only "on" was also written by the old automatic boot path,
     // so it gets the same migration. An explicit setting always writes both
