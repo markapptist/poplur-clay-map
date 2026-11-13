@@ -112,8 +112,15 @@ describe('daily Radius reward roll', () => {
 
     const home = readFileSync(new URL('../HomeTwin.tsx', import.meta.url), 'utf8')
     expect(home).not.toContain('MapRandomTourButton')
-    expect(home).toMatch(/<MapDailyRewardController enabled=\{!RADIUS_REWARD_PREVIEW_ENABLED\}/)
-    expect(home).toMatch(/<MapRewardRollButton[\s\S]*?announceRadiusRewardNavigator\(true\)/)
+    expect(home).toMatch(/<MapDailyRewardController enabled=\{MAP_DAILY_ROLL_ENABLED && !RADIUS_REWARD_PREVIEW_ENABLED\}/)
+    expect(home).toMatch(/\{MAP_DAILY_ROLL_ENABLED && \(\s*<MapRewardRollButton[\s\S]*?announceRadiusRewardNavigator\(true\)/)
+  })
+
+  // App Review 2.5.19 (13 Nov 2026): a random Credits payout reads as simulated
+  // gambling, so the iPhone shell mounts neither the dice button nor the claim.
+  it('keeps the daily Map roll out of the iOS shell', () => {
+    const home = readFileSync(new URL('../HomeTwin.tsx', import.meta.url), 'utf8')
+    expect(home).toMatch(/const MAP_DAILY_ROLL_ENABLED = typeof window !== 'undefined' && !isIOSNativeShell\(\)/)
   })
 
   it('activates the reward dice on primary pointer-down without double-firing the pointer click', () => {

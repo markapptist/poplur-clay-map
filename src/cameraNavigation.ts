@@ -1,3 +1,5 @@
+import { isIOSNativeShell } from './nativeBridge'
+
 /**
  * The Camera tab has capture modes and deliberate creation destinations, but
  * no LIVE broadcast destination and no direct Music-capture page. Music still
@@ -6,7 +8,7 @@
  * product rules instead of comments that can quietly regress in either the
  * hold wheel or channel-arrow ring.
  */
-export const CAMERA_HOLD_MENU_ITEMS = [
+const ALL_CAMERA_HOLD_MENU_ITEMS = [
   { icon: 'Photo', title: 'PHOTO', screen: 'camera-capture', action: 'photo' },
   { icon: 'Video', title: 'VIDEO', screen: 'camera-capture', action: 'video' },
   { icon: 'Create', title: 'CREATE', screen: 'camera-ai-chat', nativeAction: 'create', native: true },
@@ -20,6 +22,20 @@ export const CAMERA_HOLD_MENU_ITEMS = [
 ] as const
 
 /**
+ * No GAMES on iPhone. App Review rejected the build under 2.5.19 (13 Nov 2026)
+ * for game functionality the listing does not describe, so the iOS shell
+ * leaves the Games page out of both the wheel and the arrow ring; with it gone
+ * from the wheel, a remembered `feed-games` page is no longer resumable either.
+ * Android and the browser twins keep it.
+ */
+export const CAMERA_GAMES_ENABLED = !isIOSNativeShell()
+
+type CameraHoldMenuItem = (typeof ALL_CAMERA_HOLD_MENU_ITEMS)[number]
+export const CAMERA_HOLD_MENU_ITEMS: readonly CameraHoldMenuItem[] = CAMERA_GAMES_ENABLED
+  ? ALL_CAMERA_HOLD_MENU_ITEMS
+  : ALL_CAMERA_HOLD_MENU_ITEMS.filter(item => item.screen !== 'feed-games')
+
+/**
  * The channel-arrow ring, in the same order as the hold wheel's tiles above so
  * the two navigations agree stop for stop. ROLL used to sit outside this ring
  * on the reasoning that it was the camera's own second PAGE — but the page it
@@ -27,8 +43,11 @@ export const CAMERA_HOLD_MENU_ITEMS = [
  * screen with selection, deletion and preview. Left out, that screen was
  * reachable only by holding the cube: the arrows walked straight past it.
  */
-export const CAMERA_CYCLE = ['photo', 'video', 'create', 'games', 'studio', 'roll'] as const
-export type CameraCycleStop = (typeof CAMERA_CYCLE)[number]
+const ALL_CAMERA_CYCLE = ['photo', 'video', 'create', 'games', 'studio', 'roll'] as const
+export type CameraCycleStop = (typeof ALL_CAMERA_CYCLE)[number]
+export const CAMERA_CYCLE: readonly CameraCycleStop[] = CAMERA_GAMES_ENABLED
+  ? ALL_CAMERA_CYCLE
+  : ALL_CAMERA_CYCLE.filter(stop => stop !== 'games')
 
 /** Ring stops that are a screen rather than a capture mode: landing on one
  *  opens it outright, the same handoff the wheel's page tiles perform. */
@@ -41,7 +60,7 @@ export const CAMERA_CYCLE_SCREEN = {
 
 export const CAMERA_STOP_BY_SCREEN: Readonly<Record<string, Exclude<CameraCycleStop, 'photo' | 'video'>>> = {
   'camera-ai-chat': 'create',
-  'feed-games': 'games',
+  ...(CAMERA_GAMES_ENABLED ? { 'feed-games': 'games' as const } : {}),
   'camera-studio': 'studio',
   'camera-roll': 'roll',
 }

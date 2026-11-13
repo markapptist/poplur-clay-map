@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { CAMERA_CYCLE, CAMERA_CYCLE_SCREEN, CAMERA_HOLD_MENU_ITEMS, CAMERA_STOP_BY_SCREEN } from '../cameraNavigation'
 
 const cameraSource = readFileSync(new URL('../Camera.tsx', import.meta.url), 'utf8')
@@ -75,4 +75,28 @@ it('puts the roll on the camera cycle, as a screen stop', () => {
 it("walks the ring in the hold wheel's own tile order", () => {
   const tiles = CAMERA_HOLD_MENU_ITEMS.map(item => item.title.toLowerCase().replace('camera ', ''))
   expect([...CAMERA_CYCLE]).toEqual(tiles)
+})
+
+// App Review 2.5.19 (13 Nov 2026): no Games page on iPhone, in either path.
+describe('Camera navigation inside the iOS shell', () => {
+  it('leaves GAMES out of the wheel, the ring and the stop table', async () => {
+    vi.resetModules()
+    vi.stubGlobal('window', { webkit: { messageHandlers: { poplur: {} } } })
+    try {
+      const ios = await import('../cameraNavigation')
+      expect(ios.CAMERA_GAMES_ENABLED).toBe(false)
+      expect(ios.CAMERA_HOLD_MENU_ITEMS.some(item => item.screen === 'feed-games')).toBe(false)
+      expect(ios.CAMERA_CYCLE).toEqual(['photo', 'video', 'create', 'studio', 'roll'])
+      expect(ios.CAMERA_STOP_BY_SCREEN['feed-games']).toBeUndefined()
+      expect(ios.CAMERA_HOLD_MENU_ITEMS.some(item => item.screen === 'camera-studio')).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.resetModules()
+    }
+  })
+
+  it('keeps GAMES outside the iOS shell', () => {
+    expect(CAMERA_CYCLE).toContain('games')
+    expect(CAMERA_HOLD_MENU_ITEMS.some(item => item.screen === 'feed-games')).toBe(true)
+  })
 })

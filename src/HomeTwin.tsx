@@ -912,6 +912,11 @@ const NATIVE_ADAPTIVE_MAP =
 const RADIUS_REWARD_PREVIEW_ENABLED =
   typeof window !== 'undefined' && radiusRewardPreviewEnabled(window.location.search)
 
+// No Map dice roll on iPhone. It pays a random number of Credits, and Credits
+// are sold in the Store, so App Review read it as simulated gambling (2.5.19,
+// 13 Nov 2026). Android and the browser twins keep it.
+const MAP_DAILY_ROLL_ENABLED = typeof window !== 'undefined' && !isIOSNativeShell()
+
 // Android app shell (PoplurNative bridge). Also gates the native camera preview.
 const ANDROID_SHELL =
   typeof window !== 'undefined' &&
@@ -5684,7 +5689,7 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
       data-poplur-watchdog={chromeFaded ? 'off' : 'on'}
       style={{ '--cube-size': `${cubeSize}px` } as React.CSSProperties}
     >
-      <MapDailyRewardController enabled={!RADIUS_REWARD_PREVIEW_ENABLED} />
+      <MapDailyRewardController enabled={MAP_DAILY_ROLL_ENABLED && !RADIUS_REWARD_PREVIEW_ENABLED} />
       {/* One brand owner for the entire home. Tabs and subscreens never mount
           their own wordmark, so changing surfaces cannot duplicate or replace
           the Poplur title. */}
@@ -5816,13 +5821,15 @@ export default function HomeTwin({ onOpen, onTabChange, onVisibleScreenChange, i
                 else startRadioForMap()
               }}
             />
-            <MapRewardRollButton
-              active={Boolean(radiusRewardDiceSignal)}
-              onPress={() => {
-                playPop(0.25)
-                announceRadiusRewardNavigator(true)
-              }}
-            />
+            {MAP_DAILY_ROLL_ENABLED && (
+              <MapRewardRollButton
+                active={Boolean(radiusRewardDiceSignal)}
+                onPress={() => {
+                  playPop(0.25)
+                  announceRadiusRewardNavigator(true)
+                }}
+              />
+            )}
             <SideControlIconButton
               icon="map.locate"
               aria-label="Go to my location"

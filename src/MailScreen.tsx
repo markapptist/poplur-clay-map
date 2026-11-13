@@ -13,7 +13,7 @@ import { usePullToRefresh } from './usePullToRefresh'
 import { playPop } from './pop'
 import SideControlIconButton from './SideControlIcon'
 import { playCubeNavigationPop } from './cubeNavigationSound'
-import { isNativeShell } from './nativeBridge'
+import { isIOSNativeShell, isNativeShell } from './nativeBridge'
 import { track } from './analytics'
 import CameraARButton from './CameraARButton'
 import ARFilters from './ARFilters'
@@ -1850,13 +1850,15 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
                 <small>send a creation</small>
               </div>
               <div className={styles.shareFilters} role="tablist" aria-label="Your work categories">
+                {/* No Games filter on iPhone: the Games page is not there
+                    (App Review 2.5.19, 13 Nov 2026; see cameraNavigation). */}
                 {([
                   ['apps', 'Apps'],
                   ['games', 'Games'],
                   ['music', 'Music'],
                   ['podcasts', 'Podcasts'],
                   ['wardrobe', 'Wardrobe'],
-                ] as const).map(([category, label]) => (
+                ] as const).filter(([category]) => category !== 'games' || !isIOSNativeShell()).map(([category, label]) => (
                   <button
                     key={category}
                     type="button"
