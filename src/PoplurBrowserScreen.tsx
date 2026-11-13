@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { isIOSNativeShell, isNativeShell, postNativeEvent } from './nativeBridge'
 import { nextInAppBrowserOpenRequest, normalizeInAppBrowserURL } from './inAppBrowser'
 import { playPop } from './pop'
 import styles from './PoplurBrowserScreen.module.css'
@@ -76,10 +76,13 @@ export default function PoplurBrowserScreen({
         <header className={styles.header}>
           <span className={styles.eyebrow}>FEED / BROWSER</span>
           <h1>Poplur Browser</h1>
-          <p>Open HTTPS links without leaving Poplur.</p>
+          <p>{isIOSNativeShell() ? 'Links from posts open here without leaving Poplur.' : 'Open HTTPS links without leaving Poplur.'}</p>
         </header>
 
-        <form
+        {/* No address bar on iPhone: the Browser opens only links that posts
+            and ads carry, matching the age rating's "no unrestricted web
+            access" (App Review 2.5.19 audit, 13 Nov 2026). */}
+        {!isIOSNativeShell() && <form
           className={styles.addressBar}
           onSubmit={event => { event.preventDefault(); visit(address) }}
         >
@@ -95,7 +98,7 @@ export default function PoplurBrowserScreen({
             spellCheck={false}
           />
           <button type="submit">GO</button>
-        </form>
+        </form>}
         {error && <p className={styles.error} role="alert">{error}</p>}
 
         {destination ? (

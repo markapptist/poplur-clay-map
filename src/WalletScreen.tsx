@@ -3,7 +3,8 @@ import React, { useEffect, useRef, useState } from 'react'
 import styles from './WalletScreen.module.css'
 import { playPop } from './pop'
 import { playCubeNavigationPop } from './cubeNavigationSound'
-import { isNativeShell, postNativeEvent } from './nativeBridge'
+import { isIOSNativeShell, isNativeShell, postNativeEvent } from './nativeBridge'
+import { CHANCE_REWARD_ENTRY_KINDS } from './iosAppShell'
 import {
   CreditsRefused,
   creditsToCad,
@@ -91,7 +92,11 @@ export default function WalletScreen({ bindBack }: {
   const pageRef = useRef(page)
   pageRef.current = page
   const balance = wallet?.balance ?? 0
-  const history = wallet?.history.slice(0, 12) ?? []
+  // The iOS app lists no rows paid out by chance (the retired Map dice and
+  // Casino); App Review 2.5.19. The balance still includes them.
+  const history = (wallet?.history ?? [])
+    .filter(entry => !isIOSNativeShell() || !CHANCE_REWARD_ENTRY_KINDS.has(entry.kind))
+    .slice(0, 12)
   // Cards bought on the account, plus any this phone saw complete before the
   // server listed them.
   const cards = [...new Set([...(wallet?.cards ?? []), ...ownedCards])]
@@ -289,14 +294,18 @@ export default function WalletScreen({ bindBack }: {
           <span className={styles.walletKicker}>POPLUR WALLET</span>
           <b className={styles.walletBalance}>{wallet ? balance.toLocaleString() : '—'} Credits</b>
           <i className={styles.walletCad}>
-            {wallet ? `≈ ${creditsToCad(balance)}` : (loadError ?? 'Checking your balance…')}
+            {wallet
+              // No cash value on iPhone: Credits are an in-app currency there.
+              ? (isIOSNativeShell() ? '' : `≈ ${creditsToCad(balance)}`)
+              : (loadError ?? 'Checking your balance…')}
           </i>
         </div>
 
         <div className={styles.actions}>
           {!HIDE_BETA_PLACEHOLDERS && <button type="button" onClick={buyCredits}>Buy</button>}
           {!HIDE_BETA_PLACEHOLDERS && <button type="button" onClick={() => { playCubeNavigationPop(); setPage('send') }}>Send</button>}
-          <button
+          {/* No person-to-person Credits on iPhone (Send is already hidden). */}
+          {!isIOSNativeShell() && <button
             type="button"
             onClick={() => {
               playPop()
@@ -304,7 +313,7 @@ export default function WalletScreen({ bindBack }: {
               if (isNativeShell()) postNativeEvent({ type: 'walletShareReceive' })
               say('Share your @handle to receive credits.')
             }}
-          >Receive</button>
+          >Receive</button>}
           {!HIDE_BETA_PLACEHOLDERS && <button type="button" onClick={() => { playCubeNavigationPop(); setPage('cashout') }}>Cash Out</button>}
         </div>
 

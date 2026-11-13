@@ -576,6 +576,9 @@ export default function SettingsScreen({ bindBack }: {
                 <span className={styles.chev} aria-hidden="true">›</span>
               </button>
 
+              {/* Map and Feed have no settings yet; the iOS app lists no
+                  empty pages (App Review 2.1 / 2.5.19). */}
+              {!isIOSNativeShell() && <>
               <button type="button" className={styles.row} onClick={() => openPage('map')}>
                 <span className={styles.rowText}>
                   <b>Map</b>
@@ -591,6 +594,7 @@ export default function SettingsScreen({ bindBack }: {
                 </span>
                 <span className={styles.chev} aria-hidden="true">›</span>
               </button>
+              </>}
 
               <button type="button" className={styles.row} onClick={() => openPage('camera')}>
                 <span className={styles.rowText}>
@@ -984,7 +988,8 @@ export default function SettingsScreen({ bindBack }: {
             </span>
           </button>
 
-          <button
+{/* No closed-beta switch in the iOS app (App Review 2.2). */}
+          {!isIOSNativeShell() && <button
             type="button"
             className={styles.switchRow}
             role="switch"
@@ -999,16 +1004,16 @@ export default function SettingsScreen({ bindBack }: {
             <span className={testActivityConsent ? `${styles.switchTrack} ${styles.switchOn}` : styles.switchTrack}>
               <em />
             </span>
-          </button>
+          </button>}
 
           <p className={styles.radioScopeNote}>
             Exact coordinates are never public in either mode. Public accounts show only a coarse map area; private or ghost posts show no map origin.
             {accountPrivacy.saving ? ' Updating existing posts…' : ''}
           </p>
-          <p className={styles.radioScopeNote}>
+          {!isIOSNativeShell() && <p className={styles.radioScopeNote}>
             Closed-beta sharing is off by default and belongs only to this signed-in account. It never includes message text, media, precise coordinates, microphone or camera data. You can turn it off here at any time.
             {testActivityConsentSaving ? ' Saving…' : ''}
-          </p>
+          </p>}
         </article>
         )}
 
@@ -1072,7 +1077,7 @@ export default function SettingsScreen({ bindBack }: {
                 )
               })}
             </div>
-            <p className={styles.themeFootnote}>Stored on this device. Premium entitlement checks can be added without changing your saved theme ID.</p>
+            {!isIOSNativeShell() && <p className={styles.themeFootnote}>Stored on this device. Premium entitlement checks can be added without changing your saved theme ID.</p>}
           </article>
         )}
 

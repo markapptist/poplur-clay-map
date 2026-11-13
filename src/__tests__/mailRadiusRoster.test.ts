@@ -15,7 +15,9 @@ describe('the radius roster', () => {
   it('leaves the thread derivation untouched', () => {
     // The moment this list is filtered by reach, a conversation vanishes
     // because the other person walked out of range.
-    expect(mail).toContain('const threads = persistentDMThreads(liveThreads ?? THREADS, deletedIds)')
+    // The iOS app swaps the placeholder chats for an empty list (App Review
+    // 2.5.19), but never filters by reach.
+    expect(mail).toContain('const threads = persistentDMThreads(liveThreads ?? (isIOSNativeShell() ? [] : THREADS), deletedIds)')
   })
 
   it('reads the shared selector rather than carrying its own reach rule', () => {

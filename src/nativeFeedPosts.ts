@@ -10,6 +10,7 @@ import {
   where,
 } from 'firebase/firestore'
 import { isNativeShell, isRNWebShellRoute, postNativeEvent } from './nativeBridge'
+import { isIOSAppShell } from './iosAppShell'
 import { webDb } from './webFirebase'
 import { accountSnapshot, onAccountChange } from './accountStore'
 import { pinColorId, type PinColorId } from './pinColors'
@@ -302,10 +303,13 @@ export function windowByPopulation<T>(
   const kept: T[] = []
   let people = 0
   let synthetic = 0
+  // The iOS app shows no simulation output at all: 99.6% of production posts
+  // were synthetic, and App Review reads that as fake activity (5.6, 2.5.19).
+  const syntheticLimit = isIOSAppShell() ? 0 : LIVE_FEED_POST_LIMIT
   for (const item of items) {
     const kind = population(item)
     if (kind === 'own') kept.push(item)
-    else if (kind === 'synthetic') { if (synthetic < LIVE_FEED_POST_LIMIT) { synthetic += 1; kept.push(item) } }
+    else if (kind === 'synthetic') { if (synthetic < syntheticLimit) { synthetic += 1; kept.push(item) } }
     else if (people < LIVE_FEED_POST_LIMIT) { people += 1; kept.push(item) }
   }
   return kept

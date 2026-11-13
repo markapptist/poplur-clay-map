@@ -256,16 +256,34 @@ fi
 # The release lock was acquired before the thermal gate, so the snapshot being
 # copied here is still the most recently verified release transaction.
 
+# The iPhone app ships no game or casino files (App Review 2.5.19, 13 Nov
+# 2026). The iOS shell never opens the Games page (cameraNavigation /
+# iosAppShell), only the Games pages preload these chunks, and nothing loads
+# casino/ at all, so none of them is fetched on iOS. Android keeps them.
+IOS_ONLY_EXCLUDES=(
+  '/casino/'
+  '/games/'
+  '/GamesScreen-*'
+  '/ArcadeScreen-*'
+  '/PoplurGame-*'
+)
+
 sync_to() {
   local dest="$1"
+  shift
+  local extra=(${1+"$@"})
+  local rsync_extra=()
+  local pattern
+  for pattern in ${extra[@]+"${extra[@]}"}; do rsync_extra+=(--exclude "$pattern"); done
   mkdir -p "$dest"
   # rsync protects excluded paths from --delete, so clear any copies left by
   # an older sync both before and after publishing the new snapshot.
   rm -rf "$dest/models"
   # Only authoring models are excluded. Core Feed/channel assets must match
   # the local paths in the shipped asset manifest.
-  rsync -a --delete \
+  rsync -a --delete --delete-excluded \
     --exclude '/models/' \
+    ${rsync_extra[@]+"${rsync_extra[@]}"} \
     "$BUILD_DIR/" "$dest/"
   rm -rf "$dest/models"
   verify_wardrobe_assets "$dest"
@@ -273,7 +291,7 @@ sync_to() {
   shasum -a 256 public/logo_icon.png "$dest/logo_icon.png" | awk 'NR == 1 { expected = $1 } NR == 2 && $1 != expected { exit 1 }'
 }
 
-sync_to "$IOS_DEST"
+sync_to "$IOS_DEST" "${IOS_ONLY_EXCLUDES[@]}"
 sync_to "$ANDROID_DEST"
 
 # The workspace release policy excludes Expo/React Native on every platform.

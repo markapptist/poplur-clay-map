@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const bridge = vi.hoisted(() => ({ send: vi.fn() }))
 vi.mock('../nativeBridge', () => ({
+  isIOSNativeShell: () => false,
   isNativeShell: () => true,
   isRNWebShellRoute: () => false,
   postNativeEvent: bridge.send,

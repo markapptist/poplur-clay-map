@@ -38,7 +38,7 @@ vi.mock('../TabControlRail', () => ({ default: ({ children }: any) => <div>{chil
 vi.mock('../ShaderVideoPlayer', () => ({ default: ({ src, active }: any) => <video data-media-src={src} data-active={active} /> }))
 vi.mock('../NewsSourceVideo', () => ({ default: () => null }))
 vi.mock('../ProfilePostPreview', () => ({ default: ({ src }: any) => <img src={src} /> }))
-vi.mock('../nativeBridge', () => ({ isNativeShell: () => false, postNativeEvent: vi.fn() }))
+vi.mock('../nativeBridge', () => ({ isNativeShell: () => false, isIOSNativeShell: () => false, postNativeEvent: vi.fn() }))
 
 let host: HTMLDivElement, root: Root
 let back: (() => boolean) | null

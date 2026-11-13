@@ -1,3 +1,5 @@
+import { isIOSAppShell } from './iosAppShell'
+
 export type MapTourTopic =
   | 'landmarks'
   | 'malls'
@@ -20,7 +22,7 @@ export interface MapTourTopicOption {
 
 // The June tour used a checklist rather than a single undifferentiated POI
 // bucket. Keep that contract shared by the hold menu and the map iframe.
-export const MAP_TOUR_TOPICS: readonly MapTourTopicOption[] = [
+const ALL_MAP_TOUR_TOPICS: readonly MapTourTopicOption[] = [
   { id: 'landmarks', label: 'Landmarks', glyph: '★', defaultEnabled: true },
   { id: 'malls', label: 'Malls', glyph: 'M', defaultEnabled: true },
   { id: 'food', label: 'Food spots', glyph: 'F', defaultEnabled: true },
@@ -33,6 +35,12 @@ export const MAP_TOUR_TOPICS: readonly MapTourTopicOption[] = [
   { id: 'casinos', label: 'Casinos', glyph: 'C', defaultEnabled: false },
   { id: 'hotels', label: 'Hotels', glyph: 'H', defaultEnabled: false },
 ] as const
+
+// No Casinos stop on iPhone (App Review 2.5.19, simulated gambling): the topic
+// is not offered and a saved choice of it is dropped by normalizeMapTourTopics.
+export const MAP_TOUR_TOPICS: readonly MapTourTopicOption[] = isIOSAppShell()
+  ? ALL_MAP_TOUR_TOPICS.filter(topic => topic.id !== 'casinos')
+  : ALL_MAP_TOUR_TOPICS
 
 const STORAGE_KEY = 'poplur.map.tourTopics'
 const VALID_TOPICS = new Set<MapTourTopic>(MAP_TOUR_TOPICS.map(topic => topic.id))

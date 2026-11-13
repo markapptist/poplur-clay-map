@@ -154,7 +154,7 @@ function conversationStartersFor(name: string): readonly string[] {
     `Want to make a two-person Poplur game?`,
     `I found something you might like near me — want the pin?`,
     `What channel are you on, ${person}?`,
-  ]
+  ].filter(starter => !isIOSNativeShell() || !/\bgame\b/.test(starter))
 }
 
 function shareWire(share: SharedWork): string {
@@ -904,7 +904,9 @@ export default function MailScreen({ onCallViaPhone, initialThreadId, initialCom
   const pendingComposeToRef = useRef(initialComposeTo)
   // Discovery is radius-based; an established DM is participant history.
   // Never filter this list by current reach or either person's location.
-  const threads = persistentDMThreads(liveThreads ?? THREADS, deletedIds)
+  // The iOS app never shows the placeholder chats: until native sends the
+  // account's real threads the list is simply empty (App Review 2.5.19).
+  const threads = persistentDMThreads(liveThreads ?? (isIOSNativeShell() ? [] : THREADS), deletedIds)
   const normalizedSearch = searchQuery.trim().toLocaleLowerCase()
   const visibleThreads = normalizedSearch
     ? threads.filter(thread => `${thread.title}\n${thread.preview}`.toLocaleLowerCase().includes(normalizedSearch))
