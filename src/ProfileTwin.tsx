@@ -3113,6 +3113,9 @@ export default function ProfileTwin({
             onLike={() => reactToViewerPost('up')}
             onDislike={() => reactToViewerPost('down')}
             onDelete={canDeleteViewerPost ? () => { playPop(); setDeletePromptPost(viewerPost) } : undefined}
+            onReport={visiting && viewerPost.id && visitingRecipientId
+              ? () => { playPop(); setReportPromptPostId(viewerPost.id ?? null) }
+              : undefined}
             deletePending={deletePending != null}
             onShowOnMap={viewerPost.origin ? () => showPostOnMap(viewerPost) : undefined}
           />
@@ -3211,6 +3214,8 @@ export default function ProfileTwin({
                     window.setTimeout(() => setSafetyNote(null), 2600)
                   })
               }}
+              posterName={shownName}
+              onBlock={() => { playPop(); setReportPromptPostId(null); blockVisitedUser() }}
               onCancel={() => { playPop(); setReportPromptPostId(null) }}
               dataId={`report:${reportPromptPostId}`}
             />

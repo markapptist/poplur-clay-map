@@ -27,6 +27,7 @@ export default function PostActionRail({
   postActionsAvailable = true,
   onShowOnMap,
   onDelete,
+  onReport,
   deletePending = false,
   reserveBelow,
   head,
@@ -53,6 +54,10 @@ export default function PostActionRail({
    *  does not). */
   onShowOnMap?: () => void
   onDelete?: () => void
+  /** Report this pop or block its poster. Present only on somebody ELSE'S
+   *  post that carries its owner's id (App Review 1.2: flagging has to be
+   *  reachable from the content itself). */
+  onReport?: () => void
   deletePending?: boolean
   /** Only reserve space for controls actually sharing this side column.
    *  The current D-pad sits in the centre, so the default reserves nothing. */
@@ -139,6 +144,16 @@ export default function PostActionRail({
           aria-label="See where this pop was posted on the map"
           activation="pointerdown"
           onActivate={onShowOnMap}
+        />
+      )}
+      {onReport && (
+        <SideControlIconButton
+          fluid
+          icon="global.block"
+          aria-label="Report this pop or block its poster"
+          activation="pointerdown"
+          disabled={!postActionsAvailable}
+          onActivate={onReport}
         />
       )}
       {onDelete && (

@@ -75,7 +75,7 @@ import { currentViewerCoords as viewerCoordsFromFix } from './viewerFix'
 import { useFeedPostComments } from './feedPostComments'
 import { mediaTimeLabel } from './mediaTiming'
 import { FEED_CHANNEL_STATIC_MS, FEED_LIVE_DWELL_SECONDS, FEED_PHOTO_DWELL_SECONDS, nextBroadcastPost } from './feedBroadcast'
-import { blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange, reportPost } from './blockedUsers'
+import { blockUser, blockedUsersSnapshot, isUserBlocked, onBlockedUsersChange, reportPost } from './blockedUsers'
 
 // Twin of the app's real feed (FeedView.swift / FeedFullscreenPageView.swift):
 // a fullscreen vertical TV-channel video pager. Vertical swipe changes channel;
@@ -978,7 +978,7 @@ export default function FeedTwin({
   const [deletePromptPost, setDeletePromptPost] = useState<ChannelPost | null>(null)
   // "Report this pop" from the comments sheet, and what came of it.
   const [reportPromptPost, setReportPromptPost] = useState<ChannelPost | null>(null)
-  const [reportNote, setReportNote] = useState<{ ok: boolean; detail: string } | null>(null)
+  const [reportNote, setReportNote] = useState<{ ok: boolean; detail: string; title?: string } | null>(null)
   const [deletePending, setDeletePending] = useState<{ requestId: string; postId: string } | null>(null)
   const canDeletePost = Boolean(post?.id && post.ownerId && accountUid && post.ownerId === accountUid)
   const confirmDelete = () => {
@@ -2390,12 +2390,11 @@ export default function FeedTwin({
           // under it is the bottom-centre cluster now — so the rail runs the
           // full height instead of reserving room for a block that left.
           reserveBelow="0px"
-          // NO block control here. Blocking is a decision about a PERSON, and
-          // it is made on that person's profile, where you can see who they
-          // are before you decide (ProfileTwin carries Block above Message).
-          // On the feed it sat one thumb-width from Like on a post that was
-          // still playing, deciding for a whole account on the strength of a
-          // few seconds of video.
+          // Report or block, on somebody else's pop (App Review 1.2, 18 Nov
+          // 2026: flagging and blocking must be reachable from the content).
+          // It opens a dialog rather than acting, so blocking a whole account
+          // is still a decision, never one thumb-width from Like.
+          onReport={dmPeer && post?.id ? () => { playPop(); setReportPromptPost(post) } : undefined}
           onDelete={canDeletePost && post ? () => { playPop(); if (!deletePending) setDeletePromptPost(post) } : undefined}
           deletePending={Boolean(deletePending)}
           muted={muted}
@@ -2441,6 +2440,17 @@ export default function FeedTwin({
                   window.setTimeout(() => setReportNote(null), 2600)
                 })
             }}
+            posterName={reportPromptPost.user}
+            onBlock={reportPromptPost.ownerId ? () => {
+              playPop()
+              const target = reportPromptPost
+              setReportPromptPost(null)
+              // Local first: the feed and the map drop their pops on the next
+              // render; the block also files a report that alerts Poplur.
+              void blockUser({ uid: target.ownerId, username: target.user })
+              setReportNote({ ok: true, title: 'Blocked', detail: `${target.user || 'That account'} is blocked. Poplur has been told.` })
+              window.setTimeout(() => setReportNote(null), 2600)
+            } : undefined}
             onCancel={() => { playPop(); setReportPromptPost(null) }}
             dataId={`feed-report:${reportPromptPost.id}`}
           />
@@ -2613,7 +2623,7 @@ export default function FeedTwin({
       {commentSent && <PoplurStatusToast title="Comment posted" detail="Your reply is live" />}
       {reportNote && (
         <PoplurStatusToast
-          title={reportNote.ok ? 'Reported to Poplur' : 'Not sent'}
+          title={reportNote.title ?? (reportNote.ok ? 'Reported to Poplur' : 'Not sent')}
           detail={reportNote.detail}
           tone={reportNote.ok ? 'success' : 'error'}
         />

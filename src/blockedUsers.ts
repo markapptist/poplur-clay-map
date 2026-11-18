@@ -115,6 +115,11 @@ export async function blockUser(who: { uid?: string | null; username?: string | 
     entries = [...entries, { uid, handle }]
   }
   persist()
+  // Blocking also tells Poplur (App Review 1.2, 18 Nov 2026): the block is
+  // filed as a "blocked" report, which pushes to the moderators like any
+  // report (functions notifyOnReport). Fire and forget: the local block above
+  // already emptied the feed and the map.
+  if (uid) void reportUser({ uid, username: who.username, reason: 'blocked' })
   if (uid && postNativeEvent({ type: 'blockUser', userId: uid, username: who.username ?? '' })) return 'native'
   const me = isNativeShell() ? null : currentUid()
   if (uid && me && me !== uid) {
