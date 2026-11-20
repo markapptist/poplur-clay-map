@@ -1,0 +1,213 @@
+/* Report or block, as a map glass window (Mark, 20 Nov 2026: "it should look
+   like the glass UI windows, like in map"). The anatomy is Drop a Pop's
+   (.composeBubble in ClayMap.module.css): translucent plum glass with a pink
+   rim and a cyan highlight, a header with the hero icon, eyebrow, title and a
+   clay ×, and light glass section cards that carry the reading. The pop stays
+   visible through it. Delete keeps PostDeleteDialog's own sheet. */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: max(22px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(22px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  /* A veil, not a lid: the pop being reported stays readable behind the glass. */
+  background: radial-gradient(circle at 50% 46%, rgba(246, 59, 154, .06), rgba(9, 3, 9, .34) 78%);
+  pointer-events: auto;
+  overscroll-behavior: contain;
+}
+
+.dialog {
+  position: relative;
+  box-sizing: border-box;
+  width: min(360px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 3px solid #ff82c4;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 22% -4%, rgba(255, 121, 193, .30), transparent 36%),
+    linear-gradient(145deg, rgba(73, 20, 47, .60) 0%, rgba(34, 8, 23, .55) 48%, rgba(16, 8, 15, .60) 100%);
+  box-shadow:
+    0 7px 0 rgba(125, 18, 76, .7),
+    0 11px 0 rgba(27, 4, 18, .5),
+    0 18px 36px rgba(5, 2, 6, .28),
+    0 0 24px rgba(246, 59, 154, .26),
+    inset 0 1px 0 rgba(255, 255, 255, .5),
+    inset 0 -3px 0 rgba(0, 0, 0, .24);
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  color: #fff7fb;
+  font-family: system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
+  text-align: left;
+  isolation: isolate;
+  animation: arrive .22s cubic-bezier(.2, 1.45, .4, 1) both;
+}
+
+.dialog::before {
+  content: '';
+  position: absolute;
+  z-index: 3;
+  top: 4px;
+  left: 26px;
+  right: 26px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .9) 34%, #7fe3ff 65%, transparent);
+  box-shadow: 0 0 10px rgba(127, 227, 255, .5);
+  pointer-events: none;
+}
+
+.dialog button { appearance: none; cursor: pointer; font-family: inherit; }
+.dialog button:focus-visible { outline: 3px solid #7fe3ff; outline-offset: 3px; }
+.dialog button:active { transform: translateY(2px) scale(.985); }
+
+.header {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 8px;
+  min-height: 80px;
+  padding: 11px 11px 10px 8px;
+  box-sizing: border-box;
+  background:
+    linear-gradient(115deg, rgba(246, 59, 154, .28), transparent 44%),
+    linear-gradient(180deg, rgba(255, 255, 255, .08), transparent 42%);
+  border-bottom: 2px solid rgba(255, 126, 193, .56);
+}
+
+.heroIcon {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  filter: drop-shadow(0 5px 4px rgba(11, 2, 8, .72));
+}
+
+.heading { min-width: 0; }
+
+.eyebrow {
+  display: block;
+  margin-bottom: 4px;
+  color: #7fe3ff;
+  font-size: 9px;
+  font-weight: 950;
+  line-height: 1;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(17px, 4.6vw, 21px);
+  font-weight: 1000;
+  line-height: 1;
+  letter-spacing: -.025em;
+  text-transform: uppercase;
+  text-shadow: 0 2px 0 #8e174f, 0 4px 8px rgba(0, 0, 0, .52);
+}
+
+.subtitle {
+  margin-top: 5px;
+  overflow: hidden;
+  color: #ffc5e2;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.close {
+  width: 44px;
+  height: 44px;
+  padding: 0 0 3px;
+  border: 2px solid rgba(255, 255, 255, .72);
+  border-radius: 15px;
+  color: #fff;
+  background: radial-gradient(circle at 36% 25%, #ff9acf, #f63b9a 58%, #95144f 100%);
+  box-shadow: 0 4px 0 #72103f, 0 7px 10px rgba(0, 0, 0, .42), inset 0 1px 0 rgba(255, 255, 255, .65);
+  font-size: 25px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.body {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  /* Light glass between the cards, as in Drop a Pop's body. */
+  background:
+    radial-gradient(circle at 88% 6%, rgba(127, 227, 255, .14), transparent 34%),
+    linear-gradient(160deg, rgba(255, 248, 252, .16) 0%, rgba(246, 217, 232, .12) 100%);
+}
+
+/* The section card carries the legibility, so it is the most opaque layer —
+   still glass, like the map's message panel. */
+.panel {
+  margin: 0 0 3px;
+  padding: 10px 12px 11px;
+  border: 2px solid #f25aab;
+  border-radius: 19px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 255, 255, .72), transparent 45%),
+    linear-gradient(160deg, rgba(255, 250, 253, .80), rgba(247, 214, 231, .74));
+  box-shadow: 0 4px 0 rgba(169, 39, 106, .85), 0 6px 11px rgba(76, 15, 50, .12), inset 0 1px 0 rgba(255, 255, 255, .9);
+  color: #3a1428;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.report,
+.block,
+.cancel {
+  width: 100%;
+  min-height: 52px;
+  border-radius: 17px;
+  font-size: 13px;
+  font-weight: 1000;
+  letter-spacing: .01em;
+  text-transform: uppercase;
+  transition: transform 130ms cubic-bezier(.2, 1.25, .4, 1), filter 130ms ease;
+}
+
+.report {
+  border: 2px solid #fff;
+  color: #2a0716;
+  background:
+    radial-gradient(circle at 34% 10%, rgba(255, 255, 255, .66), transparent 25%),
+    linear-gradient(150deg, #ff9bd0, #f63b9a 58%, #bd1d70);
+  box-shadow: 0 5px 0 #8c104e, 0 8px 13px rgba(87, 9, 50, .3), inset 0 1px 0 rgba(255, 255, 255, .82);
+}
+
+.block {
+  border: 2px solid rgba(255, 255, 255, .85);
+  color: #fff;
+  background:
+    radial-gradient(circle at 34% 10%, rgba(255, 255, 255, .38), transparent 25%),
+    linear-gradient(150deg, #c93a8c, #8e1458 60%, #5e0b39);
+  box-shadow: 0 5px 0 #43062a, 0 8px 13px rgba(40, 3, 24, .34), inset 0 1px 0 rgba(255, 255, 255, .5);
+  text-shadow: 0 1px 0 #43062a;
+}
+
+.cancel {
+  min-height: 46px;
+  border: 2px solid #4e1536;
+  color: #4b1534;
+  background: linear-gradient(160deg, #fff, #efc9dc);
+  box-shadow: 0 4px 0 #9e396e, inset 0 1px 0 #fff;
+  font-size: 11px;
+  letter-spacing: .04em;
+}
+
+@keyframes arrive {
+  0% { opacity: 0; transform: translateY(3%) scale(.88); }
+  100% { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) { .dialog { animation: none; } }
